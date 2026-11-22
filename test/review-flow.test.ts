@@ -234,6 +234,8 @@ describe("re-review", () => {
         expect(yield* keys(fake, reReview)).toEqual([`pr-${PULL}-review-asked-again-v2`]);
         expect(yield* keys(fake, review)).toEqual([]);
 
+        // With a person by its record (ADR 21, decision 1), the label its projection.
+        fake.recordPhase(`pr-${PULL}`, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
         expect(yield* keys(fake, reReview)).toEqual([]);
       }),
@@ -273,6 +275,29 @@ describe("re-review", () => {
           ),
         ).toBe(true);
       }),
+  );
+
+  // The review comment is for people: deleting it changes nothing a re-review resumes (#564).
+  effect("resumes the review its record names, when its review comment is deleted", () =>
+    Effect.gen(function* () {
+      const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
+      fake.comments.splice(0);
+
+      const finished = yield* runToEnd(
+        reReviewing,
+        fake,
+        item(`pr-${PULL}-review-2`, {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          agentWritten: true,
+        }),
+      );
+
+      expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+      const [first, again] = fake.requests;
+      expect(again.sessionId).toBe(first.sessionId);
+      expect(Option.isSome(again.resumePrompt)).toBe(true);
+    }),
   );
 
   effect(
@@ -396,15 +421,16 @@ describe("re-review", () => {
   effect("stops past reviewRounds, without another review", () =>
     Effect.gen(function* () {
       const fake = asked(["approve"]);
-      fake.comment(
-        reviewMarker.write({
+      fake.recordReview(
+        {
           sha: HEAD,
           round: 2,
           verdict: "request-changes",
           reviewer: "data-quail",
           sessionId: "earlier-session",
           adapter: "claude",
-        }),
+        },
+        "review-asked-again",
       );
 
       const finished = yield* runToEnd(
@@ -427,15 +453,16 @@ describe("re-review", () => {
   effect("reads reviewRounds from its own settings, over config.yaml's limits", () =>
     Effect.gen(function* () {
       const fake = asked(["approve"]);
-      fake.comment(
-        reviewMarker.write({
+      fake.recordReview(
+        {
           sha: HEAD,
           round: 1,
           verdict: "request-changes",
           reviewer: "data-quail",
           sessionId: "earlier-session",
           adapter: "claude",
-        }),
+        },
+        "review-asked-again",
       );
 
       // The team allows no re-review of a pull request for re-review alone.
@@ -469,22 +496,19 @@ describe("re-review", () => {
 
 describe("address-review", () => {
   // A pull request this persona, the author, wrote, whose latest review, by data-quail, asks for changes on its head.
-  const changesAsked = (consider: "address" | "decline" = "address") => {
+  const changesAsked = (consider: "address" | "decline" = "address", round = 1) => {
     const fake = makeFake(["approve"]);
     fake.author.consider = consider;
     fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
     // As review.round recorded it.
-    fake.recordPhase(`pr-${PULL}`, "changes-asked");
-    fake.comment(
-      reviewMarker.write({
-        sha: HEAD,
-        round: 1,
-        verdict: "request-changes",
-        reviewer: "data-quail",
-        sessionId: "review-session",
-        adapter: "codex",
-      }),
-    );
+    fake.recordReview({
+      sha: HEAD,
+      round,
+      verdict: "request-changes",
+      reviewer: "data-quail",
+      sessionId: "review-session",
+      adapter: "codex",
+    });
 
     return fake;
   };
@@ -516,8 +540,11 @@ describe("address-review", () => {
         expect(yield* startable(fake, addressReview)).toEqual([]);
         fake.git.head = HEAD;
 
+        // With a person by its record (ADR 21, decision 1), the label its projection.
+        fake.recordPhase(pullItem, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
         expect(yield* startable(fake, addressReview)).toEqual([]);
+        fake.recordPhase(pullItem, "changes-asked");
         fake.setLabels(PULL, []);
 
         fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
@@ -619,6 +646,45 @@ describe("address-review", () => {
         expect(fake.people.requested).toEqual(["data-quail"]);
         expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
       }),
+  );
+
+  // The review comment is for people: editing or deleting it changes nothing
+  // about which review address-review answers (#564).
+  const answersRound2 = (edit: (fake: Fake) => void) =>
+    Effect.gen(function* () {
+      const fake = changesAsked("address", 2);
+      fake.comment(
+        `Changes requested by codex at \`${HEAD.slice(0, 7)}\`. ${reviewMarker.write({
+          sha: HEAD,
+          round: 2,
+          verdict: "request-changes",
+          reviewer: "data-quail",
+        })}`,
+      );
+      implemented(fake);
+      edit(fake);
+      const finished = yield* runToEnd(addressing, fake, addressWork);
+      expect(finished.status).toBe("done");
+      expect(summaryOf(finished)).toBe(
+        `#${PULL}: addressed review 2; asked data-quail to review again`,
+      );
+    });
+
+  effect("answers the review its record names, when the review comment names another sha", () =>
+    answersRound2((fake) => {
+      const edited = fake.comments.map((comment) => ({
+        ...comment,
+        body: comment.body.replace(`"sha":"${HEAD}"`, '"sha":"other5678ab"'),
+      }));
+
+      fake.comments.splice(0, fake.comments.length, ...edited);
+    }),
+  );
+
+  effect("answers the review its record names, when the review comment is deleted", () =>
+    answersRound2((fake) => {
+      fake.comments.splice(0, 1);
+    }),
   );
 
   effect(

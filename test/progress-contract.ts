@@ -3,7 +3,10 @@
 // here, and the protected-branch adapter's against its storage (#364). The
 // suite knows the port alone, so a hosted adapter runs it unchanged.
 
+import { createHash } from "node:crypto";
+
 import {
+  blobBytes,
   Phase,
   PhaseData,
   PhaseMoved,
@@ -13,6 +16,7 @@ import {
   PhaseWriter,
   type Progress,
 } from "@chernabog/core";
+import type { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,8 +27,13 @@ import type * as Scope from "effect/Scope";
 
 import { effect } from "./effect-test.ts";
 
-// Makes a fresh adapter, holding no records, each time a test runs it.
-export type MakeProgress<E> = Effect.Effect<Progress["Service"], E, Scope.Scope>;
+// Makes a fresh adapter, holding no records, each time a test runs it, with
+// Bun's platform services, which each test has.
+export type MakeProgress<E> = Effect.Effect<
+  Progress["Service"],
+  E,
+  Scope.Scope | BunServices.BunServices
+>;
 
 const phase = Schema.decodeSync(Phase);
 const writer = Schema.decodeSync(PhaseWriter);
@@ -60,6 +69,16 @@ const isPhaseMoved = Schema.is(PhaseMoved);
 // The lost race an advance failed with, if it failed with one.
 const moved = <A, E>(exit: Exit.Exit<A, E>) =>
   Option.filter(Exit.findErrorOption(exit), isPhaseMoved);
+
+// A blob's name, as the port gives it: the SHA-256 of its bytes, in hex.
+const hashOf = (blob: Uint8Array | string) =>
+  createHash("sha256").update(blobBytes(blob)).digest("hex");
+
+// Larger than a record's data may hold, as a plan is.
+const PLAN = `# The plan\n\n${"- a step of the plan, \u2028 and all\n".repeat(400)}`;
+
+// Bytes that aren't UTF-8.
+const BYTES = new Uint8Array([0, 255, 1, 128, 10, 13, 0xfe]);
 
 const what = (record: PhaseRecord) => ({ phase: record.phase, from: record.from, by: record.by });
 
@@ -265,6 +284,27 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
       }),
     );
 
+    // A wait recorded again over this writer's own record of it, as a plan's
+    // wait over the plan its run proposed, is a new move: the writer read it.
+    effect("the same move again, from the record it read, writes a new record", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const again = yield* progress.advance(ITEM, after(asked, REVIEW_ASKED, RUN_A));
+
+        const thrice = yield* progress.advance(ITEM, {
+          ...after(again, REVIEW_ASKED, RUN_A),
+          data: DATA,
+          blobs: [PLAN],
+        });
+
+        expect(thrice.version).not.toBe(again.version);
+        expect(thrice.data).toEqual(Option.some(DATA));
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(thrice));
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+      }),
+    );
+
     effect("a retried first phase finds its own record and succeeds", () =>
       Effect.gen(function* () {
         const progress = yield* make;
@@ -286,6 +326,41 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         expect(Option.map(moved(exit), (error) => error.found)).toEqual(
           Option.some(Option.some(CHANGES_ASKED)),
         );
+      }),
+    );
+
+    // A writer's own record is the move it made: from the same read to another
+    // phase is a second move, which the item has already left behind.
+    effect(
+      "the same writer moving on again from the same read, to another phase, is a lost race",
+      () =>
+        Effect.gen(function* () {
+          const progress = yield* make;
+          const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+          const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+
+          const exit = yield* Effect.exit(
+            progress.advance(ITEM, after(asked, REVIEW_ASKED_AGAIN, RUN_A)),
+          );
+
+          expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+            Option.some([Option.some(REVIEW_ASKED), Option.some(CHANGES_ASKED)]),
+          );
+          expect(yield* progress.read(ITEM)).toEqual(Option.some(changes));
+        }),
+    );
+
+    effect("the same writer's second first phase, to another phase, is a lost race", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+
+        const exit = yield* Effect.exit(progress.advance(ITEM, first(CHANGES_ASKED, RUN_A)));
+
+        expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+          Option.some([Option.none(), Option.some(REVIEW_ASKED)]),
+        );
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(asked));
       }),
     );
 
@@ -339,6 +414,106 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
 
         expect(exits.filter(Exit.isSuccess).length).toBe(1);
         expect(exits.filter((exit) => Option.isSome(moved(exit))).length).toBe(1);
+      }),
+    );
+
+    effect("writes blobs with the record, names each by its SHA-256, and reads each back", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+
+        const written = yield* progress.advance(ITEM, {
+          ...first(REVIEW_ASKED, RUN_A),
+          blobs: [PLAN, BYTES],
+        });
+
+        expect(written.blobs).toEqual([hashOf(PLAN), hashOf(BYTES)]);
+        expect(Option.map(yield* progress.read(ITEM), (record) => record.blobs)).toEqual(
+          Option.some([hashOf(PLAN), hashOf(BYTES)]),
+        );
+        expect((yield* progress.readAll).get(ITEM)?.blobs).toEqual([hashOf(PLAN), hashOf(BYTES)]);
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+        expect(yield* progress.blob(ITEM, hashOf(BYTES))).toEqual(Option.some(BYTES));
+      }),
+    );
+
+    effect("a later record writes blobs too, and a record with none names none", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+
+        expect(asked.blobs).toEqual([]);
+
+        const changes = yield* progress.advance(ITEM, {
+          ...after(asked, CHANGES_ASKED, RUN_B),
+          blobs: [PLAN, PLAN],
+        });
+
+        expect(changes.blobs).toEqual([hashOf(PLAN)]);
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+      }),
+    );
+
+    effect("a retry of a write that landed with blobs returns it, blobs and all", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const transition = { ...after(asked, CHANGES_ASKED, RUN_B), blobs: [PLAN] };
+
+        const written = yield* progress.advance(ITEM, transition);
+
+        expect(yield* progress.advance(ITEM, transition)).toEqual(written);
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+      }),
+    );
+
+    effect("a lost race writes no blob", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+
+        const exit = yield* Effect.exit(
+          progress.advance(ITEM, { ...after(asked, REVIEW_ASKED_AGAIN, RUN_B), blobs: [PLAN] }),
+        );
+
+        expect(Option.isSome(moved(exit))).toBe(true);
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(changes));
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.none());
+      }),
+    );
+
+    effect("a lost first phase writes no blob", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+
+        const exit = yield* Effect.exit(
+          progress.advance(ITEM, { ...first(CHANGES_ASKED, RUN_B), blobs: [PLAN] }),
+        );
+
+        expect(Option.isSome(moved(exit))).toBe(true);
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.none());
+      }),
+    );
+
+    effect("reads no blob the item's record doesn't name", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.none());
+
+        const asked = yield* progress.advance(ITEM, {
+          ...first(REVIEW_ASKED, RUN_A),
+          blobs: [PLAN],
+        });
+
+        expect(yield* progress.blob(ITEM, hashOf(BYTES))).toEqual(Option.none());
+        expect(yield* progress.blob("pr-7", hashOf(PLAN))).toEqual(Option.none());
+
+        // An earlier record's blob, which the item's record now doesn't name.
+        yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
+
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.none());
       }),
     );
 

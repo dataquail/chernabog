@@ -42,6 +42,7 @@ import {
   Implement,
   type Json,
   NeedsHuman,
+  Phases,
   PullRequest,
   renderPrompt,
   Repo,
@@ -86,11 +87,15 @@ const decodeIn =
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
-  const labelNames = yield* Settings.labels;
   const items: Array<WorkItem> = [...(yield* Conflict.parkedOnCi)];
+  const all = yield* Phases.records;
 
   for (const pull of yield* Review.authoredByMe) {
-    if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
+    // A person has one whose record is with-person, whatever its label says.
+    if (
+      Phases.isWithPerson(Phases.recordOf(all, Phases.pullRequestItem(pull.number))) ||
+      (yield* Review.ownedByARun(pull))
+    ) {
       continue;
     }
 

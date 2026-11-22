@@ -293,8 +293,11 @@ for (const [form, loading] of forms) {
 
           expect(run.status).toBe("needs-human");
           expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
-          // Its review phase is back, for a person to see.
+          // With a person, from its review phase, which was back first.
           expect(Option.map(recordNow(fake), (found) => found.phase)).toEqual(
+            Option.some("with-person"),
+          );
+          expect(Option.map(recordNow(fake), (found) => found.data.from)).toEqual(
             Option.some("review-asked"),
           );
         }),
@@ -324,7 +327,10 @@ for (const [form, loading] of forms) {
           );
 
           expect(parked).toBe(false);
-          expect(recordNow(fake)).toEqual(Option.none());
+          // No wait is recorded; only a hand-off to a person, if it came to one.
+          expect(Option.filter(recordNow(fake), (found) => found.phase !== "with-person")).toEqual(
+            Option.none(),
+          );
         }),
       ENGINE_TIMEOUT,
     );
@@ -332,12 +338,14 @@ for (const [form, loading] of forms) {
 }
 
 describe("a pull request parked on its merge's CI", () => {
-  effect("is on a phase of its own, not address-review's awaiting-ci", () =>
+  effect("is on a phase of its own, not address-review's awaiting-fix-ci", () =>
     Effect.sync(() => {
-      expect(Phases.ciRoundOf("awaiting-conflict-ci")).toEqual(Option.none());
-      expect(Phases.conflictCiRoundOf("awaiting-conflict-ci")).toEqual(Option.some(1));
-      expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-2")).toEqual(Option.some(2));
-      expect(Phases.conflictCi(2)).toBe("awaiting-conflict-ci-2");
+      const CONFLICT_CI = Phases.PHASES.pullRequest.awaitingConflictCi;
+      const FIX_CI = Phases.PHASES.pullRequest.awaitingFixCi;
+      expect(Phases.roundOf(FIX_CI, "awaiting-conflict-ci")).toEqual(Option.none());
+      expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci")).toEqual(Option.some(1));
+      expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci-2")).toEqual(Option.some(2));
+      expect(Phases.inRound(CONFLICT_CI, 2)).toBe("awaiting-conflict-ci-2");
     }),
   );
 });

@@ -2,7 +2,11 @@
 // record in a map, an advance a compare-and-set on it. It passes the contract
 // every adapter must (test/progress-contract.ts).
 
+import { createHash } from "node:crypto";
+
 import {
+  blobBytes,
+  type BlobHash,
   type Phase,
   type PhaseData,
   PhaseMoved,
@@ -17,7 +21,23 @@ import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-type Store = { readonly records: ReadonlyMap<string, PhaseRecord>; readonly written: number };
+// Each item's record, the bytes of each blob a record wrote, by the record's
+// version and the blob's hash, and how many records have been written.
+type Store = {
+  readonly records: ReadonlyMap<string, PhaseRecord>;
+  readonly blobs: ReadonlyMap<string, ReadonlyMap<BlobHash, Uint8Array>>;
+  readonly written: number;
+};
+
+// A transition's blobs by their names, each once, in the order it gave them.
+const named = (blobs: ReadonlyArray<Uint8Array | string>): ReadonlyMap<BlobHash, Uint8Array> =>
+  new Map(
+    blobs.map((blob) => {
+      const bytes = blobBytes(blob);
+
+      return [createHash("sha256").update(bytes).digest("hex"), Uint8Array.from(bytes)];
+    }),
+  );
 
 const phaseOf = (record: Option.Option<PhaseRecord>): Option.Option<Phase> =>
   Option.map(record, (found) => found.phase);
@@ -29,11 +49,13 @@ const fromPhase = (transition: PhaseTransition) =>
 const versionOf = (read: Option.Option<{ readonly version: string }>) =>
   Option.map(read, (found) => found.version);
 
-// The record is this transition, by this writer: a retry of a write that landed.
+// The record is this transition, by this writer: a retry of a write that
+// landed. A writer that read this very record isn't retrying it.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, fromPhase(transition));
+  Equal.equals(record.from, fromPhase(transition)) &&
+  !Option.exists(transition.from, (read) => read.version === record.version);
 
 // What advancing `item` by `transition` does to `store`, all in one step, `at`
 // the time it would be written.
@@ -58,6 +80,7 @@ const advancing =
     }
 
     const written = store.written + 1;
+    const blobs = named(transition.blobs ?? []);
 
     const record: PhaseRecord = {
       phase: transition.to,
@@ -66,11 +89,16 @@ const advancing =
       version: `v${written}`,
       at,
       data: Option.fromUndefinedOr(transition.data),
+      blobs: [...blobs.keys()],
     };
 
     return [
       Result.succeed(record),
-      { records: new Map([...store.records, [item, record]]), written },
+      {
+        records: new Map([...store.records, [item, record]]),
+        blobs: new Map([...store.blobs, [record.version, blobs]]),
+        written,
+      },
     ];
   };
 
@@ -100,7 +128,7 @@ export type StoreOptions = { readonly checked?: boolean };
 // A fake holding no records, and its store, which a test seeds and reads as
 // it likes: every trigger and run given the service shares the one store.
 export const progressStore = (options: StoreOptions = {}) => {
-  let store: Store = { records: new Map(), written: 0 };
+  let store: Store = { records: new Map(), blobs: new Map(), written: 0 };
 
   const service: Progress["Service"] = {
     read: (item) => Effect.sync(() => Option.fromUndefinedOr(store.records.get(item))),
@@ -123,6 +151,20 @@ export const progressStore = (options: StoreOptions = {}) => {
           return Effect.fromResult(result);
         }),
       ),
+    // Only a blob the item's record names, read at that record's version.
+    blob: (item, hash) =>
+      Effect.sync(() =>
+        Option.flatMap(
+          Option.filter(Option.fromUndefinedOr(store.records.get(item)), (record) =>
+            record.blobs.includes(hash),
+          ),
+          (record) =>
+            Option.map(
+              Option.fromUndefinedOr(store.blobs.get(record.version)?.get(hash)),
+              (bytes) => Uint8Array.from(bytes),
+            ),
+        ),
+      ),
   };
 
   return {
@@ -134,14 +176,20 @@ export const progressStore = (options: StoreOptions = {}) => {
       Object.fromEntries([...store.records].map(([item, record]) => [item, record.phase])),
     // Moves `item` to `phase` from whatever it holds, as a writer before the
     // test would have: a state for the test to start from. Written `at` the
-    // epoch unless the test says when, which a TestClock also starts at.
+    // epoch unless the test says when, which a TestClock also starts at, with
+    // the blobs it gives.
     seed: (
       item: string,
       phase: Phase,
       by: PhaseWriter,
-      when: { readonly at?: DateTime.Utc; readonly data?: PhaseData } = {},
+      when: {
+        readonly at?: DateTime.Utc;
+        readonly data?: PhaseData;
+        readonly blobs?: ReadonlyArray<Uint8Array | string>;
+      } = {},
     ) => {
       const written = store.written + 1;
+      const blobs = named(when.blobs ?? []);
 
       const record: PhaseRecord = {
         phase,
@@ -150,9 +198,14 @@ export const progressStore = (options: StoreOptions = {}) => {
         version: `v${written}`,
         at: when.at ?? DateTime.makeUnsafe(0),
         data: Option.fromUndefinedOr(when.data),
+        blobs: [...blobs.keys()],
       };
 
-      store = { records: new Map([...store.records, [item, record]]), written };
+      store = {
+        records: new Map([...store.records, [item, record]]),
+        blobs: new Map([...store.blobs, [record.version, blobs]]),
+        written,
+      };
     },
   };
 };

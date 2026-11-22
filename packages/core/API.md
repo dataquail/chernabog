@@ -1437,7 +1437,12 @@ export type PhaseRecord = {
     readonly version: string;
     readonly at: DateTime.Utc;
     readonly data: Option.Option<PhaseData>;
+    readonly blobs: ReadonlyArray<BlobHash>;
 };
+export declare const BlobHash: Schema.String;
+export type BlobHash = typeof BlobHash.Type;
+export declare const isBlobHash: <I>(input: I) => input is I & string;
+export declare const blobBytes: (blob: Uint8Array | string) => Uint8Array;
 export declare const UNREADABLE_WRITER = "chernabog:unreadable";
 export declare const UNREADABLE_PHASE = "unreadable";
 export declare const unreadableRecord: (version: string, at: DateTime.Utc, why: string) => PhaseRecord;
@@ -1448,11 +1453,13 @@ export type PhaseTransition = {
     readonly to: Phase;
     readonly by: PhaseWriter;
     readonly data?: PhaseData;
+    readonly blobs?: ReadonlyArray<Uint8Array | string>;
 };
 declare const Progress_base: Context.ServiceClass<Progress, "@chernabog/sdk/Progress", {
     read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
     readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
     advance(item: string, transition: PhaseTransition): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+    blob(item: string, hash: BlobHash): Effect.Effect<Option.Option<Uint8Array>, ProgressError>;
 }>;
 export declare class Progress extends Progress_base {
 }
@@ -1460,6 +1467,7 @@ export declare const ProgressCapability: Capabilities.Capability<{
     read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
     readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
     advance(item: string, transition: PhaseTransition): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+    blob(item: string, hash: BlobHash): Effect.Effect<Option.Option<Uint8Array>, ProgressError>;
 }, {
     advance: (item: string, transition: PhaseTransition) => Effect.Effect<PhaseRecord, PhaseMoved | ProgressError, never>;
 }>;

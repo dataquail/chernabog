@@ -5,7 +5,8 @@
 // repeat's, and pr.land to the pull request's merge-held record. The
 // document's own source offers the item again once a person answers, or the
 // base is green, or the wait runs out, and the new run starts at that node:
-// in the plan's round it parked in, with the plan read back from its comment.
+// in the plan's round it parked in, with the plan read back from the blob
+// the record names.
 
 import {
   type CiState,
@@ -15,7 +16,6 @@ import {
   Plan,
   PullRequest,
   Resume,
-  reviewMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
@@ -133,21 +133,26 @@ describe("the plan document in a CI job", () => {
     });
 
   // A fake as a run that parked on round `round`'s plan, written `at`, leaves
-  // it: the plan's comment, and the spec's record as `from`'s, in that round.
+  // it: the plan's comment, and the spec's record as `from`'s, in that round,
+  // naming the blob that keeps NODES.
   const parkedIn = (from: Fake, round: number, at: DateTime.Utc) => {
     const fake = makeFake("approve", { ciJob: true });
     fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Plan.LABELS.proposed]);
     fake.comment(Plan.planComment(round, SUMMARY, Schema.decodeSync(Plan.Plan)(NODES)));
     const data = rawData(from, SPEC_ITEM);
     const resume = Schema.decodeUnknownSync(Parked)(data).resume;
+    const blob = Plan.planBlob(NODES);
 
     fake.recordPhase(SPEC_ITEM, "proposed", {
       at,
       data: {
         ...data,
         round,
+        plan: blob.hash,
+        after: 0,
         resume: { ...resume, kept: { proposed: { issue: ISSUE, round } } },
       },
+      blobs: [blob.text],
     });
 
     return fake;
@@ -171,9 +176,11 @@ describe("the plan document in a CI job", () => {
           "plan",
           "answer",
         ]);
-        // The plan isn't kept in the record: its spec and round are, and a
-        // run that takes it up reads it back from the comment.
+        // The plan isn't kept in the node's resume: its spec and round are,
+        // and a run that takes it up reads it back from the blob the record
+        // names, which the wait carried on from plan.propose's record.
         expect(resume.kept).toEqual({ proposed: { issue: ISSUE, round: 1 } });
+        expect(fake.records().get(SPEC_ITEM)?.blobs).toEqual([String(data.plan)]);
 
         // Nobody has answered: held, with why.
         expect((yield* resumes(fake, flow)).map((found) => found.held)).toEqual([
@@ -307,7 +314,7 @@ describe("pr.land's merge hold in a CI job", () => {
   // An auto:ship pull request a run approved in a CI job that has ended.
   const approvedEarlier = () => {
     const fake = makeFake("approve", { ciJob: true });
-    fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+    fake.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
     fake.setLabels(PULL, [SHIP]);
 
     return fake;

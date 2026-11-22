@@ -310,6 +310,7 @@ describe("an issue an open pull request already closes", () => {
       expect(summaryOf(finished)).toContain("#8");
 
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsHuman]);
+      expect(fake.phases()[Phases.issueItem(ISSUE)]).toBe("with-person");
       const said = saying(fake, "already close this issue");
       expect(said).toHaveLength(1);
       expect(said[0]?.body).toContain(PULL_URL);
@@ -329,6 +330,7 @@ describe("an issue an open pull request already closes", () => {
       expect(summaryOf(finished)).toContain("fork");
 
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsHuman]);
+      expect(fake.phases()[Phases.issueItem(ISSUE)]).toBe("with-person");
       expect(saying(fake, PULL_URL)).toHaveLength(1);
       expect(fake.requests).toEqual([]);
       expect(fake.labelsOf(PULL)).toEqual([]);

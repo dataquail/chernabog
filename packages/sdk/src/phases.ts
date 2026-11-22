@@ -22,6 +22,7 @@ import {
   PhaseWriter,
   Progress,
   ProgressError,
+  Repo,
   Run,
   SessionMarker,
   type WorkItem,
@@ -36,6 +37,8 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import * as Settings from "./settings.ts";
+
 // What a phase is kept for. These are the names claim refs already use.
 export type ItemKind = "issue" | "pull-request" | "epic";
 
@@ -47,10 +50,22 @@ export const PHASES = {
     askedQuestions: "asked-questions",
     awaitingReady: "awaiting-ready",
     readyTimedOut: "ready-timed-out",
+    // implement's wait for CI on the pull request its run opened, which parked.
     awaitingCi: "awaiting-ci",
+    // implement's wait for CI on a pull request it adopted, which parked: not
+    // awaiting-ci, so the phase alone says the run that takes it up hands the
+    // pull request off as an adopted one. Its data keeps the pull request,
+    // which isn't on the issue's branch.
+    awaitingAdoptedCi: "awaiting-adopted-ci",
     proposed: "proposed",
     planHandedBack: "plan-handed-back",
     becameEpic: "became-epic",
+    // With a person (ADR 21, decision 1): handed to one, or a plan's task
+    // for one; auto:needs-human is this record's projection.
+    withPerson: "with-person",
+    // A trusted person removed auto:needs-human from an item with-person: their
+    // intent, which observer:handed-back records.
+    handedBack: "handed-back",
   },
   pullRequest: {
     reviewAsked: "review-asked",
@@ -61,17 +76,26 @@ export const PHASES = {
     readyForPerson: "ready-for-person",
     draft: "draft",
     watched: "watched",
-    awaitingCi: "awaiting-ci",
+    // address-review's wait for CI on the fix it pushed, which parked: not
+    // the issue's awaiting-ci, which is implement's.
+    awaitingFixCi: "awaiting-fix-ci",
     // A watch of a merge commit's push CI that parked: post-merge's, not the
-    // pull request's own CI, which awaiting-ci is.
+    // pull request's own CI, which awaiting-fix-ci is.
     awaitingMergeCi: "awaiting-merge-ci",
     // resolve-conflicts' wait for CI on the merge it pushed, which parked: not
-    // awaiting-ci, which is address-review's wait on its own fix. Its data
+    // awaiting-fix-ci, which is address-review's wait on its own fix. Its data
     // keeps the review phase it parked over, which the run that takes it up
     // records again (Conflict.waitForCi).
     awaitingConflictCi: "awaiting-conflict-ci",
+    withPerson: "with-person",
+    handedBack: "handed-back",
   },
-  epic: { waiting: "waiting", finished: "finished" },
+  epic: {
+    waiting: "waiting",
+    finished: "finished",
+    withPerson: "with-person",
+    handedBack: "handed-back",
+  },
 } as const;
 
 type PhasesOf<Kind extends keyof typeof PHASES> =
@@ -80,49 +104,51 @@ type PhasesOf<Kind extends keyof typeof PHASES> =
 // One of the SDK's phases.
 export type Phase = PhasesOf<"issue"> | PhasesOf<"pullRequest"> | PhasesOf<"epic">;
 
-// The phase a CI job's run records before it parks on its pull request's CI
-// (Implement.waitForCi's park): awaiting-ci for the first round, then
-// awaiting-ci-2 once one fix of red CI was pushed, and so on, so the job that
-// resumes it counts ciRounds on from there.
-export const awaitingCi = (round: number) => {
+// The waits for CI whose phase carries the round it waits on: the first
+// round's phase, then `-2` once one fix of red CI was pushed, and so on
+// (awaiting-ci, awaiting-ci-2), so the run that takes the wait up counts
+// ciRounds on from there. Each is a park site's own (PARKS).
+export const ROUNDED = [
+  PHASES.issue.awaitingCi,
+  PHASES.issue.awaitingAdoptedCi,
+  PHASES.pullRequest.awaitingFixCi,
+  PHASES.pullRequest.awaitingConflictCi,
+] as const;
+
+export type Rounded = (typeof ROUNDED)[number];
+
+// The phase a wait for CI at `phase`'s site records in `round`.
+export const inRound = (phase: Rounded, round: number) => {
   if (round <= 1) {
-    return PHASES.issue.awaitingCi;
+    return phase;
   }
 
-  return `${PHASES.issue.awaitingCi}-${round}`;
+  return `${phase}-${round}`;
 };
 
-const AWAITING_CI = /^awaiting-ci(?:-(\d+))?$/;
+const ROUND = /^(.*?)(?:-(\d+))?$/;
 
-// The round of CI a phase awaitingCi recorded waits on; none for any other phase.
-export const ciRoundOf = (phase: string): Option.Option<number> =>
-  Option.map(Option.fromNullOr(AWAITING_CI.exec(phase)), (found) =>
-    Option.match(Option.fromUndefinedOr(found[1]), {
-      onNone: () => 1,
-      onSome: Number,
-    }),
+// The round of `phase`'s wait for CI that `recorded` waits on: 1 for the
+// phase itself, n for `phase-n`; none for any other phase.
+export const roundOf = (phase: Rounded, recorded: string): Option.Option<number> =>
+  Option.flatMap(Option.fromNullOr(ROUND.exec(recorded)), (found) =>
+    Option.map(
+      Option.liftPredicate(found[1], (base) => base === phase),
+      () =>
+        Option.match(Option.fromUndefinedOr(found[2]), {
+          onNone: () => 1,
+          onSome: Number,
+        }),
+    ),
   );
 
-// The phase resolve-conflicts records before it parks on CI for the merge it
-// pushed, by round, as awaitingCi does: awaiting-conflict-ci, then
-// awaiting-conflict-ci-2 once one fix of red CI was pushed.
-export const conflictCi = (round: number) => {
-  if (round <= 1) {
-    return PHASES.pullRequest.awaitingConflictCi;
-  }
-
-  return `${PHASES.pullRequest.awaitingConflictCi}-${round}`;
-};
-
-const AWAITING_CONFLICT_CI = /^awaiting-conflict-ci(?:-(\d+))?$/;
-
-// The round of CI a phase conflictCi recorded waits on; none for any other phase.
-export const conflictCiRoundOf = (phase: string): Option.Option<number> =>
-  Option.map(Option.fromNullOr(AWAITING_CONFLICT_CI.exec(phase)), (found) =>
-    Option.match(Option.fromUndefinedOr(found[1]), {
-      onNone: () => 1,
-      onSome: Number,
-    }),
+// The wait for CI `recorded` is a round of, and the round; none for a phase
+// that isn't one.
+export const roundedOf = (
+  recorded: string,
+): Option.Option<{ readonly phase: Rounded; readonly round: number }> =>
+  Arr.findFirst(ROUNDED, (phase) =>
+    Option.map(roundOf(phase, recorded), (round) => ({ phase, round })),
   );
 
 // What a source reads of an item with no record yet.
@@ -136,20 +162,14 @@ export const phasesOf = (item: ItemKind): ReadonlyArray<string> =>
 
 // A phase as the catalogue keys it: a later round's wait for CI
 // (`awaiting-ci-2`, `awaiting-conflict-ci-3`) is its first round's phase.
-export const declaredAs = (phase: string) => {
-  if (Option.isSome(ciRoundOf(phase))) {
-    return PHASES.issue.awaitingCi;
-  }
-
-  if (Option.isSome(conflictCiRoundOf(phase))) {
-    return PHASES.pullRequest.awaitingConflictCi;
-  }
-
-  return phase;
-};
+export const declaredAs = (phase: string): string =>
+  Option.match(roundedOf(phase), {
+    onNone: () => phase,
+    onSome: (found) => found.phase,
+  });
 
 // The one catalogue of the SDK's phases, keyed by phase name: the kinds of
-// item each is a phase of (awaiting-ci is an issue's and a pull request's).
+// item each is a phase of.
 // The ledger's check of a run's record and the compiler's check of a phase a
 // document names both go by it (misplacedOn), so they can't disagree.
 const CATALOGUE: ReadonlyMap<string, ReadonlyArray<ItemKind>> = new Map(
@@ -176,6 +196,66 @@ export const misplacedOn = (kind: ItemKind, phase: string): Option.Option<string
       () => !kinds.includes(kind),
     ),
   );
+
+// Every place a run parks (ADR 21, decision 4): the wait, the kind of item
+// its record is kept for, and the phase it records there, a phase of its own.
+// A park is a phase boundary, so the phase alone says where the run that
+// takes the item up starts, and `data` keeps only the facts it needs. No two
+// sites share a phase, across recipes and documents: a recipe's wait and the
+// block that is its document's form are one site.
+export type ParkSite = {
+  readonly site: string;
+  readonly item: ItemKind;
+  readonly phase: Phase;
+};
+
+export const PARKS: ReadonlyArray<ParkSite> = [
+  {
+    site: "implement: CI on the pull request its run opened (ci.waitAndFix)",
+    item: "issue",
+    phase: PHASES.issue.awaitingCi,
+  },
+  {
+    site: "implement: CI on a pull request it adopted (ci.waitPreparing)",
+    item: "issue",
+    phase: PHASES.issue.awaitingAdoptedCi,
+  },
+  {
+    site: "implement: an adopted draft its author marks ready (pr.awaitReady)",
+    item: "issue",
+    phase: PHASES.issue.awaitingReady,
+  },
+  {
+    site: "plan: a person's answer to the plan (plan.awaitAnswer)",
+    item: "issue",
+    phase: PHASES.issue.proposed,
+  },
+  {
+    site: "address-review: CI on the fix it pushed (author.waitForCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingFixCi,
+  },
+  {
+    site: "resolve-conflicts: CI on the merge it pushed (conflict.waitForCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingConflictCi,
+  },
+  {
+    site: "post-merge: push CI on the merge commit (merged.awaitCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingMergeCi,
+  },
+  {
+    site: "review, re-review: a merge held for a red base (pr.land)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.mergeHeld,
+  },
+  {
+    site: "epic: the epic between rounds (epic.park)",
+    item: "epic",
+    phase: PHASES.epic.waiting,
+  },
+];
 
 // The item a run on each subject works on, which a team's own
 // progress.advance step records its phase on. Four subjects are one pull
@@ -238,6 +318,60 @@ const asData = Schema.decodeSync(PhaseData);
 // The times a run's write reads the item again after another writer moved it.
 const RECORD_TRIES = 3;
 
+// The latest review of a pull request, as its record keeps it under `review`
+// (ADR 21, decision 7): the head it saw, who gave it, its round and verdict,
+// and the session it ran in, so a re-review resumes it. The merge gate, a
+// re-review and address-review read it here, not from the review's comment,
+// which is for people.
+export const Reviewed = Schema.Struct({
+  sha: Schema.String,
+  reviewer: Schema.String,
+  round: Schema.Finite,
+  verdict: Schema.Literals(["approve", "request-changes"]),
+  sessionId: Schema.optionalKey(Schema.String),
+  adapter: Schema.optionalKey(Schema.String),
+});
+
+export type Reviewed = typeof Reviewed.Type;
+
+const REVIEW = "review";
+
+const ReviewedData = Schema.Struct({ [REVIEW]: Reviewed });
+
+// The review `found` keeps; none for a record that keeps none.
+export const reviewOf = (found: PhaseRecord): Option.Option<Reviewed> =>
+  Option.map(
+    Option.flatMap(found.data, Schema.decodeUnknownOption(ReviewedData)),
+    (data) => data.review,
+  );
+
+// A review as record data, for review.round to record and backfill to copy.
+export const reviewData = (review: Reviewed) => ({
+  [REVIEW]: Schema.encodeSync(Reviewed)(review),
+});
+
+type Data = { readonly [key: string]: Json };
+
+// `data` with the review `from` keeps, unless `data` names one: a pull
+// request's latest review stays in its record through every phase after it
+// (merge-held, review-asked-again, a wait on CI), until a review replaces it.
+const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Data>) => {
+  if (Option.exists(data, (given) => REVIEW in given)) {
+    return data;
+  }
+
+  const kept = Option.flatMap(
+    Option.flatMap(from, (found) => found.data),
+    (found) => Option.fromUndefinedOr(found[REVIEW]),
+  );
+
+  return Option.match(kept, {
+    onNone: () => data,
+    onSome: (review) =>
+      Option.some<Data>({ ...Option.getOrElse(data, (): Data => ({})), [REVIEW]: review }),
+  });
+};
+
 // Records that `item` has reached `to`, as the run: from whatever phase it
 // holds now, and nothing when it is there already, so a source that
 // reconciled the same fact first, or a replay, writes no second record. A
@@ -246,28 +380,36 @@ const RECORD_TRIES = 3;
 // makes the handoff, so a replay of a finished one doesn't write again.
 // `data` is what the run that picks the item up next needs from this one, a
 // JSON object of at most 4 KB (core's PhaseData); an item already at `to`
-// keeps the data it has. `again` writes a fresh record even then, unless this
+// keeps the data it has. A pull request's review (reviewOf) is carried into
+// the new record unless `data` names one. `again` writes a fresh record even then, unless this
 // run wrote the one there: a wait that starts over, with a new `at` and data.
 // `always` writes a fresh record even when this run wrote the one there: a
 // wait a run may enter again after a signal woke it, whose data is this
-// round's, not the round it first parked in.
+// round's, not the round it first parked in. `blobs` is content too big for
+// `data`, written with the record and named in it by hash (Progress.blob).
 // Gives the record the item holds afterwards; record gives nothing, for an
 // activity that journals no result.
+export type RecordOptions = {
+  readonly again?: boolean;
+  readonly always?: boolean;
+  readonly blobs?: ReadonlyArray<Uint8Array | string>;
+};
+
 export const recording = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
     const run = yield* Run;
     const phase = asPhase(to);
     const by = asWriter(run.runId);
-    const carried = Option.map(Option.fromUndefinedOr(data), asData);
 
     for (let tries = 1; ; tries++) {
       const current = yield* progress.read(item);
+      const carried = Option.map(carryingReview(current, Option.fromUndefinedOr(data)), asData);
 
       const there = Option.filter(
         current,
@@ -283,9 +425,11 @@ export const recording = (
 
       // From the record just read, by version: one another writer moved
       // since is a lost race, which reads again.
+      const base = { from: current, to: phase, by, blobs: options.blobs ?? [] };
+
       const transition = Option.match(carried, {
-        onNone: () => ({ from: current, to: phase, by }),
-        onSome: (found) => ({ from: current, to: phase, by, data: found }),
+        onNone: () => base,
+        onSome: (found) => ({ ...base, data: found }),
       });
 
       const written = yield* progress.advance(item, transition).pipe(
@@ -309,7 +453,7 @@ export const record = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) => Effect.asVoid(recording(item, to, data, options));
 
 // A record a source won't act on (ADR 21, decision 5): the item's record,
@@ -394,7 +538,15 @@ export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>
 // the run that takes it up. `keeps` says whether the record already there is
 // this wait, which a run that took it up keeps as it is: by default, any
 // record at `phase`. `timeout` is how long the wait may last from `since`,
-// when it began, which every park's record keeps.
+// when it began, which every park's record keeps. `carries` reads, as the
+// record is written, what it carries on from the record there: data, and
+// blobs it names by hash (Progress.blob), which only the record that names
+// them reads, so a wait that keeps one writes it again.
+export type Carried = {
+  readonly data: { readonly [key: string]: Json };
+  readonly blobs: ReadonlyArray<Uint8Array | string>;
+};
+
 export type Parking = {
   readonly step: string;
   readonly item: string;
@@ -402,7 +554,10 @@ export type Parking = {
   readonly data: { readonly [key: string]: Json };
   readonly keeps?: (found: PhaseRecord) => boolean;
   readonly timeout?: Duration.Duration;
+  readonly carries?: Effect.Effect<Carried, ProgressError, Progress>;
 };
+
+const NOTHING_CARRIED: Effect.Effect<Carried> = Effect.succeed({ data: {}, blobs: [] });
 
 const Since = Schema.Struct({ since: Schema.String });
 
@@ -460,7 +615,14 @@ export const recordParking = (parking: Parking) =>
       // The item's record isn't this wait, so write it even over one this run
       // wrote: a run a signal woke parks again with its new round's data.
       const since = DateTime.formatIso(yield* DateTime.now);
-      yield* record(parking.item, parking.phase, { since, ...parking.data }, { always: true });
+      const carried = yield* parking.carries ?? NOTHING_CARRIED;
+
+      yield* record(
+        parking.item,
+        parking.phase,
+        { since, ...parking.data, ...carried.data },
+        { always: true, blobs: carried.blobs },
+      );
 
       return "parked" as const;
     }),
@@ -489,19 +651,29 @@ export const park = (parking: Parking, signals: ReadonlyArray<string>, id: strin
 export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
   phases.some((phase) => phase === found.phase);
 
-// Moves `item` from the record a source read, `found`, to `to`, only while it
-// is still that record, by version, from a fact
+// Moves `item` from the record a source read, `found`, to `to`, keeping its
+// review, only while it is still that record, by version, from a fact
 // on GitHub that no run was there to record, such as a person's review
 // (docs/run-progress/handoffs.md, question 5). Outside a run, so `by` names
 // the source. Returns the record the item holds afterwards: the one written,
 // or, when another writer moved it first, the one it moved it to.
-export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: Phase, by: string) =>
+export const reconcile = (
+  item: string,
+  found: Option.Option<PhaseRecord>,
+  to: Phase | (string & {}),
+  by: string,
+  data?: { readonly [key: string]: Json },
+) =>
   Progress.use((progress) =>
     progress
       .advance(item, {
         from: found,
         to: asPhase(to),
         by: asWriter(by),
+        ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
+          onNone: () => ({}),
+          onSome: (carried) => ({ data: asData(carried) }),
+        }),
       })
       .pipe(
         Effect.asSome,
@@ -677,3 +849,278 @@ export const advanceRun = (phase: string) =>
       yield* activity(step, record(item, phase));
     }
   });
+
+// With a person (ADR 21, decision 1): why the item went to one, and the phase
+// it left, none for an item with no record before. Nothing else of that
+// record is kept: a park, a person's included, is a phase boundary (decision
+// 4), so what comes after reads the record and the world, never what the run
+// before it had.
+export const WithPerson = Schema.Struct({
+  why: Schema.String,
+  from: Schema.OptionFromNullOr(Schema.String),
+});
+
+const encodeWithPerson = Schema.encodeSync(WithPerson);
+
+// A with-person record's data as the JSON it is written as.
+const encodeAsJson = (said: typeof WithPerson.Type): { readonly [key: string]: Json } =>
+  encodeWithPerson(said);
+
+// The longest `why` a with-person record keeps, so it fits a record's 4 KB.
+const WHY_SIZE = 1000;
+
+// What a with-person record keeps, as data: `why`, and the phase of the
+// record it left.
+export const withPersonData = (
+  why: string,
+  left: Option.Option<PhaseRecord>,
+): { readonly [key: string]: Json } =>
+  encodeAsJson({
+    why: Option.match(
+      Option.liftPredicate(why, (told) => told.length > WHY_SIZE),
+      {
+        onNone: () => why,
+        onSome: (told) => `${told.slice(0, WHY_SIZE - 1)}…`,
+      },
+    ),
+    from: Option.map(left, (found) => found.phase),
+  });
+
+// The issue or pull request number an item's record is kept for (`issue-12`,
+// `pr-7`, `epic-4`, whose epic is issue 4); none for a team's own item.
+export const numberOf = (item: string): Option.Option<number> =>
+  Option.map(Option.fromNullOr(/^(?:issue|pr|epic)-(\d+)$/.exec(item)), (found) =>
+    Number(found[1]),
+  );
+
+// Whether a person has the item whose record is `found` (ADR 21, decision 1):
+// its record is with-person. A hand-back moves the record on, which releases
+// it; auto:needs-human, the record's projection, says nothing either way.
+export const isWithPerson = (found: Option.Option<PhaseRecord>) =>
+  Option.exists(found, (held) => held.phase === PHASES.issue.withPerson);
+
+// Whether a person has `item`, by its record (isWithPerson), as a source or
+// a run reads it (current).
+export const withPerson = (item: string) => Effect.map(current(item), isWithPerson);
+
+// Records that `item` is with a person, and why, from whatever phase it
+// holds; nothing when it is with one already. Without the label: for an item
+// labelled as it is made, such as a plan's human task. Call it inside the
+// activity that makes the hand-off, as record.
+export const recordWithPerson = (item: string, why: string) =>
+  Effect.gen(function* () {
+    const left = yield* Progress.use((progress) => progress.read(item));
+
+    yield* record(item, PHASES.issue.withPerson, withPersonData(why, left));
+  });
+
+// Hands `item` to a person (ADR 21, decision 1): records with-person, then
+// labels its issue or pull request auto:needs-human (the repo's needs-human
+// label), the record's projection. The one way the SDK hands an item to a
+// person. Call it inside the activity that makes the hand-off, as record.
+export const handToPerson = (item: string, why: string) =>
+  Effect.gen(function* () {
+    yield* recordWithPerson(item, why);
+
+    for (const number of Option.toArray(numberOf(item))) {
+      const labels = yield* Settings.labels;
+      yield* GitHub.use((github) => github.addLabel(number, labels.needsHuman));
+    }
+  });
+
+const HandedBackData = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
+
+// The phase a handed-back record says the item went to the person from; none
+// for any other record, or one that came from no phase. Nothing else of that
+// phase carries over (ADR 21, decision 4): a flow that takes the item up
+// again reads what it needs from GitHub.
+export const handedBackFrom = (found: PhaseRecord): Option.Option<string> =>
+  Option.flatMap(
+    Option.filter(found.data, () => found.phase === PHASES.issue.handedBack),
+    (data) =>
+      Option.flatMap(Schema.decodeUnknownOption(HandedBackData)(data), (said) =>
+        Option.fromNullishOr(said.from),
+      ),
+  );
+
+// Who records that a person handed an item back (handedBack).
+export const HANDED_BACK_BY = "observer:handed-back";
+
+// The roles on the repo whose say a label's removal counts as: GitHub's
+// write access and above.
+const TRUSTED_PERMISSIONS = ["admin", "maintain", "write"];
+
+const LabelEvents = Schema.Array(
+  Schema.Struct({
+    event: Schema.String,
+    label: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
+    actor: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  }),
+);
+
+const Permission = Schema.Struct({ permission: Schema.String });
+
+// GitHub lists an item's events oldest first, a page at a time.
+const EVENTS_PAGE = 100;
+
+// The most pages of events read for one item; past them, the latest removal
+// is unknown, so nothing is handed back.
+const EVENTS_PAGES = 30;
+
+// Who last removed `label` from the issue or pull request, by all its
+// events, every page of them; none when GitHub lists no removal, or more
+// events than are read.
+const removedBy = (number: number, label: string) =>
+  Effect.gen(function* () {
+    const { slug } = yield* Repo;
+    const github = yield* GitHub;
+    let last = Option.none<string>();
+
+    for (let page = 1; page <= EVENTS_PAGES; page++) {
+      const listed = Option.getOrElse(
+        Schema.decodeUnknownOption(LabelEvents)(
+          yield* github.request(
+            "GET",
+            `/repos/${slug}/issues/${number}/events?per_page=${EVENTS_PAGE}&page=${page}`,
+            Option.none(),
+          ),
+        ),
+        () => [],
+      );
+
+      for (const found of listed) {
+        if (found.event === "unlabeled" && found.label?.name === label) {
+          last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
+        }
+      }
+
+      if (listed.length < EVENTS_PAGE) {
+        return last;
+      }
+    }
+
+    return Option.none<string>();
+  });
+
+// Whether `login` is one the repo trusts with intent: one of its personas,
+// or a person with write access to it.
+const trusted = (login: string) =>
+  Effect.gen(function* () {
+    const { personas, slug } = yield* Repo;
+
+    if (personas.some((own) => own.toLowerCase() === login.toLowerCase())) {
+      return true;
+    }
+
+    const found = yield* GitHub.use((github) =>
+      github.request(
+        "GET",
+        `/repos/${slug}/collaborators/${encodeURIComponent(login)}/permission`,
+        Option.none(),
+      ),
+    );
+
+    return Option.exists(Schema.decodeUnknownOption(Permission)(found), (said) =>
+      TRUSTED_PERMISSIONS.includes(said.permission),
+    );
+  });
+
+// The open issue or pull request an item's record is kept for: its labels.
+// None for one closed, or a team's own item.
+const openLabels = (item: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const number = numberOf(item);
+
+    if (Option.isNone(number)) {
+      return Option.none<ReadonlyArray<string>>();
+    }
+
+    if (item.startsWith(pullRequestItem(0).slice(0, -1))) {
+      const pull = yield* github.pullRequest(number.value);
+
+      return Option.liftPredicate(pull.labels, () => pull.state === "open");
+    }
+
+    const issue = yield* github.issue(number.value);
+
+    return Option.liftPredicate(issue.labels, () => issue.state !== "closed");
+  }).pipe(Effect.catchTag("NotFound", () => Effect.succeedNone));
+
+// An item a person handed back: its with-person record.
+export type HandedBack = { readonly item: string; readonly record: PhaseRecord };
+
+// The open items whose record is with-person but whose needs-human label a
+// trusted person removed (ADR 21, decision 1): their intent to hand it back.
+// A label removed by anyone else, or that GitHub names no remover of, hands
+// nothing back.
+export const handedBack = Effect.gen(function* () {
+  const labels = yield* Settings.labels;
+  const found: Array<HandedBack> = [];
+
+  for (const [item, held] of yield* records) {
+    if (held.phase !== PHASES.issue.withPerson) {
+      continue;
+    }
+
+    // One item GitHub fails to answer for is looked at again next tick; the
+    // rest, and the trigger, go on.
+    const back = yield* Effect.gen(function* () {
+      const open = yield* openLabels(item);
+
+      if (Option.isNone(open) || open.value.includes(labels.needsHuman)) {
+        return false;
+      }
+
+      const number = Option.getOrElse(numberOf(item), () => 0);
+      const remover = yield* removedBy(number, labels.needsHuman);
+
+      return Option.isSome(remover) && (yield* trusted(remover.value));
+    }).pipe(
+      Effect.catchTag("GitHubError", (failed) =>
+        Effect.logWarning(
+          `${item}: can't tell whether a person handed it back: ${failed.message}`,
+        ).pipe(Effect.as(false)),
+      ),
+    );
+
+    if (back) {
+      found.push({ item, record: held });
+    }
+  }
+
+  return found;
+});
+
+const WithPersonLeft = Schema.Struct({
+  from: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
+
+// What a hand-back records (ADR 21, decision 1): handed-back, with the phase
+// the item went to the person from as `from`, none for one with no record
+// before. Sources act on this record; nothing of the phase it left carries
+// over but its name.
+const returnOf = (held: PhaseRecord) => {
+  const left = Option.getOrElse(
+    Option.flatMap(held.data, Schema.decodeUnknownOption(WithPersonLeft)),
+    (): typeof WithPersonLeft.Type => ({}),
+  );
+
+  return asData({ from: Option.getOrNull(Option.fromNullishOr(left.from)) });
+};
+
+// Records, on each item a person handed back (handedBack), as
+// observer:handed-back, handed-back (returnOf). Only while the item
+// still holds the with-person record read; one another writer moved since
+// keeps that writer's record.
+export const reconcileHandedBack = Effect.gen(function* () {
+  for (const back of yield* handedBack) {
+    yield* reconcile(
+      back.item,
+      Option.some(back.record),
+      PHASES.issue.handedBack,
+      HANDED_BACK_BY,
+      returnOf(back.record),
+    );
+  }
+});

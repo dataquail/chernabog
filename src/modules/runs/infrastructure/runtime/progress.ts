@@ -1,16 +1,23 @@
 // Core's Progress port on protected branches (ADR 0019,
 // docs/run-progress/storage-test.md): each item is a branch,
 // `chernabog/threads/<item>`, and each phase it reaches is one commit on it,
-// with no file changes and the record in the message's trailers. A thread
-// starts from a root commit with the empty tree, so no workflow runs on it and
-// it never falls behind the default branch; that root commit is the first
-// phase, and creating the ref is the atomic step two first phases race on.
+// with the record in the message's trailers. A thread starts from a root
+// commit with the empty tree, so no workflow runs on it and it never falls
+// behind the default branch; that root commit is the first phase, and creating
+// the ref is the atomic step two first phases race on. The only files a
+// thread's commits hold are the blobs a record wrote, each at
+// `blobs/<hash>` in the commit that is that record, so the two land together
+// or not at all.
 // Every later phase is `createCommitOnBranch` with `expectedHeadOid`, GitHub's
 // compare-and-set on the branch. Rulesets on `chernabog/threads/*` keep anyone
 // but the personas from writing the record; without them, writes still work and
 // `chernabog doctor` warns that the record is unprotected.
 
+import { createHash } from "node:crypto";
+
 import {
+  blobBytes,
+  BlobHash,
   type Json,
   parseJson,
   Phase,
@@ -26,6 +33,7 @@ import {
   type RepoSettings,
   unreadableRecord,
 } from "@chernabog/core";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -76,6 +84,22 @@ export const isThreadItem = (item: string) =>
 const printDataLine = (data: PhaseData) =>
   printJson(data).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 
+// The blobs a transition writes, each named by its SHA-256 and written once,
+// in the order it gave them.
+export const blobsOf = (transition: PhaseTransition): ReadonlyMap<BlobHash, Uint8Array> =>
+  new Map(
+    (transition.blobs ?? []).map((blob) => {
+      const bytes = blobBytes(blob);
+
+      return [createHash("sha256").update(bytes).digest("hex"), bytes];
+    }),
+  );
+
+// Where a blob lives in its record's commit.
+export const blobPath = (hash: BlobHash) => `blobs/${hash}`;
+
+const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
+
 export const recordMessage = (item: string, transition: PhaseTransition) => {
   const from = Option.match(transition.from, {
     onNone: () => "",
@@ -89,6 +113,10 @@ export const recordMessage = (item: string, transition: PhaseTransition) => {
     ...Option.toArray(
       Option.map(Option.fromUndefinedOr(transition.data), (data) => `Data: ${printDataLine(data)}`),
     ),
+    ...Arr.match(Arr.fromIterable(blobsOf(transition).keys()), {
+      onEmpty: () => [],
+      onNonEmpty: (hashes) => [`Blobs: ${hashes.join(" ")}`],
+    }),
   ];
 
   return {
@@ -139,6 +167,17 @@ const requiredTrailer = <A>(
 
 const decodeDataLine = (value: string) => Option.flatMap(parseJson(value), decodeData);
 
+const decodeHash = Schema.decodeUnknownOption(BlobHash);
+
+// A Blobs trailer's hashes, space-separated: none if any isn't a hash.
+const decodeBlobsLine = (value: string) =>
+  Option.all(
+    value
+      .split(" ")
+      .filter((hash) => hash.length > 0)
+      .map((hash) => decodeHash(hash)),
+  );
+
 // The record a commit holds, read from its message and written `at` its
 // commit's date, or why it holds none. A `From` or `Data` trailer that is
 // there but doesn't decode makes it no record, as a bad `Phase` does.
@@ -159,7 +198,9 @@ export const readRecord = (
       "a JSON object a record can hold",
     );
 
-    return { phase, from, by, version, at, data };
+    const blobs = yield* optionalTrailer(message, "Blobs", decodeBlobsLine, "blob hashes");
+
+    return { phase, from, by, version, at, data, blobs: Option.getOrElse(blobs, () => []) };
   });
 
 // The record a commit holds; none for one that isn't a record.
@@ -173,11 +214,14 @@ export const parseRecord = (
 export const fromPhase = (transition: PhaseTransition) =>
   Option.map(transition.from, (read) => read.phase);
 
-// The record is this transition, by this writer: a retry of a write that landed.
+// The record is this transition, by this writer: a retry of a write that
+// landed. A writer that read this very record isn't retrying it, though it
+// makes the same move again, as a wait recorded over its own: it advances.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, fromPhase(transition));
+  Equal.equals(record.from, fromPhase(transition)) &&
+  !Option.exists(transition.from, (read) => read.version === record.version);
 
 // What an advance does, given the record the item holds: succeed with that
 // record (its own write, retried), fail as a lost race when it isn't the
@@ -257,6 +301,16 @@ const Created = Schema.Struct({
   committer: Schema.Struct({ date: Schema.String }),
 });
 
+const Made = Schema.Struct({ sha: Schema.String });
+
+const BlobObject = Schema.Struct({
+  repository: Schema.Struct({
+    object: Schema.OptionFromNullOr(Schema.Struct({ oid: Schema.String })),
+  }),
+});
+
+const BlobContent = Schema.Struct({ content: Schema.String, encoding: Schema.String });
+
 const RefError = Schema.Struct({ message: Schema.String });
 
 const READ = `
@@ -273,6 +327,14 @@ const READ_ALL = `
         nodes { name target { oid ... on Commit { message committedDate } } }
         pageInfo { hasNextPage endCursor }
       }
+    }
+  }`;
+
+// A file at a commit, by `<oid>:<path>`: the blob there, if any.
+const OBJECT = `
+  query ($owner: String!, $name: String!, $expression: String!) {
+    repository(owner: $owner, name: $name) {
+      object(expression: $expression) { ... on Blob { oid } }
     }
   }`;
 
@@ -419,6 +481,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           version,
           at,
           data: Option.fromUndefinedOr(transition.data),
+          blobs: Arr.fromIterable(blobsOf(transition).keys()),
         };
 
         seen.set(version, record);
@@ -426,11 +489,56 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         return record;
       });
 
-    // The item's first phase: a root commit with the empty tree, then the ref
-    // to it, which only one writer can create.
+    // A blob or tree made through the API, `what` for a message: its sha.
+    const make = (path: string, body: Json, what: string) =>
+      Effect.gen(function* () {
+        const made = yield* provide(githubRequest("POST", path, Option.some(body))).pipe(
+          Effect.mapError(failed),
+        );
+
+        if (made.status === 403 || made.status === 404) {
+          return yield* refusal(`HTTP ${made.status} creating ${what}`);
+        }
+
+        const decoded = yield* Schema.decodeUnknownEffect(Made)(Option.getOrNull(made.body)).pipe(
+          Effect.mapError(
+            () => new ProgressError({ message: `creating ${what} returned HTTP ${made.status}` }),
+          ),
+        );
+
+        return decoded.sha;
+      });
+
+    // The tree of a first phase's commit: the empty tree, or each blob it
+    // writes at blobs/<hash>. Until a ref names its commit, nothing reads it.
+    const treeOf = (transition: PhaseTransition) =>
+      Effect.gen(function* () {
+        const blobs = Arr.fromIterable(blobsOf(transition));
+
+        if (!Arr.isArrayNonEmpty(blobs)) {
+          return EMPTY_TREE;
+        }
+
+        const tree = yield* Effect.forEach(blobs, ([hash, bytes]) =>
+          Effect.map(
+            make(
+              `${repoPath}/git/blobs`,
+              { content: base64(bytes), encoding: "base64" },
+              `blob ${hash}`,
+            ),
+            (sha): Json => ({ path: blobPath(hash), mode: "100644", type: "blob", sha }),
+          ),
+        );
+
+        return yield* make(`${repoPath}/git/trees`, { tree }, "a thread's tree");
+      });
+
+    // The item's first phase: a root commit with the empty tree, or the tree
+    // of its blobs, then the ref to it, which only one writer can create.
     const first = (item: string, branch: string, transition: PhaseTransition) =>
       Effect.gen(function* () {
         const message = recordMessage(item, transition);
+        const tree = yield* treeOf(transition);
 
         const commit = yield* provide(
           githubRequest(
@@ -438,7 +546,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             `${repoPath}/git/commits`,
             Option.some({
               message: `${message.headline}\n\n${message.body}\n`,
-              tree: EMPTY_TREE,
+              tree,
               parents: [],
             }),
           ),
@@ -499,7 +607,13 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           branch: { repositoryNameWithOwner: options.slug, branchName: branch },
           expectedHeadOid: expected,
           message,
-          fileChanges: {},
+          // Each blob in the record's own commit, so the two land together.
+          fileChanges: {
+            additions: Arr.fromIterable(blobsOf(transition)).map(([hash, bytes]) => ({
+              path: blobPath(hash),
+              contents: base64(bytes),
+            })),
+          },
         };
 
         // A lost race arrives as HTTP 200 with errors, so the body is read
@@ -624,10 +738,47 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         );
       });
 
+    // The blob at `version`'s blobs/<hash>: GraphQL finds the file, and the
+    // blobs API gives its bytes, which GraphQL's text can't for binary.
+    const blobAt = (version: string, hash: BlobHash) =>
+      Effect.gen(function* () {
+        const expression = `${version}:${blobPath(hash)}`;
+
+        const found = yield* provide(
+          githubGraphql(OBJECT, { owner, name, expression }, BlobObject),
+        ).pipe(Effect.mapError(failed));
+
+        const oid = yield* Effect.fromOption(found.repository.object).pipe(
+          Effect.mapError(
+            () =>
+              new ProgressError({
+                message: `${version} names blob ${hash}, yet holds no ${blobPath(hash)}`,
+              }),
+          ),
+        );
+
+        const content = yield* provide(
+          githubJson("GET", `${repoPath}/git/blobs/${oid.oid}`, BlobContent),
+        ).pipe(Effect.mapError(failed));
+
+        return Uint8Array.from(Buffer.from(content.content, "base64"));
+      });
+
+    // Only a blob the item's record names, read at that record's commit.
+    const blob = (item: string, hash: BlobHash) =>
+      Effect.gen(function* () {
+        const named = Option.filter(yield* read(item), (record) => record.blobs.includes(hash));
+
+        return yield* Effect.transposeOption(
+          Option.map(named, (record) => blobAt(record.version, hash)),
+        );
+      });
+
     return Progress.of({
       read,
       readAll,
       advance: attempt,
+      blob,
     });
   });
 

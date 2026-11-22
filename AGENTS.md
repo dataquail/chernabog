@@ -1069,6 +1069,44 @@ disabling the rule.
   `codex` on the PATH: `gh auth token --user <login>` answers `token-<login>`,
   and the agents log the token they saw. Extend these rather than mocking
   modules (module mocking is a lint error).
+- **Mutation runs** (`bun run mutation <module>`, configs in `stryker/`) rewrite the tree in
+  place while they run, so don't edit files until one ends.
+
+## Behavior specs (#576)
+
+A `.feature` file in `test/features/` is a spec that a person owns. It runs
+through drivers (in-process, sandbox, later ci and live), so one scenario
+checks more than one way of running chernabog.
+docs/adr/0022-behavior-specs-in-gherkin.md has the why.
+
+- **Drafting a feature.** Draft it from the issue, never from code that
+  already exists. Write outcomes a person would say ("bob's review run stays
+  parked"), never mechanism ("the daemon polls `/runs`"). A person should be
+  able to follow a scenario in about 30 seconds; split one that is bigger or
+  lower-level. A draft is a spec only once a person has proofread, edited
+  and approved it.
+- **Driver tags.** Tag the Feature or the Scenario with the drivers that run
+  it: `@driver:in-process`, `@driver:sandbox`. A scenario with no driver
+  tag, a tag no driver answers, or a step with no definition fails the run.
+  Never make one skip.
+- **Where a spec sits in a stack.** A feature is its own layer, at the
+  bottom, with no step definitions or implementation. The step definitions
+  and the code that make it pass are the layers above.
+- **What agents own.** Step definitions, the domain layer they are written
+  against (sandbox, personas, items, runs), the drivers, and each feature's
+  entry files: one `.test.ts` per driver, the in-process one in
+  `test/features/` and the sandbox one in `test/acceptance/`.
+- **What agents don't own.** A `.feature` file. Once a person has approved
+  one, an agent may propose a change but never approve it. A pull request
+  that touches a feature file is handed to a person
+  (`PullRequest.handToPerson`), and only a person's approving review of a
+  head with the same feature files clears it. An agent acting as the human
+  on a stack never resolves that hand-off, and never removes its label.
+- **When a scenario fails,** fix the code, the step definitions or the
+  driver. Never edit the feature to make it pass.
+- **Not everything is a feature.** Combinatorial coverage stays in the
+  TypeScript scenario tables (`test/compose-scenarios.ts`). Don't port
+  `test/acceptance/` wholesale.
 
 ## The redesign in flight
 

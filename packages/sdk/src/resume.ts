@@ -3,9 +3,10 @@
 // on CI records the wait, and the next run starts at the node that recorded
 // it rather than at the top.
 //
-// The record's data names the node (`resume.node`), not just the phase: one
-// phase can be recorded at several nodes, as implement's two waits for CI both
-// record awaiting-ci on the issue. With the node it keeps the run's work item,
+// The record's data names the node (`resume.node`), not just the phase. Each
+// park site records a phase of its own now (Phases.PARKS), so the phase
+// alone says where a run starts; until documents resume by it (#567), the
+// node is what they go by. With the node it keeps the run's work item,
 // the persona that parked it, and the outputs of the steps before it that the
 // steps from that node on read (`kept`), which the compiler works out. A step
 // can be kept only when its block says how its output goes into JSON

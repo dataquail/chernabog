@@ -19,6 +19,7 @@ import {
   Git,
   GitError,
   GitHub,
+  GitHubError,
   HEADLESS,
   type Issue,
   type Json,
@@ -246,6 +247,9 @@ export const makeFake = (
   ]);
 
   const comments: Array<Comment> = [];
+  // The last comment id given: ids only grow, as GitHub's do, so a comment a
+  // test deletes leaves its id unused.
+  let commentIds = 0;
   const reviews: Array<string> = [];
 
   // Who this run acts as, who the pull request asks to review it, and the reviews submitted on it.
@@ -269,7 +273,22 @@ export const makeFake = (
 
   // Records `to` on `item`, as a run before this test's would have, or as
   // `by` when `when` names another writer: from whatever it holds now, at the
-  // epoch unless `when` says when, with the data it gives.
+  // epoch unless `when` says when, with the data it gives, and the review the
+  // record kept, unless the data names one, as Phases.record keeps it.
+  // `data` with the review `item`'s record keeps, unless `data` names one.
+  const keptReview = (item: string, data: Option.Option<{ readonly [key: string]: Json }>) => {
+    const kept = Option.flatMap(
+      Option.flatMap(Option.fromUndefinedOr(records().get(item)), (found) => found.data),
+      (found) => Option.fromUndefinedOr(found.review),
+    );
+
+    if (Option.isNone(kept) || Option.exists(data, (given) => "review" in given)) {
+      return data;
+    }
+
+    return Option.some({ ...Option.getOrElse(data, () => ({})), review: kept.value });
+  };
+
   const recordPhase = (
     name: string,
     to: string,
@@ -277,6 +296,7 @@ export const makeFake = (
       readonly at?: DateTime.Utc;
       readonly data?: { readonly [key: string]: Json };
       readonly by?: string;
+      readonly blobs?: ReadonlyArray<string>;
     } = {},
   ) => {
     progress.seed(
@@ -288,10 +308,11 @@ export const makeFake = (
           onNone: () => ({}),
           onSome: (at) => ({ at }),
         }),
-        ...Option.match(Option.fromUndefinedOr(when.data), {
+        ...Option.match(keptReview(name, Option.fromUndefinedOr(when.data)), {
           onNone: () => ({}),
           onSome: (data) => ({ data: Schema.decodeSync(PhaseData)(data) }),
         }),
+        blobs: when.blobs ?? [],
       },
     );
   };
@@ -310,6 +331,27 @@ export const makeFake = (
   ) => {
     recordPhase(`issue-${session.issue}`, "handed-off", {
       data: { pullRequest, author: { ...session } },
+    });
+  };
+
+  // Records a review of the pull request as review.round does, in its
+  // record's data: approved or changes-asked by the verdict, unless `phase`
+  // names another, with what the review saw and who gave it.
+  const recordReview = (
+    review: {
+      readonly sha: string;
+      readonly round: number;
+      readonly verdict: "approve" | "request-changes";
+      readonly reviewer?: string;
+      readonly sessionId?: string;
+      readonly adapter?: string;
+    },
+    phase?: string,
+  ) => {
+    const byVerdict = { approve: "approved", "request-changes": "changes-asked" } as const;
+
+    recordPhase(`pr-${PULL}`, phase ?? byVerdict[review.verdict], {
+      data: { review: { reviewer: people.me, ...review } },
     });
   };
 
@@ -469,6 +511,22 @@ export const makeFake = (
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
   const removed: Array<string> = [];
+
+  // Each issue's and pull request's events, as GitHub lists them oldest
+  // first, a page of 100 at a time; each login's permission on the repo
+  // ("read" for any other); and the numbers whose events GitHub fails to list.
+  const timeline = {
+    events: new Map<number, ReadonlyArray<Json>>(),
+    permissions: new Map<string, string>(),
+    failing: new Set<number>(),
+  };
+
+  const EVENTS = new RegExp(
+    `^/repos/${settings.slug}/issues/(\\d+)/events\\?per_page=100&page=(\\d+)$`,
+  );
+
+  const PERMISSION = new RegExp(`^/repos/${settings.slug}/collaborators/([^/]+)/permission$`);
+
   let planned = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -483,8 +541,10 @@ export const makeFake = (
   };
 
   const comment = (body: string, by = "chernabog-bot") => {
+    commentIds += 1;
+
     comments.push({
-      id: comments.length + 1,
+      id: commentIds,
       author: by,
       body,
       createdAt: "2026-10-20T00:00:00Z",
@@ -935,88 +995,117 @@ export const makeFake = (
         }),
       // Only the pull request itself, as GitHub's REST API answers it.
       request: (method, path, body) =>
-        Effect.sync((): Json => {
-          if (method === "DELETE" && path === `/repos/${settings.slug}/issues/${ISSUE}/assignees`) {
-            const leaving = Option.match(body, {
-              onNone: (): ReadonlyArray<string> => [],
-              onSome: (sent) =>
-                Option.match(Schema.decodeUnknownOption(Unassigning)(sent), {
-                  onNone: (): ReadonlyArray<string> => [],
-                  onSome: (unassigning) => unassigning.assignees,
-                }),
-            });
+        Effect.suspend(() => {
+          const listed = Option.fromNullOr(EVENTS.exec(path));
 
-            people.assigned = people.assigned.filter((login) => !leaving.includes(login));
+          if (method === "GET" && Option.isSome(listed)) {
+            const number = Number(listed.value[1]);
+            const page = Number(listed.value[2]);
 
-            return {};
-          }
-
-          if (method === "PATCH") {
-            return edit(path, body);
-          }
-
-          // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
-            const [compared = ""] = path
-              .slice(`/repos/${settings.slug}/compare/`.length)
-              .split("...");
-
-            based.compared.push(decodeURIComponent(compared));
-
-            return { ahead_by: git.pushes + git.commits };
-          }
-
-          if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
-            return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
-          }
-
-          const closedOne = Option.fromUndefinedOr(
-            closed.find((other) => path === `/repos/${settings.slug}/pulls/${other.number}`),
-          );
-
-          if (method === "GET" && Option.isSome(closedOne)) {
-            return closedOne.value;
-          }
-
-          // The pull requests closed lately: those a test closed, and the one
-          // pull request, once it merged.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
-            if (states.pull !== "merged") {
-              return [...closed];
+            if (timeline.failing.has(number)) {
+              return Effect.fail(new GitHubError({ message: `events of #${number}: 502` }));
             }
 
-            return [
-              ...closed,
-              {
-                number: PULL,
-                title: "feat: a change",
-                html_url: `https://github.com/dataquail/demo/pull/${PULL}`,
-                body: "",
-                user: { login: authored.author },
-                merged_at: merged.at,
-                merge_commit_sha: merged.sha,
-                base: { ref: stack.base },
-                head: { ref: authored.headRef },
-              },
-            ];
+            const all = timeline.events.get(number) ?? [];
+
+            return Effect.succeed<Json>(all.slice((page - 1) * 100, page * 100));
           }
 
-          if (method === "GET" && path === `/repos/${settings.slug}/commits/${merged.sha}`) {
-            return { sha: merged.sha, parents: [{ sha: merged.parent }] };
+          const permission = Option.fromNullOr(PERMISSION.exec(path));
+
+          if (method === "GET" && Option.isSome(permission)) {
+            return Effect.succeed<Json>({
+              permission:
+                timeline.permissions.get(decodeURIComponent(String(permission.value[1]))) ?? "read",
+            });
           }
 
-          if (method === "POST") {
-            return post(path, body);
-          }
+          return Effect.sync((): Json => {
+            if (
+              method === "DELETE" &&
+              path === `/repos/${settings.slug}/issues/${ISSUE}/assignees`
+            ) {
+              const leaving = Option.match(body, {
+                onNone: (): ReadonlyArray<string> => [],
+                onSome: (sent) =>
+                  Option.match(Schema.decodeUnknownOption(Unassigning)(sent), {
+                    onNone: (): ReadonlyArray<string> => [],
+                    onSome: (unassigning) => unassigning.assignees,
+                  }),
+              });
 
-          // The issues this login opened, newest first.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/issues?`)) {
-            return [...graph.made.values()]
-              .toReversed()
-              .map((made) => ({ number: made.number, body: made.body }));
-          }
+              people.assigned = people.assigned.filter((login) => !leaving.includes(login));
 
-          return {};
+              return {};
+            }
+
+            if (method === "PATCH") {
+              return edit(path, body);
+            }
+
+            // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+              const [compared = ""] = path
+                .slice(`/repos/${settings.slug}/compare/`.length)
+                .split("...");
+
+              based.compared.push(decodeURIComponent(compared));
+
+              return { ahead_by: git.pushes + git.commits };
+            }
+
+            if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
+              return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
+            }
+
+            const closedOne = Option.fromUndefinedOr(
+              closed.find((other) => path === `/repos/${settings.slug}/pulls/${other.number}`),
+            );
+
+            if (method === "GET" && Option.isSome(closedOne)) {
+              return closedOne.value;
+            }
+
+            // The pull requests closed lately: those a test closed, and the one
+            // pull request, once it merged.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
+              if (states.pull !== "merged") {
+                return [...closed];
+              }
+
+              return [
+                ...closed,
+                {
+                  number: PULL,
+                  title: "feat: a change",
+                  html_url: `https://github.com/dataquail/demo/pull/${PULL}`,
+                  body: "",
+                  user: { login: authored.author },
+                  merged_at: merged.at,
+                  merge_commit_sha: merged.sha,
+                  base: { ref: stack.base },
+                  head: { ref: authored.headRef },
+                },
+              ];
+            }
+
+            if (method === "GET" && path === `/repos/${settings.slug}/commits/${merged.sha}`) {
+              return { sha: merged.sha, parents: [{ sha: merged.parent }] };
+            }
+
+            if (method === "POST") {
+              return post(path, body);
+            }
+
+            // The issues this login opened, newest first.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/issues?`)) {
+              return [...graph.made.values()]
+                .toReversed()
+                .map((made) => ({ number: made.number, body: made.body }));
+            }
+
+            return {};
+          });
         }),
       comments: () => Effect.sync(() => [...comments]),
       reviewComments: () => Effect.succeed([]),
@@ -1196,6 +1285,7 @@ export const makeFake = (
     records,
     recordPhase,
     handedOff,
+    recordReview,
     graph,
     branchPulls,
     closed,
@@ -1211,6 +1301,7 @@ export const makeFake = (
     plans,
     removed,
     board,
+    timeline,
   };
 };
 

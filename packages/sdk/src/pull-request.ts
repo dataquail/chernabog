@@ -9,7 +9,6 @@ import {
   Git,
   GitHub,
   type Json,
-  latestMarker,
   type MergeMethod,
   MergeRefused,
   NeedsHuman,
@@ -20,7 +19,6 @@ import {
   type PullRequest,
   PullRequestClosed,
   reportAs,
-  reviewMarker,
   Run,
   Runs,
   Skip,
@@ -359,7 +357,7 @@ export const baseRed = (pull: PullRequest) =>
 // Merges the pull request, only when that is safe: it is open and not a
 // layer of a stack, its checks are green on the current head by the flow's
 // CI policy (Ci.verdict: by default, its required checks passed and no check
-// failed), the latest review approved that very head or one the head has only merged
+// failed), the latest review its record keeps (Phases.reviewOf) approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, its
 // base branch's CI isn't red when the flow holds merges for that (baseRed),
 // and GitHub's rules for the repo allow it. A pull request into any branch may
@@ -412,9 +410,11 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* refuse(pullRequest, "checks are still pending");
       }
 
-      const reviewed = latestMarker(
-        reviewMarker.read,
-        (yield* github.comments(pullRequest)).map((posted) => posted.body),
+      // The review the pull request's record keeps, not its comment, which
+      // a person may edit or delete (ADR 21, decision 7).
+      const reviewed = Option.flatMap(
+        yield* Phases.current(Phases.pullRequestItem(pullRequest)),
+        Phases.reviewOf,
       );
 
       if (Option.isNone(reviewed)) {
@@ -715,16 +715,14 @@ type Held = {
 };
 
 // Every run holding a merge on an open pull request on the automated path
-// (ships), by its merge-held record (ADR 0021, decision 3). Not one labelled
-// needs-human: a run that gave the hold up handed it to a person
-// (handToPerson), and no flow takes it up again until they remove the label.
+// (ships), by its merge-held record (ADR 0021, decision 3). A run that gave
+// the hold up handed it to a person (handToPerson), whose with-person record
+// holds no merge, so no flow takes it up again until they hand it back.
 const heldMergesOnPulls = Effect.gen(function* () {
   const github = yield* GitHub;
   const labelNames = yield* Settings.labels;
 
-  const shipping = (yield* github.openPullRequests).filter(
-    (pull) => ships(pull, labelNames) && !pull.labels.includes(labelNames.needsHuman),
-  );
+  const shipping = (yield* github.openPullRequests).filter((pull) => ships(pull, labelNames));
 
   const all = yield* Phases.records;
 
@@ -809,13 +807,13 @@ export const documentMergeResumes = (
         Effect.asSome,
         Effect.catchTag("NotFound", () => Effect.succeedNone),
       ),
-      (found) =>
-        found.state === "open" &&
-        ships(found, labelNames) &&
-        !found.labels.includes(labelNames.needsHuman),
+      (found) => found.state === "open" && ships(found, labelNames),
     );
 
-    if (Option.isNone(pull)) {
+    if (
+      Option.isNone(pull) ||
+      (yield* Phases.withPerson(Phases.pullRequestItem(pull.value.number)))
+    ) {
       return Option.none<WorkItem>();
     }
 
@@ -934,15 +932,14 @@ export const requestReview = (pullRequest: number) =>
     Schema.String,
   );
 
-// Labels the pull request needs-human and says why; no flow picks it up again
-// until a person removes the label.
+// Hands the pull request to a person (Phases.handToPerson) and says why; no
+// flow picks it up again until a person removes the label.
 export const handToPerson = (pullRequest: number, reason: string) =>
   activity(
     `needs-human-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
-      yield* github.addLabel(pullRequest, labelNames.needsHuman);
+      yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest), reason);
       yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));

@@ -340,8 +340,18 @@ change.
    runs that take it up: a source stops holding the item once it passes,
    and the run that takes it up, finding CI still pending, hands it to a
    person. implement's wait on a pull request it adopted parks on the
-   issue's `awaiting-ci` as its wait on one it opened does, and the data
-   keeps the pull request, which isn't on the issue's branch.
+   issue's `awaiting-adopted-ci`, a phase of its own (#566), not the
+   `awaiting-ci` of its wait on one it opened, and the data keeps the pull
+   request, which isn't on the issue's branch. address-review's wait on the
+   CI of the fix it pushed parks on the pull request's `awaiting-fix-ci`.
+   `Phases.PARKS` lists every park site with its phase, and a test holds
+   the recipes' waits and the documents' blocks to it: no two sites share a
+   phase. `chernabog progress backfill` moves a record parked on the old
+   shared `awaiting-ci` onto its site's phase, in its round and with its
+   data: a pull request's to `awaiting-fix-ci`, and an issue's that keeps an
+   adopted pull request to `awaiting-adopted-ci`. A flow document's park at
+   `ci.waitPreparing` stays where it is until #567, since it resumes at the
+   node its data names.
 
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
@@ -444,8 +454,7 @@ change.
      any phase on an item of a team's own. A later round's wait for CI
      (`awaiting-ci-2`) is checked as its first round's. **One catalogue
      says which kinds of item each SDK phase belongs to**, keyed by phase
-     name (`Phases.misplacedOn`; `awaiting-ci` is an issue's and a pull
-     request's). The ledger's check of a run's record and the compiler's
+     name (`Phases.misplacedOn`; since #566 no park phase is two kinds'). The ledger's check of a run's record and the compiler's
      check of a phase a document names both go by it, so they can't
      disagree. `Compose.check` refuses a `progress.advance` of another
      kind's phase, such as an epic's `waiting` on a pull-request flow, and
@@ -454,7 +463,7 @@ change.
      held the record as an anomaly. A test runs every recipe document's
      records through both. Working the
      catalogue out found two transitions the SDK made and didn't declare:
-     address-review's reconcile from `awaiting-ci` to `changes-asked`, now
+     address-review's reconcile from `awaiting-ci` (now `awaiting-fix-ci`) to `changes-asked`, now
      in its source's reconciles, and the approval Review finds when it
      takes up a fix's wait, now `Review.OBSERVED`.
    - **How the anomaly reaches a person.** A hold with a reason, which the
@@ -539,10 +548,13 @@ change.
      branch, base and adopted pull request (today `claimMarker`).
    - **Content too big for a record, like the plan, goes in a ledger
      blob.** A blob is content-addressed and immutable, and is written in
-     the same commit as the record that names it. On the git adapter it is a
-     file in the thread commit's tree, named by its hash in the record's
-     `data`. The plan (today `planMarker`, read back by `Plan.posted`) is the
-     first.
+     the same commit as the record that names it. `advance` takes the
+     blobs with the transition, and the record names each by its SHA-256
+     in `blobs`, apart from `data`, so a blob costs `data` none of its 4 KB;
+     `Progress.blob` reads back only a blob the item's record names. On the
+     git adapter it is a file, `blobs/<hash>`, in the thread commit's tree,
+     and the record's `Blobs:` trailer names it. (#562) The plan (today
+     `planMarker`, read back by `Plan.posted`) is the first.
    - **Comments still show all of this to people.** Nothing reads them back.
      Deleting or editing one changes nothing but what a person sees.
 

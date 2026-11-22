@@ -216,6 +216,7 @@ const refreshInteractively = (account: Account, launcher: Launcher, cwd: string)
       title: `chernabog-refresh-${account.name}`,
       cwd,
       command: [...selfCommand(), "__launch", `${dir}/spec.json`],
+      log: (line) => Effect.logInfo(line),
     });
 
     yield* tokenRefreshed(account).pipe(

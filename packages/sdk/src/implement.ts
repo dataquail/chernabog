@@ -63,9 +63,11 @@ import { issueValidity } from "./still-valid.ts";
 // The work branch of an issue, as core's claims name it.
 export const branchFor = Claims.branchFor;
 
-// The pull request a CI job's run parked on (awaitingCi), and the round of
-// CI its record names, which the job that resumes the work waits on.
+// The wait for CI a CI job's run parked on (awaitingCi): the phase its
+// record holds, which says which wait it was, the pull request, and the
+// round of CI the record names, which the job that resumes the work waits on.
 export const ResumingCi = Schema.Struct({
+  phase: Schema.Literals([Phases.PHASES.issue.awaitingCi, Phases.PHASES.issue.awaitingAdoptedCi]),
   pullRequest: Schema.Finite,
   url: Schema.String,
   round: Schema.Finite,
@@ -588,9 +590,8 @@ export const adoptionComment = (claim: ClaimMarker, adopted: Adopted, again = fa
 const referToPerson = (issue: number, label: string, reason: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labels = yield* Settings.labels;
     yield* github.removeLabel(issue, label);
-    yield* github.addLabel(issue, labels.needsHuman);
+    yield* Phases.handToPerson(Phases.issueItem(issue), reason);
     yield* github.comment(issue, `Chernabog didn't take this issue on: ${reason}`);
 
     return yield* new NeedsHuman({ reason });
@@ -1551,15 +1552,23 @@ export const heldOnCi = (
     return Option.filter(pending, () => !past);
   });
 
-// How a flow document's wait for CI on the pull request goes on: at a node
-// the document can resume at, it records the wait on the run's item, with
-// where to resume and the pull request (Resume.parking), and parks; anywhere
-// else, or when what the node keeps doesn't fit a record, it polls. At the
-// node a run resumed at, it waits on from the round the record names.
-export const documentCiWait = (pullRequest: number, options: RepeatOptions = {}) =>
+// How a flow document's wait for CI on the pull request goes on, at the park
+// site whose phase is `waits`: at a node the document can resume at, it
+// records the wait on the run's item, in its round of `waits`, with where to
+// resume and the pull request (Resume.parking), and parks; anywhere else, or
+// when what the node keeps doesn't fit a record, it polls. At the node a run
+// resumed at, it waits on from the round the record names.
+export const documentCiWait = (
+  waits: Phases.Rounded,
+  pullRequest: number,
+  options: RepeatOptions = {},
+) =>
   Effect.gen(function* () {
     const parking = yield* Resume.parking({ pullRequest });
-    const resumed = Option.flatMap(yield* Resume.resumedPhase, Phases.ciRoundOf);
+
+    const resumed = Option.flatMap(yield* Resume.resumedPhase, (phase) =>
+      Phases.roundOf(waits, phase),
+    );
 
     const from = Option.match(resumed, {
       onNone: () => ({}),
@@ -1571,7 +1580,7 @@ export const documentCiWait = (pullRequest: number, options: RepeatOptions = {})
       onSome: ({ data, item }): CiWait => ({
         ...options,
         ...from,
-        park: (round) => ({ item, phase: Phases.awaitingCi(round), data }),
+        park: (round) => ({ item, phase: Phases.inRound(waits, round), data }),
       }),
     });
   });
@@ -1580,8 +1589,8 @@ const DocumentCi = Schema.Struct({ pullRequest: Schema.Finite });
 
 // Whether a document's run parked on a pull request's CI may be taken up:
 // held while the checks pend, and free once they're green or red. One whose
-// pull request closed or went to a person (auto:needs-human) has nothing left
-// to resume.
+// pull request closed or went to a person (its record is with-person) has
+// nothing left to resume.
 export const documentCiResumes = (data: { readonly [key: string]: Json }, item: WorkItem) =>
   Effect.gen(function* () {
     const parked = Schema.decodeUnknownOption(DocumentCi)(data);
@@ -1591,7 +1600,6 @@ export const documentCiResumes = (data: { readonly [key: string]: Json }, item: 
     }
 
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
       Effect.asSome,
@@ -1601,7 +1609,7 @@ export const documentCiResumes = (data: { readonly [key: string]: Json }, item: 
     if (
       Option.isNone(pull) ||
       pull.value.state !== "open" ||
-      pull.value.labels.includes(labelNames.needsHuman)
+      (yield* Phases.withPerson(Phases.pullRequestItem(parked.value.pullRequest)))
     ) {
       return Option.none<WorkItem>();
     }
@@ -1979,32 +1987,55 @@ export const readied = Effect.gen(function* () {
   return items;
 });
 
-// Where implement parks in a CI job while its pull request's CI runs: on the
-// issue's record, which awaitingCi reads to resume the work.
-export const parkOnIssue = (
-  issue: number,
-  data: { readonly [key: string]: Json } = {},
-): CiWait => ({
-  park: (round) => ({ item: Phases.issueItem(issue), phase: Phases.awaitingCi(round), data }),
+const ISSUE_PHASES = Phases.PHASES.issue;
+
+// Whether a wait for CI is one of implement's: on the pull request its run
+// opened, or on one it adopted.
+const isImplementsWait = (rounded: {
+  readonly phase: Phases.Rounded;
+  readonly round: number;
+}): rounded is { readonly phase: ResumingCi["phase"]; readonly round: number } =>
+  rounded.phase === ISSUE_PHASES.awaitingCi || rounded.phase === ISSUE_PHASES.awaitingAdoptedCi;
+
+// Where implement parks in a CI job while the CI of the pull request its run
+// opened runs: on the issue's awaiting-ci, which awaitingCi reads to resume
+// the work.
+export const parkOnIssue = (issue: number): CiWait => ({
+  park: (round) => ({
+    item: Phases.issueItem(issue),
+    phase: Phases.inRound(ISSUE_PHASES.awaitingCi, round),
+    data: {},
+  }),
 });
 
 // Where implement parks while an adopted pull request's CI runs: on the
-// issue's record, as parkOnIssue, which keeps the pull request, since it
-// isn't on the issue's branch for awaitingCi to find (audit W5).
-export const parkOnAdopted = (issue: number, pullRequest: number): CiWait =>
-  parkOnIssue(issue, { pullRequest });
+// issue's awaiting-adopted-ci, a phase of its own, so the run that takes it
+// up knows from the phase alone to hand it off as adopted. The record keeps
+// the pull request, which isn't on the issue's branch (audit W5).
+export const parkOnAdopted = (issue: number, pullRequest: number): CiWait => ({
+  park: (round) => ({
+    item: Phases.issueItem(issue),
+    phase: Phases.inRound(ISSUE_PHASES.awaitingAdoptedCi, round),
+    data: { pullRequest },
+  }),
+});
 
 const ParkedPull = Schema.Struct({ pullRequest: Schema.Finite });
 
-// The pull request a parked wait on CI waits on: the one its record keeps,
-// an adopted one's, or the one on the issue's branch.
-const parkedPull = (number: number, record: PhaseRecord) =>
+// The pull request a parked wait on CI waits on, by the wait's phase: an
+// adopted one's, which its record keeps, or the one on the issue's branch.
+const parkedPull = (number: number, waits: Phases.Rounded, record: PhaseRecord) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
+
+    if (waits !== ISSUE_PHASES.awaitingAdoptedCi) {
+      return yield* github.pullRequestForBranch(branchFor(number));
+    }
+
     const kept = Option.flatMap(record.data, Schema.decodeUnknownOption(ParkedPull));
 
     if (Option.isNone(kept)) {
-      return yield* github.pullRequestForBranch(branchFor(number));
+      return Option.none<PullRequest>();
     }
 
     return yield* github.pullRequest(kept.value.pullRequest).pipe(
@@ -2016,28 +2047,30 @@ const parkedPull = (number: number, record: PhaseRecord) =>
 // One issue whose record says a CI job parked its run on CI, as a work item
 // that resumes the wait, when its pull request is still open and no person
 // has it: the one the record keeps, for an adopted one, or else the one on
-// the issue's branch.
-const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
+// the issue's branch. The record, parked on CI, is not with-person, so no
+// person has the issue; auto:needs-human, its projection, isn't read.
+const awaitingCiItem = (
+  number: number,
+  waits: ResumingCi["phase"],
+  round: number,
+  record: PhaseRecord,
+) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const issue = yield* github.issue(number).pipe(
       Effect.asSome,
       Effect.catchTag("NotFound", () => Effect.succeedNone),
     );
 
-    const open = Option.filter(
-      issue,
-      (found) => found.state !== "closed" && !found.labels.includes(labelNames.needsHuman),
-    );
+    const open = Option.filter(issue, (found) => found.state !== "closed");
 
     if (Option.isNone(open)) {
       return Option.none<WorkItem>();
     }
 
     const pull = Option.filter(
-      yield* parkedPull(number, record),
+      yield* parkedPull(number, waits, record),
       (found) => found.state === "open",
     );
 
@@ -2045,7 +2078,12 @@ const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
       return Option.none<WorkItem>();
     }
 
-    const resumeCi: ResumingCi = { pullRequest: pull.value.number, url: pull.value.url, round };
+    const resumeCi: ResumingCi = {
+      phase: waits,
+      pullRequest: pull.value.number,
+      url: pull.value.url,
+      round,
+    };
 
     const item = yield* routed(open.value, {
       ...issueItem(open.value),
@@ -2061,19 +2099,27 @@ const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
   });
 
 // Issues a CI job's implement run parked on its pull request's CI (their
-// record is awaitingCi), as work items that resume that wait: held while the
+// record is awaiting-ci, or awaiting-adopted-ci for a pull request it
+// adopted, in any round), as work items that resume that wait: held while the
 // checks are pending, and free to start once they're green or red, when a
 // finished CI run (Events.ciCompleted) or the sweep plans them. One closed,
-// one a person has (auto:needs-human), or one whose pull request is no longer
-// open is left alone. Each is routed by its assignees.
+// one a person has (its record is with-person, not awaitingCi), or one whose
+// pull request is no longer open is left alone. Each is routed by its assignees.
 export const awaitingCi = Effect.gen(function* () {
   const items: Array<WorkItem> = [];
 
   for (const [name, found] of yield* Phases.records) {
-    const parked = Option.all({ number: issueNamed(name), round: Phases.ciRoundOf(found.phase) });
+    const parked = Option.all({
+      number: issueNamed(name),
+      waits: Option.flatMap(Phases.roundedOf(found.phase), (rounded) =>
+        Option.liftPredicate(rounded, isImplementsWait),
+      ),
+    });
 
-    for (const { number, round } of Option.toArray(parked)) {
-      for (const resumed of Option.toArray(yield* awaitingCiItem(number, round, found))) {
+    for (const { number, waits } of Option.toArray(parked)) {
+      const taken = yield* awaitingCiItem(number, waits.phase, waits.round, found);
+
+      for (const resumed of Option.toArray(taken)) {
         items.push(resumed);
       }
     }
@@ -2088,6 +2134,16 @@ export const resumingCi = (item: WorkItem): Option.Option<ResumingCi> =>
     Option.fromUndefinedOr(data.resumeCi),
   );
 
+// The adopted pull request a resumed wait for CI waits on, when its record's
+// phase says it was a wait on one implement adopted (awaiting-adopted-ci);
+// none for a wait on the pull request its run opened. It passed its wait to
+// be marked ready before it parked on CI, so it isn't a draft.
+export const resumedAdoption = (resumed: ResumingCi): Option.Option<Adopted> =>
+  Option.map(
+    Option.liftPredicate(resumed, (found) => found.phase === ISSUE_PHASES.awaitingAdoptedCi),
+    (found) => ({ number: found.pullRequest, url: found.url, draft: false }),
+  );
+
 // What hand-off tells the issue when the job that opened the pull request
 // ended while its CI ran, and a later one handed it off.
 export const resumedOutcome: ImplementOutcome = {
@@ -2098,7 +2154,8 @@ export const resumedOutcome: ImplementOutcome = {
   body: "",
 };
 
-// Labels the work item for a person and says why. No flow picks it up again.
+// Hands the work item, and its pull request if it has one, to a person
+// (Phases.handToPerson) and says why. No flow picks it up again.
 export const handToHuman = (
   issue: number,
   reason: string,
@@ -2109,12 +2166,11 @@ export const handToHuman = (
     named(options, "needs-human"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labels = yield* Settings.labels;
-      yield* github.addLabel(issue, labels.needsHuman);
+      yield* Phases.handToPerson(Phases.issueItem(issue), reason);
       yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
-        yield* github.addLabel(pullRequest.value, labels.needsHuman);
+        yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest.value), reason);
       }
 
       yield* github.comment(

@@ -12,6 +12,7 @@ import {
   type AgentResult,
   DEFAULT_LABELS,
   Epic,
+  Phases,
   Plan,
   Repo,
   reviewMarker,
@@ -348,7 +349,7 @@ const startEpic = (
         return { run, parks };
       });
 
-    return { github, pulls, asked, throughParks };
+    return { github, pulls, asked, throughParks, recordPhase: base.recordPhase };
   });
 
 describe("epic: carrying a change up the stack", () => {
@@ -428,11 +429,15 @@ describe("epic: carrying a change up the stack", () => {
         const repoHistory = yield* history(tasks, true);
 
         // The fix conflicts with the middle layer, and its author agent needs a person.
-        const { asked, github, pulls, throughParks } = yield* startEpic(tasks, repoHistory, {
-          status: "needs-clarification",
-          summary: "Both changed a.txt.",
-          questions: "Which a.txt should the middle layer keep?",
-        });
+        const { asked, github, pulls, recordPhase, throughParks } = yield* startEpic(
+          tasks,
+          repoHistory,
+          {
+            status: "needs-clarification",
+            summary: "Both changed a.txt.",
+            questions: "Which a.txt should the middle layer keep?",
+          },
+        );
 
         const [, middle, top] = pulls;
 
@@ -451,6 +456,10 @@ describe("epic: carrying a change up the stack", () => {
               resolved = sha;
               const labels = github.pull(middle).labels;
               labels.splice(labels.indexOf(DEFAULT_LABELS.needsHuman), 1);
+              // As observer:handed-back records a trusted person's removal.
+              recordPhase(Phases.pullRequestItem(middle), "handed-back", {
+                by: Phases.HANDED_BACK_BY,
+              });
             }),
           ),
         ]);
@@ -497,7 +506,7 @@ describe("epic: landing layers that ship", () => {
         const tasks = [2, 3, 4] as const;
         const repoHistory = yield* history(tasks);
 
-        const { asked, github, pulls, throughParks } = yield* startEpic(
+        const { asked, github, pulls, recordPhase, throughParks } = yield* startEpic(
           tasks,
           repoHistory,
           { status: "done", summary: "Nothing to adjust." },
@@ -506,21 +515,12 @@ describe("epic: landing layers that ship", () => {
 
         const [bottom, middle, top] = pulls;
 
-        // Chernabog's review approved the middle layer as it was.
-        github.comments.set(middle, [
-          ...github.commentsOn(middle),
-          {
-            id: 9001,
-            body: reviewMarker.write({
-              sha: repoHistory.heads[1],
-              round: 1,
-              verdict: "approve",
-            }),
-            user: { login: "bob" },
-            author_association: "MEMBER",
-            created_at: "2026-10-29T00:00:00Z",
+        // Chernabog's review approved the middle layer as it was, as its record keeps it.
+        recordPhase(`pr-${middle}`, "approved", {
+          data: {
+            review: { sha: repoHistory.heads[1], round: 1, verdict: "approve", reviewer: "bob" },
           },
-        ]);
+        });
 
         // After the first park, the bottom layer squash-merges into main, its
         // branch left in place, so nothing has moved the middle layer yet.

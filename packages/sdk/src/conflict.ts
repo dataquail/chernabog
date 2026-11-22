@@ -2,7 +2,7 @@
 // decision 4; audit W6). The pull request is open and under review, so its
 // record holds a review phase, such as review-asked or approved, that other
 // flows read. The wait parks on a phase of its own, awaiting-conflict-ci
-// (Phases.conflictCi), not awaiting-ci, which address-review reads as the wait
+// (Phases.inRound), not awaiting-fix-ci, which address-review reads as the wait
 // on its own fix; and its data keeps the record it parked over, `restore`,
 // which the run that takes the wait up records again once the wait ends,
 // however it ends. While it is parked no other flow's source reads the
@@ -30,7 +30,6 @@ import * as Schema from "effect/Schema";
 import * as Implement from "./implement.ts";
 import * as Phases from "./phases.ts";
 import * as Review from "./review.ts";
-import * as Settings from "./settings.ts";
 
 // The record a wait parked over: its phase, and the data it carried, if any.
 const Restore = Schema.Struct({
@@ -54,7 +53,7 @@ const ID = "resolve";
 // the record itself, or, for one a run already parked over, the record that
 // run kept. None for a parked one that kept none.
 const parkedOver = (record: PhaseRecord): Option.Option<Restore> => {
-  if (Option.isSome(Phases.conflictCiRoundOf(record.phase))) {
+  if (Option.isSome(Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase))) {
     return Option.map(Option.flatMap(record.data, decodeParked), (parked) => parked.restore);
   }
 
@@ -104,7 +103,7 @@ const restoreReview = (pullRequest: number, restore: Restore) =>
       const found = yield* Phases.current(item);
 
       const parked = Option.filter(found, (record) =>
-        Option.isSome(Phases.conflictCiRoundOf(record.phase)),
+        Option.isSome(Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase)),
       );
 
       if (Option.isSome(parked)) {
@@ -144,7 +143,11 @@ export const waitForCi = <E, R>(
       onSome: ({ data, item }): Implement.CiWait => ({
         id: ID,
         ...from,
-        park: (round) => ({ item, phase: Phases.conflictCi(round), data }),
+        park: (round) => ({
+          item,
+          phase: Phases.inRound(Phases.PHASES.pullRequest.awaitingConflictCi, round),
+          data,
+        }),
       }),
     });
 
@@ -179,10 +182,10 @@ export const resumingCi = (item: WorkItem): Option.Option<number> =>
 // on CI for its merge (their record is awaiting-conflict-ci, with no
 // document's `resume`), as work items that take the wait up: held while the
 // checks are pending and ciTimeout hasn't passed, and free to start once CI
-// is green or red, or the time is up. One a person has (auto:needs-human), or
-// a run owns, is left alone. A document's parks are Resume.parked's.
+// is green or red, or the time is up. One a person has (its record is
+// with-person, so not parked), or a run owns, is left alone. A document's
+// parks are Resume.parked's.
 export const parkedOnCi = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
   const items: Array<WorkItem> = [];
 
@@ -191,7 +194,10 @@ export const parkedOnCi = Effect.gen(function* () {
 
     const parked = Option.flatMap(found, (record) =>
       Option.map(
-        Option.all({ round: Phases.conflictCiRoundOf(record.phase), data: record.data }),
+        Option.all({
+          round: Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase),
+          data: record.data,
+        }),
         ({ data, round }) => ({ record, data, round }),
       ),
     );
@@ -199,7 +205,6 @@ export const parkedOnCi = Effect.gen(function* () {
     if (
       Option.isNone(parked) ||
       "resume" in parked.value.data ||
-      pull.labels.includes(labelNames.needsHuman) ||
       (yield* Review.ownedByARun(pull))
     ) {
       continue;
@@ -239,7 +244,6 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
     }
 
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
       Effect.asSome,
@@ -249,7 +253,7 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
     if (
       Option.isNone(pull) ||
       pull.value.state !== "open" ||
-      pull.value.labels.includes(labelNames.needsHuman)
+      (yield* Phases.withPerson(Phases.pullRequestItem(pull.value.number)))
     ) {
       return Option.none<WorkItem>();
     }
