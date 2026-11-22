@@ -37,7 +37,7 @@ jobs:
           # Prettier reads every file outside website/, which has its own toolchain.
           echo "static=$(grep -qvE '^website/' <<<"$changed" && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "unit=$(has '^(src|packages|test|scripts|tools|fixtures|templates)/')" >> "$GITHUB_OUTPUT"
-          echo "acceptance=$(has '^(src|packages|templates|test/acceptance|test/fakebin)/')" >> "$GITHUB_OUTPUT"
+          echo "acceptance=$(has '^(src|packages|templates|test/acceptance|test/fakebin|test/features)/')" >> "$GITHUB_OUTPUT"
 
   static:
     needs: changes

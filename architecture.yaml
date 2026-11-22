@@ -138,6 +138,8 @@ graph:
         - "test/acceptance/lockfile.ts"
         # `bun run test:composed` loads it first, by --preload.
         - "test/composed-recipes.preload.ts"
+        # The feature runner's tests run it on its own, by path, to see it fail.
+        - "test/gherkin/fixtures/broken.entry.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
         # are the recipes `chernabog recipes add` copies and a repo's
         # `flows.<name>.from` imports.
@@ -1776,6 +1778,10 @@ tree:
         - "@effect-server-utils/unit-of-work"
         - typescript
         - yaml
+        # The standalone Gherkin parser, which the feature runner compiles a
+        # feature file with (docs/adr/0022-behavior-specs-in-gherkin.md).
+        - "@cucumber/gherkin"
+        - "@cucumber/messages"
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
       # The acceptance tier: its tests, and the harnesses they share — the sandbox they drive the

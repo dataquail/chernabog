@@ -16,6 +16,8 @@
       },
       "devDependencies": {
         "@chernabog/sdk": "workspace:*",
+        "@cucumber/gherkin": "42.0.1",
+        "@cucumber/messages": "34.2.1",
         "@effect/tsgo": "0.53.0",
         "@goodbones/campaigns": "0.1.1-beta.9",
         "@goodbones/cli": "0.1.0-beta.22",
@@ -167,6 +169,10 @@
     "@chernabog/sdk": ["@chernabog/sdk@workspace:packages/sdk"],
 
     "@conventional-commits/parser": ["@conventional-commits/parser@0.4.1", "", { "dependencies": { "unist-util-visit": "^2.0.3", "unist-util-visit-parents": "^3.1.1" } }, "sha512-H2ZmUVt6q+KBccXfMBhbBF14NlANeqHTXL4qCL6QGbMzrc4HDXyzWuxPxPNbz71f/5UkR5DrycP5VO9u7crahg=="],
+
+    "@cucumber/gherkin": ["@cucumber/gherkin@42.0.1", "", { "dependencies": { "@cucumber/messages": ">=34.0.0 <35" } }, "sha512-Kqg0ULhWqbXp/a1c04ND4sS4KTlIL831tQ0NhZLXWdEhT6LiNsZ5LFRzy/lBy7QQpcKhroKp/i3C2WdEnRBKNg=="],
+
+    "@cucumber/messages": ["@cucumber/messages@34.2.1", "", {}, "sha512-aj2iCAG9ZOpMVcMxcgShifv5fbR96b7SMgdWcPXXh2QbFp7OEcAnQ5MC5YfWUDSDasmw7FU5NJEsOrXdTQOU1A=="],
 
     "@effect-server-utils/cqrs": ["@effect-server-utils/cqrs@0.1.0-beta.10", "", { "peerDependencies": { "effect": "^4.0.2" } }, "sha512-jtJldk/Yoi2pfDdzp7pa4T9uEu2K/kO05JY6h7Ins6MF5pZhejAlcscR4H0miYOueS0E4g48LeP33xiXPvQ4ag=="],
 
