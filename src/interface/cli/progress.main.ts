@@ -12,6 +12,7 @@ import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import {
   type AnomaliesResult,
@@ -41,7 +42,12 @@ const describeFinding = (finding: BackfillFinding) => {
     return `for a person: ${finding.item}: ${finding.why}`;
   }
 
-  return `${finding.item}: ${finding.phase} (${finding.why})`;
+  const from = Option.match(Option.fromUndefinedOr(finding.over), {
+    onNone: () => "",
+    onSome: (read) => `${read.phase} -> `,
+  });
+
+  return `${finding.item}: ${from}${finding.phase} (${finding.why})`;
 };
 
 // A repo that lists no personas: in its .chernabog/config.yaml: the ledger
@@ -68,7 +74,7 @@ const backfillLines = (result: BackfillResult, wrote: boolean) => {
     }
 
     if (result.lost.includes(finding.item)) {
-      return `left ${finding.item}: a run recorded it after the survey read none`;
+      return `left ${finding.item}: a run recorded it after the survey read it`;
     }
 
     return `wrote ${describeFinding(finding)}`;

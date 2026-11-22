@@ -426,7 +426,9 @@ export const resolveConflictsBlocks = {
       readonly session: Implement.AuthorSession;
     }) =>
       Effect.gen(function* () {
-        const resumed = Option.flatMap(yield* Resume.resumedPhase, Phases.conflictCiRoundOf);
+        const resumed = Option.flatMap(yield* Resume.resumedPhase, (phase) =>
+          Phases.roundOf(PHASES.pullRequest.awaitingConflictCi, phase),
+        );
 
         return yield* committedNoMerge(
           Conflict.waitForCi(
