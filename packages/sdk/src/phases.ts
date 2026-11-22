@@ -55,6 +55,12 @@ export const PHASES = {
     // pull request off as an adopted one. Its data keeps the pull request,
     // which isn't on the issue's branch.
     awaitingAdoptedCi: "awaiting-adopted-ci",
+    // An epic's task whose lane ended on its pull request's pending CI (audit
+    // W7): a lane can't park on its own, so the epic's run takes the task up
+    // once CI settles (Epic.takeUpCi). Not awaiting-ci, which implement's
+    // source resumes as its own. Its data keeps the pull request, the lane,
+    // its branch and base, the round of CI and when that round began.
+    awaitingTaskCi: "awaiting-task-ci",
     proposed: "proposed",
     planHandedBack: "plan-handed-back",
     becameEpic: "became-epic",
@@ -85,6 +91,11 @@ export const PHASES = {
     // keeps the review phase it parked over, which the run that takes it up
     // records again (Conflict.waitForCi).
     awaitingConflictCi: "awaiting-conflict-ci",
+    // An epic layer's refresh whose CI was still pending (audit W7): the
+    // epic's run takes it up once CI settles (Epic.takeUpRefreshes), then
+    // records again the review phase it was written over, which a blob its
+    // data names keeps beside what the refresh says to a reviewer asked again.
+    awaitingRefreshCi: "awaiting-refresh-ci",
     withPerson: "with-person",
     handedBack: "handed-back",
   },
