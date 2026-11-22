@@ -223,6 +223,17 @@ const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   Equal.equals(record.from, fromPhase(transition)) &&
   !Option.exists(transition.from, (read) => read.version === record.version);
 
+const versionOf = (read: Option.Option<{ readonly version: string }>) =>
+  Option.map(read, (found) => found.version);
+
+// The lost race of `transition` on `item`, which holds `current` now.
+const moved = (item: string, current: Option.Option<PhaseRecord>, transition: PhaseTransition) =>
+  new PhaseMoved({
+    item,
+    expected: fromPhase(transition),
+    found: Option.map(current, (record) => record.phase),
+  });
+
 // What an advance does, given the record the item holds: succeed with that
 // record (its own write, retried), fail as a lost race when it isn't the
 // record the writer read, by version, or write.
@@ -237,17 +248,8 @@ export const decide = (
     return Result.succeed(own);
   }
 
-  const version = (read: Option.Option<{ readonly version: string }>) =>
-    Option.map(read, (found) => found.version);
-
-  if (!Equal.equals(version(current), version(transition.from))) {
-    return Result.fail(
-      new PhaseMoved({
-        item,
-        expected: fromPhase(transition),
-        found: Option.map(current, (record) => record.phase),
-      }),
-    );
+  if (!Equal.equals(versionOf(current), versionOf(transition.from))) {
+    return Result.fail(moved(item, current, transition));
   }
 
   return Result.succeed(Option.none());
@@ -645,23 +647,27 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       });
 
     // What a write that didn't land means, from the record the item holds
-    // now: someone else's advance (a lost race, or this writer's own from
-    // another attempt), or, with the branch where it was, a refusal.
+    // now: with the branch where the writer read it, a refusal; moved, this
+    // writer's own advance from another attempt, or a lost race.
     const afterMiss = (
       item: string,
       transition: PhaseTransition,
-      before: Option.Option<string>,
       refused: Effect.Effect<never, ProgressError>,
-    ) =>
+    ): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError> =>
       Effect.gen(function* () {
         const now = yield* read(item);
-        const version = Option.map(now, (record) => record.version);
 
-        if (Equal.equals(version, before)) {
+        if (Equal.equals(versionOf(now), versionOf(transition.from))) {
           return yield* refused;
         }
 
-        return yield* Effect.fromResult(decide(item, now, transition));
+        const own = Option.filter(now, (record) => isOwn(record, transition));
+
+        if (Option.isSome(own)) {
+          return own.value;
+        }
+
+        return yield* moved(item, now, transition);
       });
 
     // The first phase, or what its lost race means.
@@ -672,10 +678,10 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         if (Option.isNone(made)) {
           const unread = new ProgressError({ message: `${branch} exists, yet holds no record` });
 
-          return yield* afterMiss(item, transition, Option.none(), Effect.fail(unread));
+          return yield* afterMiss(item, transition, Effect.fail(unread));
         }
 
-        return made;
+        return made.value;
       });
 
     // A later phase, or what its miss means: a lost race, or a refusal.
@@ -689,7 +695,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         const result = yield* next(item, branch, transition, expected);
 
         if (Option.isSome(result.written)) {
-          return result.written;
+          return result.written.value;
         }
 
         const said = result.errors
@@ -706,7 +712,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           refused = refusal(said);
         }
 
-        return yield* afterMiss(item, transition, Option.some(expected), refused);
+        return yield* afterMiss(item, transition, refused);
       });
 
     // The writer's read is the compare-and-set's: a later phase is a commit
@@ -723,19 +729,10 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           return decided.value;
         }
 
-        const landed = yield* Option.match(transition.from, {
+        return yield* Option.match(transition.from, {
           onNone: () => firstOrMiss(item, branch, transition),
           onSome: (expected) => nextOrMiss(item, branch, transition, expected.version),
         });
-
-        return yield* Effect.fromOption(landed).pipe(
-          Effect.mapError(
-            () =>
-              new ProgressError({
-                message: `${branch} moved and came back under ${transition.by}'s advance`,
-              }),
-          ),
-        );
       });
 
     // The blob at `version`'s blobs/<hash>: GraphQL finds the file, and the
