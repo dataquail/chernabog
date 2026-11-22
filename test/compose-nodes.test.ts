@@ -188,19 +188,26 @@ const EPIC_STEPS = [
   "at-once @ howMany",
   "epic-tasks-1 @ progress r1",
   "epic-status-1 @ status r1",
+  "refreshes-ci-1 @ carried r1",
+  "tasks-ci-1 @ settled r1",
   ...laneSteps(10, 1, 200),
   ...laneSteps(12, 1, 201),
   "epic-tasks-2 @ progress r2",
   "epic-status-2 @ status r2",
+  "refreshes-ci-2 @ carried r2",
+  "tasks-ci-2 @ settled r2",
   ...laneSteps(11, 2, 202),
   "epic-tasks-3 @ progress r3",
   "epic-status-3 @ status r3",
+  // Each round reads its layers' and tasks' waits on CI from their records.
+  "refreshes-ci-3 @ carried r3",
   // The layer #11 opened on #10's branch, carried up once #10 merged: one block, five steps.
   "stack-base-3#202 @ carried r3",
   "prepare-worktree#refresh-202-base1234 @ carried r3",
   "refresh-head-202-base1234 @ carried r3",
   "update-from-base#refresh-202-base1234 @ carried r3",
   "refresh-diff-202-base1234 @ carried r3",
+  "tasks-ci-3 @ settled r3",
   // Nothing to start: the run records the epic's wait and parks, at the node
   // of the branch it took.
   "epic-waiting-3 @ parked r3",
