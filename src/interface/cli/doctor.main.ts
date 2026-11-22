@@ -31,6 +31,7 @@ import {
   describeLauncher,
   flowWarnings,
   Label,
+  labelDrift,
   launcherFor,
   loggedInEmail,
   personalRepo,
@@ -547,6 +548,43 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // Whether each open item's status labels are what its record and claim
+  // project (ADR 21, decision 8). A difference passes: the projector writes
+  // them again on the item's next advance or claim change, and nothing reads
+  // them, so a label a person edited by hand changes nothing else.
+  const checkStatusLabels = (effective: EffectiveRepo, name: string) =>
+    Effect.gen(function* () {
+      const found = yield* Effect.result(Effect.scoped(labelDrift(effective, machine)));
+
+      if (Result.isFailure(found)) {
+        warn(
+          `${name}: status labels couldn't be compared with the records (${String(found.failure)})`,
+          "chernabog doctor again once GitHub answers",
+        );
+
+        return;
+      }
+
+      for (const drifted of Option.getOrElse(found.success, () => [])) {
+        const said = [
+          { words: "missing", labels: drifted.missing },
+          { words: "has", labels: drifted.extra },
+        ]
+          .flatMap((part) =>
+            Arr.match(part.labels, {
+              onEmpty: () => [],
+              onNonEmpty: (labels) => [`${part.words} ${labels.join(", ")}`],
+            }),
+          )
+          .join("; ");
+
+        warn(
+          `${name}: #${drifted.number}'s status labels differ from what ${drifted.item}'s record projects: ${said}`,
+          "nothing to do: they are written again on its next record or claim change, and no flow reads them",
+        );
+      }
+    });
+
   // Whether each flow file is what its document compiles to, as `recipes
   // compile --check` says, of the snapshot the daemon runs.
   const checkFlowDocuments = (name: string, configDir: string) =>
@@ -723,6 +761,7 @@ export const doctor = Effect.gen(function* () {
       yield* checkFlowDiagnostics(loaded.success, name, loaded.success.settings.configDir);
       yield* checkFlowDocuments(name, loaded.success.settings.configDir);
       yield* checkThreads(loaded.success, name, repo.repo);
+      yield* checkStatusLabels(loaded.success, name);
       yield* checkCi(repo, name, loaded.success.settings.configDir);
       const trusted = new Set<string>();
 

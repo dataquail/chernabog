@@ -114,6 +114,7 @@ export {
   flowLayer,
   runLogFile,
 } from "./infrastructure/runtime/engine.ts";
+export { type LabelDrift, labelDrift } from "./infrastructure/runtime/label-drift.ts";
 export {
   declaredLabels,
   Label,
