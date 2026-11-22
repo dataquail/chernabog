@@ -1055,7 +1055,7 @@ describe("Compose.check", () => {
       },
       // And a run that ends at its park is taken up by none.
       {
-        path: "steps[0].on.approve.steps[0]",
+        path: "steps[1].on.approve.steps[0]",
         message:
           "pr.land parks, and can't wait inside the run, so it must be where a run can take it up: on the document's path or a branch of it, or in a repeat's round that never reads its state after it, in a flow a trigger starts, and with no if",
       },
