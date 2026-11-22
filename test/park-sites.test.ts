@@ -84,12 +84,23 @@ describe("the park sites' catalogue", () => {
       }),
     )(Compose.describe());
 
-    for (const phase of parkPhases) {
-      const recording = described.blocks.filter((block) =>
-        (block.records ?? []).some((recorded) => recorded.phase === phase),
-      );
+    // The block each site names, as "(plan.awaitAnswer)" ends its site.
+    const parkBlock = (site: string) => site.match(/\(([^)]+)\)$/)?.[1] ?? site;
+    const parkBlocks = new Set(Phases.PARKS.map((site) => parkBlock(site.site)));
 
-      expect([phase, recording.map((block) => block.name).length]).toEqual([phase, 1]);
+    for (const site of Phases.PARKS) {
+      // A block that parks nowhere may record a park's phase too, as
+      // plan.propose records the spec's proposed with the posted plan; no
+      // other park site's block may.
+      const parking = described.blocks
+        .filter(
+          (block) =>
+            parkBlocks.has(block.name) &&
+            (block.records ?? []).some((recorded) => recorded.phase === site.phase),
+        )
+        .map((block) => block.name);
+
+      expect([site.phase, parking]).toEqual([site.phase, [parkBlock(site.site)]]);
     }
   });
 });
