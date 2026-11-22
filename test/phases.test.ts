@@ -8,6 +8,7 @@
 
 import {
   CurrentNode,
+  GitHub,
   type Json,
   type NodeAt,
   Phase,
@@ -83,11 +84,19 @@ const losing = (store: Store, losses: number, phase: string = P.issue.askedQuest
   return { service, advances: () => advances };
 };
 
-const asRun = <A, E>(body: Effect.Effect<A, E, Progress | Run>, progress: Progress["Service"]) =>
+// `body` as this run, over `progress`.
+const asRun = <A, E, R>(body: Effect.Effect<A, E, R>, progress: Progress["Service"]) =>
   body.pipe(Effect.provideService(Progress, progress), Effect.provideService(Run, RUN));
 
 const recordOf = (store: Store, item: string = ITEM) =>
   Option.fromUndefinedOr(store.records().get(item));
+
+const REVIEW: Phases.Reviewed = {
+  sha: "abc123",
+  reviewer: "chernabog-reviewer",
+  round: 1,
+  verdict: "request-changes",
+};
 
 const dataOf = (
   store: Store,
@@ -107,6 +116,7 @@ describe("Phases.record", () => {
       expect(written.phase).toBe(asPhase(P.issue.proposed));
       expect(written.by).toBe(THIS_WRITER);
       expect(written.from).toEqual(Option.some(asPhase(P.issue.askedQuestions)));
+      expect(written.blobs).toEqual([]);
       expect(recordOf(store)).toEqual(Option.some(written));
     }),
   );
@@ -195,6 +205,43 @@ describe("Phases.record", () => {
       expect(dataOf(store)).toEqual(Option.some({ round: 2 }));
     }),
   );
+
+  effect("carries a pull request's review into the record after it, beside the data given", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(PR_ITEM, asPhase(P.pullRequest.changesAsked), OTHER, {
+        data: asData(Phases.reviewData(REVIEW)),
+      });
+
+      yield* asRun(Phases.record(PR_ITEM, P.pullRequest.mergeHeld, { held: 1 }), store.service);
+      expect(dataOf(store, PR_ITEM)).toEqual(
+        Option.some({ held: 1, ...Phases.reviewData(REVIEW) }),
+      );
+
+      yield* asRun(Phases.record(PR_ITEM, P.pullRequest.watched), store.service);
+      expect(dataOf(store, PR_ITEM)).toEqual(Option.some(Phases.reviewData(REVIEW)));
+      expect(Option.flatMap(recordOf(store, PR_ITEM), Phases.reviewOf)).toEqual(
+        Option.some(REVIEW),
+      );
+    }),
+  );
+
+  effect("keeps the review the data gives over the one the record had", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(PR_ITEM, asPhase(P.pullRequest.changesAsked), OTHER, {
+        data: asData(Phases.reviewData(REVIEW)),
+      });
+      const later = { ...REVIEW, sha: "def456", round: 2, verdict: "approve" as const };
+
+      yield* asRun(
+        Phases.record(PR_ITEM, P.pullRequest.approved, Phases.reviewData(later)),
+        store.service,
+      );
+
+      expect(dataOf(store, PR_ITEM)).toEqual(Option.some(Phases.reviewData(later)));
+    }),
+  );
 });
 
 describe("Phases.reconcile", () => {
@@ -237,6 +284,27 @@ describe("Phases.reconcile", () => {
       expect(store.phases()[PR_ITEM]).toBe(P.pullRequest.changesAsked);
     }),
   );
+
+  effect("writes the data it is given, with the review the record it read keeps", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(PR_ITEM, asPhase(P.pullRequest.changesAsked), OTHER, {
+        data: asData(Phases.reviewData(REVIEW)),
+      });
+
+      yield* Phases.reconcile(
+        PR_ITEM,
+        recordOf(store, PR_ITEM),
+        P.pullRequest.reviewAskedAgain,
+        "observer:review-asked",
+        { reviewed: ["chernabog-reviewer"] },
+      ).pipe(Effect.provideService(Progress, store.service));
+
+      expect(dataOf(store, PR_ITEM)).toEqual(
+        Option.some({ reviewed: ["chernabog-reviewer"], ...Phases.reviewData(REVIEW) }),
+      );
+    }),
+  );
 });
 
 describe("the waits for CI", () => {
@@ -245,6 +313,7 @@ describe("the waits for CI", () => {
     expect(Phases.awaitingCi(12)).toBe("awaiting-ci-12");
     expect(Phases.ciRoundOf("awaiting-ci")).toEqual(Option.some(1));
     expect(Phases.ciRoundOf("awaiting-ci-12")).toEqual(Option.some(12));
+    expect(Phases.conflictCi(1)).toBe("awaiting-conflict-ci");
     expect(Phases.conflictCi(12)).toBe("awaiting-conflict-ci-12");
     expect(Phases.conflictCiRoundOf("awaiting-conflict-ci")).toEqual(Option.some(1));
     expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-12")).toEqual(Option.some(12));
@@ -257,6 +326,13 @@ describe("the waits for CI", () => {
     expect(Phases.conflictCiRoundOf("not-awaiting-conflict-ci")).toEqual(Option.none());
     expect(Phases.conflictCiRoundOf("not-awaiting-conflict-ci-2")).toEqual(Option.none());
     expect(Phases.declaredAs("not-awaiting-conflict-ci")).toBe("not-awaiting-conflict-ci");
+  });
+
+  test("a phase that only starts as one is no wait for CI", () => {
+    expect(Phases.ciRoundOf("awaiting-ci-2x")).toEqual(Option.none());
+    expect(Phases.ciRoundOf("awaiting-ci-x")).toEqual(Option.none());
+    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-2x")).toEqual(Option.none());
+    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-x")).toEqual(Option.none());
   });
 
   test("a later round of a wait for CI is declared as its first", () => {
@@ -313,6 +389,133 @@ describe("Phases.keyFor", () => {
 
     expect(Phases.keyFor("pr-7", found)).toBe("pr-7-changes-asked-1a2b3c4");
   });
+});
+
+describe("Phases.reviewOf", () => {
+  test("is the review a record keeps, and none for data that isn't one", () => {
+    expect(
+      Phases.reviewOf(aRecord(P.pullRequest.approved, Option.some(Phases.reviewData(REVIEW)))),
+    ).toEqual(Option.some(REVIEW));
+    expect(
+      Phases.reviewOf(aRecord(P.pullRequest.approved, Option.some({ review: "approved" }))),
+    ).toEqual(Option.none());
+  });
+});
+
+describe("Phases.withPersonData", () => {
+  // The data as a with-person record's reader decodes it.
+  const read = Schema.decodeUnknownSync(Phases.WithPerson);
+
+  test("keeps a why of up to a thousand characters whole, with the phase it left", () => {
+    const why = "w".repeat(1000);
+
+    expect(
+      read(Phases.withPersonData(why, Option.some(aRecord(P.issue.proposed, Option.none())))),
+    ).toEqual({ why, from: Option.some(P.issue.proposed) });
+    expect(read(Phases.withPersonData("stuck", Option.none()))).toEqual({
+      why: "stuck",
+      from: Option.none(),
+    });
+  });
+
+  test("cuts a longer why to a thousand characters, the last an ellipsis", () => {
+    expect(read(Phases.withPersonData("w".repeat(1001), Option.none()))).toEqual({
+      why: `${"w".repeat(999)}…`,
+      from: Option.none(),
+    });
+  });
+});
+
+describe("Phases.numberOf", () => {
+  test("is the number of an issue's, a pull request's or an epic's item", () => {
+    expect(["issue-12", "pr-7", "epic-4"].map(Phases.numberOf)).toEqual([
+      Option.some(12),
+      Option.some(7),
+      Option.some(4),
+    ]);
+  });
+
+  test("is none for a team's own item", () => {
+    expect(["my-issue-12", "pr-7a", "pr-", "team-7"].map(Phases.numberOf)).toEqual([
+      Option.none(),
+      Option.none(),
+      Option.none(),
+      Option.none(),
+    ]);
+  });
+});
+
+describe("Phases.PHASE_NAME", () => {
+  test("is lower-case words joined by hyphens", () => {
+    expect(
+      ["triaged", "awaiting-ci-2", "a-b-c", "round2-x"].map((name) => Phases.PHASE_NAME.test(name)),
+    ).toEqual([true, true, true, true]);
+  });
+
+  test("is nothing else", () => {
+    expect(
+      ["Triaged", "triaged-", "triaged!", "triaged-Two", "-triaged", "a--b", "a-!"].map((name) =>
+        Phases.PHASE_NAME.test(name),
+      ),
+    ).toEqual([false, false, false, false, false, false, false]);
+  });
+});
+
+describe("Phases.itemOfWork", () => {
+  test("is the pull request a pull request's subject names", () => {
+    expect(Phases.itemOfWork("changes-asked", { key: "k", data: { pullRequest: 7 } })).toEqual(
+      Option.some("pr-7"),
+    );
+    expect(Phases.itemOfWork("conflict", { key: "k", data: { issue: 7 } })).toEqual(Option.none());
+  });
+
+  test("is the issue an issue's subject names, and the epic an epic's", () => {
+    expect(Phases.itemOfWork("spec", { key: "k", data: { issue: 4 } })).toEqual(
+      Option.some("issue-4"),
+    );
+    expect(Phases.itemOfWork("epic", { key: "k", data: { issue: 4 } })).toEqual(
+      Option.some("epic-4"),
+    );
+    expect(Phases.itemOfWork("issue", { key: "k", data: { pullRequest: 4 } })).toEqual(
+      Option.none(),
+    );
+  });
+
+  test("is none for a subject the SDK doesn't know", () => {
+    expect(Phases.itemOfWork("triage", { key: "k", data: { issue: 4 } })).toEqual(Option.none());
+  });
+});
+
+describe("Phases.recordAwaitingReview", () => {
+  // The data recordAwaitingReview records when `authors` have reviewed the
+  // pull request.
+  const recordingWith = (authors: ReadonlyArray<string>) => {
+    const store = progressStore({ checked: false });
+
+    const reviewed = Layer.mock(GitHub)({
+      reviews: () =>
+        Effect.succeed(authors.map((author) => ({ author, state: "APPROVED", commitSha: "s" }))),
+    });
+
+    return asRun(Phases.recordAwaitingReview(7, P.pullRequest.reviewAsked), store.service).pipe(
+      Effect.provide(reviewed),
+      Effect.map(() => dataOf(store, PR_ITEM)),
+    );
+  };
+
+  effect("records who had reviewed the pull request, each once", () =>
+    Effect.gen(function* () {
+      expect(yield* recordingWith(["alice", "bob", "alice"])).toEqual(
+        Option.some({ reviewed: ["alice", "bob"] }),
+      );
+    }),
+  );
+
+  effect("records no data when nobody had", () =>
+    Effect.gen(function* () {
+      expect(yield* recordingWith([])).toEqual(Option.none());
+    }),
+  );
 });
 
 // The workflow a test's effect runs in: each test builds its own engine, so
@@ -445,6 +648,7 @@ describe("Phases.park", () => {
         ]);
         expect(store.phases()[ITEM]).toBe(P.issue.proposed);
         expect(Option.map(recordOf(store), (found) => found.by)).toEqual(Option.some(THIS_WRITER));
+        expect(Option.map(recordOf(store), (found) => found.blobs)).toEqual(Option.some([]));
         expect(Option.getOrThrow(dataOf(store))).toMatchObject({ round: 2 });
 
         const since = Option.getOrThrow(sinceIn(store));
@@ -500,6 +704,18 @@ describe("Phases.park", () => {
       expect(ran.result).toEqual(Option.none());
       expect(ran.waits.length).toBe(2);
       expect(recordOf(store)).toEqual(kept);
+    }),
+  );
+
+  effect("writes the wait over a record at another phase", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(ITEM, asPhase(P.issue.askedQuestions), OTHER);
+
+      const ran = yield* inWorkflow(Phases.park(WAIT, SIGNALS, "answer"), store.service);
+
+      expect(ran.waits.length).toBe(2);
+      expect(store.phases()[ITEM]).toBe(P.issue.proposed);
     }),
   );
 
@@ -577,6 +793,20 @@ describe("Phases.recordParking", () => {
 
       expect(ran.result).toEqual(Option.some("parked"));
       expect(Option.map(recordOf(store), (found) => found.version)).toEqual(Option.some("v1"));
+    }),
+  );
+
+  effect("gives parked for a kept wait whose since isn't a time", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(ITEM, asPhase(P.issue.proposed), OTHER, { data: asData({ since: 5 }) });
+
+      const ran = yield* inWorkflow(
+        Phases.recordParking({ ...WAIT, timeout: Duration.hours(1) }),
+        store.service,
+      );
+
+      expect(ran.result).toEqual(Option.some("parked"));
     }),
   );
 
