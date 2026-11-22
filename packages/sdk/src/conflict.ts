@@ -2,7 +2,7 @@
 // decision 4; audit W6). The pull request is open and under review, so its
 // record holds a review phase, such as review-asked or approved, that other
 // flows read. The wait parks on a phase of its own, awaiting-conflict-ci
-// (Phases.conflictCi), not awaiting-ci, which address-review reads as the wait
+// (Phases.inRound), not awaiting-fix-ci, which address-review reads as the wait
 // on its own fix; and its data keeps the record it parked over, `restore`,
 // which the run that takes the wait up records again once the wait ends,
 // however it ends. While it is parked no other flow's source reads the
@@ -54,7 +54,7 @@ const ID = "resolve";
 // the record itself, or, for one a run already parked over, the record that
 // run kept. None for a parked one that kept none.
 const parkedOver = (record: PhaseRecord): Option.Option<Restore> => {
-  if (Option.isSome(Phases.conflictCiRoundOf(record.phase))) {
+  if (Option.isSome(Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase))) {
     return Option.map(Option.flatMap(record.data, decodeParked), (parked) => parked.restore);
   }
 
@@ -104,7 +104,7 @@ const restoreReview = (pullRequest: number, restore: Restore) =>
       const found = yield* Phases.current(item);
 
       const parked = Option.filter(found, (record) =>
-        Option.isSome(Phases.conflictCiRoundOf(record.phase)),
+        Option.isSome(Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase)),
       );
 
       if (Option.isSome(parked)) {
@@ -144,7 +144,11 @@ export const waitForCi = <E, R>(
       onSome: ({ data, item }): Implement.CiWait => ({
         id: ID,
         ...from,
-        park: (round) => ({ item, phase: Phases.conflictCi(round), data }),
+        park: (round) => ({
+          item,
+          phase: Phases.inRound(Phases.PHASES.pullRequest.awaitingConflictCi, round),
+          data,
+        }),
       }),
     });
 
@@ -191,7 +195,10 @@ export const parkedOnCi = Effect.gen(function* () {
 
     const parked = Option.flatMap(found, (record) =>
       Option.map(
-        Option.all({ round: Phases.conflictCiRoundOf(record.phase), data: record.data }),
+        Option.all({
+          round: Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, record.phase),
+          data: record.data,
+        }),
         ({ data, round }) => ({ record, data, round }),
       ),
     );

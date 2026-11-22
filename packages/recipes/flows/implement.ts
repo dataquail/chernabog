@@ -7,8 +7,8 @@
 // An issue an open pull request on another branch already closes is not
 // implemented again: claim adopts that pull request (auto:adopted), and the
 // run waits for CI, fixing red in a worktree on its branch, and hands it off.
-// Its wait for CI parks on the issue's record too, which keeps the adopted
-// pull request.
+// Its wait for CI parks on the issue's record too, on a phase of its own
+// (awaiting-adopted-ci), which keeps the adopted pull request.
 // A draft waits for its author to mark it ready first. Several, or one on a
 // fork, go to a person.
 //
@@ -74,7 +74,7 @@ const trigger = Effect.gen(function* () {
   ];
 }).pipe(
   // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
-  Blocks.checked("issues.queued", "ci.waitAndFix", "pr.awaitReady"),
+  Blocks.checked("issues.queued", "ci.waitAndFix", "ci.waitPreparing", "pr.awaitReady"),
   reportAs("trigger"),
 );
 
@@ -136,13 +136,15 @@ const flow = defineFlow({
 
         // A run ended while this issue's pull request's CI ran, and it has
         // finished: wait on from the round the record names (a fix of red CI
-        // starts a session of its own), then hand off; an adopted pull
-        // request as one, since no agent implemented it.
+        // starts a session of its own), then hand off. The record's phase
+        // says which wait it was: awaiting-adopted-ci hands the pull request
+        // off as adopted, since no agent implemented it.
         if (Option.isSome(resuming)) {
           const waited = resuming.value;
+          const resumedAdoption = Implement.resumedAdoption(waited);
           pullRequest = Option.some(waited.pullRequest);
 
-          const parking = Option.match(adoption, {
+          const parking = Option.match(resumedAdoption, {
             onNone: () => Implement.parkOnIssue(issue),
             onSome: (adopted) => Implement.parkOnAdopted(issue, adopted.number),
           });
@@ -155,7 +157,7 @@ const flow = defineFlow({
               { ...parking, firstRound: waited.round },
             );
 
-            return yield* Option.match(adoption, {
+            return yield* Option.match(resumedAdoption, {
               onNone: () =>
                 Implement.handOff(
                   issue,

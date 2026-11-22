@@ -231,7 +231,7 @@ describe("the implement document in a CI job", () => {
       Effect.gen(function* () {
         const flow = yield* loaded;
         const { fake: before } = yield* parked(flow);
-        const fake = seeded(before, Phases.awaitingCi(2));
+        const fake = seeded(before, Phases.inRound(Phases.PHASES.issue.awaitingCi, 2));
         fake.merge.ci = { state: "red", failedChecks: ["test"] };
         fake.merge.afterPush = Option.some({ state: "green" });
 
@@ -254,7 +254,7 @@ describe("the implement document in a CI job", () => {
       Effect.gen(function* () {
         const flow = yield* loaded;
         const { fake: before } = yield* parked(flow);
-        const fake = seeded(before, Phases.awaitingCi(4));
+        const fake = seeded(before, Phases.inRound(Phases.PHASES.issue.awaitingCi, 4));
         fake.merge.ci = { state: "red", failedChecks: ["test"] };
 
         const resumed = yield* onlyResume(fake, flow);
@@ -365,7 +365,7 @@ describe("the address-review document in a CI job", () => {
 
         expect(run.status).toBe("running");
         expect(fake.git.pushes).toBe(2);
-        expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
+        expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
         expect(Option.map(parkedData(fake, PR_ITEM), (found) => found.resume.node)).toEqual(
           Option.some("ci"),
         );
