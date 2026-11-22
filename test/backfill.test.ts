@@ -5,7 +5,16 @@
 // record a run wrote meanwhile wins, and an item the facts don't settle is
 // listed for a person.
 
-import { Backfill, Claims, DEFAULT_LABELS, Epic, Implement, Phases, Plan } from "@chernabog/sdk";
+import {
+  Backfill,
+  Claims,
+  DEFAULT_LABELS,
+  Epic,
+  Implement,
+  Phases,
+  Plan,
+  sessionMarker,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -309,6 +318,74 @@ describe("progress backfill's issues and epics", () => {
     }),
   );
 
+  // The session marker an implement run from before #565 left on its pull request.
+  const SESSION = {
+    adapter: "claude",
+    sessionId: "implement-session",
+    issue: ISSUE,
+    branch: `auto/issue-${ISSUE}`,
+  };
+
+  const handedOffBefore = (fake: Fake, author = ME) => {
+    comment(fake, author, `Implemented by claude for #${ISSUE}. ${sessionMarker.write(SESSION)}`);
+    fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.changesAsked);
+  };
+
+  effect(
+    "S1: an open pull request's session marker, its issue handed off with no session kept: handed-off again, with it",
+    () =>
+      Effect.gen(function* () {
+        const fake = fresh();
+        handedOffBefore(fake);
+        fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff);
+        const version = fake.records().get(ISSUE_ITEM)?.version;
+
+        const found = findingOn(ISSUE_ITEM, yield* survey(fake));
+
+        expect(found.map(saidOf)).toEqual([writes(ISSUE_ITEM, Phases.PHASES.issue.handedOff)]);
+        expect(found[0]).toMatchObject({
+          data: { pullRequest: PULL, author: SESSION },
+          replaces: version,
+        });
+      }),
+  );
+
+  effect("S2: an open pull request's session marker, its issue with no record: handed-off", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      handedOffBefore(fake);
+
+      const found = findingOn(ISSUE_ITEM, yield* survey(fake));
+
+      expect(found.map(saidOf)).toEqual([writes(ISSUE_ITEM, Phases.PHASES.issue.handedOff)]);
+      expect(found[0]).toMatchObject({ data: { pullRequest: PULL, author: SESSION } });
+      expect(found[0]).not.toHaveProperty("replaces");
+    }),
+  );
+
+  effect(
+    "a session the issue's record keeps already, an issue at another phase, or a marker no persona wrote: nothing",
+    () =>
+      Effect.gen(function* () {
+        const kept = fresh();
+        handedOffBefore(kept);
+        kept.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff, {
+          data: { pullRequest: PULL, author: SESSION },
+        });
+
+        const elsewhere = fresh();
+        handedOffBefore(elsewhere);
+        elsewhere.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.askedQuestions);
+
+        const forged = fresh();
+        handedOffBefore(forged, PERSON);
+
+        for (const fake of [kept, elsewhere, forged]) {
+          expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+        }
+      }),
+  );
+
   effect(
     "E1: an epic a run posted its status on, with a task open: waiting, by its fingerprint",
     () =>
@@ -379,6 +456,35 @@ describe("progress backfill's writing", () => {
         data: Option.some({ key: "pr-7" }),
       });
     }),
+  );
+
+  effect(
+    "rewrites a handed-off record from the version it read, with the session beside its data",
+    () =>
+      Effect.gen(function* () {
+        const fake = fresh();
+        comment(
+          fake,
+          ME,
+          `Implemented by claude for #${ISSUE}. ${sessionMarker.write({ adapter: "claude", sessionId: "s1", issue: ISSUE, branch: "auto/issue-3" })}`,
+        );
+        fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.approved);
+        fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff, { data: { kept: true } });
+
+        yield* backfill(fake);
+
+        expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+          phase: Phases.PHASES.issue.handedOff,
+          from: Option.some(Phases.PHASES.issue.handedOff),
+          by: Backfill.WRITER,
+          data: Option.some({
+            kept: true,
+            pullRequest: PULL,
+            author: { adapter: "claude", sessionId: "s1", issue: ISSUE, branch: "auto/issue-3" },
+          }),
+        });
+        expect(yield* survey(fake)).toEqual([]);
+      }),
   );
 
   effect("a second run writes nothing", () =>

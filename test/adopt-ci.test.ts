@@ -4,7 +4,7 @@
 // time is up, Implement.readied offers the issue as work a run may start, and
 // a new run takes it on from the record.
 
-import { claimMarker, DEFAULT_LABELS, Implement, type Json, Phases } from "@chernabog/sdk";
+import { DEFAULT_LABELS, Implement, type Json, Phases } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -59,21 +59,13 @@ const withPull = (fake: Fake, draft: boolean) => {
   return fake;
 };
 
-// What a CI job that parked on the draft and ended leaves behind: the claim
-// marker that adopted it, and the issue's record of the wait, written `at`.
+// What a CI job that parked on the draft and ended leaves behind: the
+// issue's record of the wait, written `at`, naming the draft. Its claim
+// comment, which told people it adopted the draft, is gone: a person deleted
+// it, and the record alone says so.
 const parkedEarlier = (draft: boolean, at: DateTime.Utc) => {
   const fake = withPull(makeFake("approve", { ...POOL, ciJob: true }), draft);
   fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
-  fake.comment(
-    claimMarker.write({
-      runId: "an-earlier-run",
-      claimedAt: "2026-10-28T00:00:00Z",
-      branch: BRANCH,
-      base: "main",
-      ref: true,
-      adopted: { number: PULL, url: PULL_URL, draft: true },
-    }),
-  );
   fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.awaitingReady, {
     at,
     data: { pullRequest: PULL, withinMillis: FOURTEEN_DAYS, since: DateTime.formatIso(at) },
