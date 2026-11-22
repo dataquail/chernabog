@@ -7,9 +7,9 @@ import {
   DEFAULT_LABELS,
   Hybrid,
   Implement,
+  Phases,
   PushRejected,
   reviewMarker,
-  sessionMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -83,9 +83,8 @@ describe("human-initiated", () => {
         expect(fake.people.requested).toHaveLength(1);
         expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
-        const marker = Option.firstSomeOf(
-          fake.comments.map((comment) => sessionMarker.read(comment.body)),
-        );
+        // The person's session, which answering a review reopens, is in the issue's record.
+        const marker = Phases.authorOf(fake.records(), PULL);
 
         expect(marker).toEqual(
           Option.some({
@@ -272,9 +271,13 @@ describe("a hybrid pull request", () => {
           adapter: "codex",
         }),
       );
-      fake.comment(
-        `Worked on by a person with claude for #${ISSUE}. ${sessionMarker.write({ adapter: "claude", sessionId: PERSON_SESSION, issue: ISSUE, branch: `auto/issue-${ISSUE}`, withPerson: true })}`,
-      );
+      fake.handedOff({
+        adapter: "claude",
+        sessionId: PERSON_SESSION,
+        issue: ISSUE,
+        branch: `auto/issue-${ISSUE}`,
+        withPerson: true,
+      });
       fake.git.pushes = 1;
 
       // A fix to a human-only path pushes, since the person is in the session.

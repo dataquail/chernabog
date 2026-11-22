@@ -174,8 +174,8 @@ once. `:399` reads `auto:epic`, which is intent.
 | M4  | `pull-request.ts:416` (`PullRequest.merge`)                                                                                                             | `reviewMarker`: the reviewed sha behind the merge gate                        | **Done:** the latest review (`sha`, `reviewer`, round, verdict) is `review` in the pull request's record's `data`, kept through the phases after it                                                                                  | #564 |
 | M5  | `review.ts:816` (`latestOwnReview`, from `re-review-blocks.ts:76`)                                                                                      | `reviewMarker`: this persona's last review                                    | **Done:** reads the record's `review`                                                                                                                                                                                                | #564 |
 | M6  | `review.ts:1205` (`read-review`)                                                                                                                        | `reviewMarker`: the review address-review answers, by its sha                 | **Done:** the round of the record's `review` at the reviewed sha                                                                                                                                                                     | #564 |
-| M7  | `review.ts:1157` (`findAuthorSession`, from `review.ts:1171`, `stack.ts:617`, `stack.ts:715`); written at `implement.ts:1768`, `hybrid.ts:303`          | `sessionMarker`: the author's agent session                                   | The session is in the pull request's record's `data`                                                                                                                                                                                 | #565 |
-| M8  | `implement.ts:491` (`latestClaim`), from `implement.ts:593`, `implement.ts:709`, `hybrid.ts:133`; written at `implement.ts:392`, `:566`, `hybrid.ts:96` | `claimMarker`: the claim's run, branch, base and whether a person works on it | The claim's facts are in the issue's record's `data`                                                                                                                                                                                 | #565 |
+| M7  | `review.ts:1157` (`findAuthorSession`, from `review.ts:1171`, `stack.ts:617`, `stack.ts:715`); written at `implement.ts:1768`, `hybrid.ts:303`          | `sessionMarker`: the author's agent session                                   | The session is in the issue's `handed-off` record's `data`, naming the pull request (`Phases.authorOf`): that record stays while the pull request's moves through review                                                             | #565 |
+| M8  | `implement.ts:491` (`latestClaim`), from `implement.ts:593`, `implement.ts:709`, `hybrid.ts:133`; written at `implement.ts:392`, `:566`, `hybrid.ts:96` | `claimMarker`: the claim's run, branch, base and whether a person works on it | Which run holds the claim and its base are the claim ref's (`Base` trailer); an adopted pull request waited on before is named in the issue's record's `data`                                                                        | #565 |
 | M9  | `backfill.ts:289`                                                                                                                                       | `claimMarker`: an adopted draft from before records                           | Backfill maps it onto the record, once                                                                                                                                                                                               | #565 |
 
 The linking markers stay until `Items` (amended decision 6): `planNodeMarker`
@@ -227,8 +227,11 @@ item that needs one and holds none. It infers the phase from the same GitHub
 facts the no-record paths read, the one time ADR 21 allows that, and writes it
 as `observer:backfill`. It prints what it would write; `--write` writes. Each
 write advances from no record, so an item a run recorded since the survey
-keeps the run's record, and a second run finds nothing to write. Where the
-facts don't settle a phase, it writes nothing and lists the item for a person.
+keeps the run's record, and a second run finds nothing to write. S1
+rewrites an issue's `handed-off` record to keep the
+author's session beside it, from the version the survey read, so a record a
+run wrote since wins the same way. Where the facts don't settle a phase, it
+writes nothing and lists the item for a person.
 
 Pull requests: open ones an agent wrote (`auto/` head), a run adopted
 (`auto:adopted`), or one of the repo's personas is asked to review or has
@@ -272,14 +275,16 @@ than from none.
 
 Issues and epics:
 
-| #   | GitHub says                                                                                    | Phase            | Data                                                                                                   |
-| --- | ---------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| I1  | `auto:awaiting-ready`, and the latest claim marker adopted a draft                             | `awaiting-ready` | `pullRequest` from the marker; `withinMillis` 14 days, the recipe's wait                               |
-| I2  | `auto:plan-proposed`, and a plan was posted                                                    | `proposed`       | `round`, from the latest plan marker; `after`, its comment's id; `plan`, the blob of the tasks it kept |
-| I3  | A `proposed` record whose data names no `plan`, and its round's plan marker kept the tasks     | `proposed` again | its data, with `after` and `plan` as I2's, from the record's version                                   |
-| —   | `auto:awaiting-ready` with no adopted draft, `auto:plan-proposed` with no plan, or both labels | for a person     |                                                                                                        |
-| E1  | `auto:epic`, a task open, and a persona's status comment                                       | epic `waiting`   | the status comment's `fingerprint`; no task attempts kept                                              |
-| —   | Any other open issue or epic: queued, in progress, or never run                                | none             | no record is its phase                                                                                 |
+| #   | GitHub says                                                                                                              | Phase                                     | Data                                                                                                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| I1  | `auto:awaiting-ready`, and the latest claim marker adopted a draft                                                       | `awaiting-ready`                          | `pullRequest` from the marker; `withinMillis` 14 days, the recipe's wait                               |
+| I2  | `auto:plan-proposed`, and a plan was posted                                                                              | `proposed`                                | `round`, from the latest plan marker; `after`, its comment's id; `plan`, the blob of the tasks it kept |
+| I3  | A `proposed` record whose data names no `plan`, and its round's plan marker kept the tasks                               | `proposed` again                          | its data, with `after` and `plan` as I2's, from the record's version                                   |
+| —   | `auto:awaiting-ready` with no adopted draft, `auto:plan-proposed` with no plan, or both labels                           | for a person                              |                                                                                                        |
+| E1  | `auto:epic`, a task open, and a persona's status comment                                                                 | epic `waiting`                            | the status comment's `fingerprint`; no task attempts kept                                              |
+| S1  | An open pull request's persona-written session marker names an issue whose record is `handed-off` with no session for it | `handed-off` again, from the version read | the record's data, with `pullRequest` and `author`, the session                                        |
+| S2  | As S1, and the issue has no record                                                                                       | `handed-off`                              | `pullRequest` and `author`, the session                                                                |
+| —   | Any other open issue or epic: queued, in progress, or never run                                                          | none                                      | no record is its phase                                                                                 |
 
 What it can't backfill, and leaves to the legacy path or to time:
 

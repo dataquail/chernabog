@@ -15,6 +15,7 @@ import {
   Claims,
   type Comment,
   GitHub,
+  isPhaseData,
   type Json,
   latestMarker,
   Phase as CorePhase,
@@ -26,6 +27,7 @@ import {
   type PullRequest,
   Repo,
   reviewMarker,
+  sessionMarker,
   type SubmittedReview,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -83,6 +85,14 @@ export const OBSERVED: ReadonlyArray<Observed> = [
     to: Phases.PHASES.issue.proposed,
   },
   { by: WRITER, item: "epic", from: [Phases.NO_RECORD], to: Phases.PHASES.epic.waiting },
+  // S1 and S2: the author's session, from an in-flight pull request's marker,
+  // onto its issue's handed-off record, which it rewrites to keep it.
+  {
+    by: WRITER,
+    item: "issue",
+    from: [Phases.NO_RECORD, Phases.PHASES.issue.handedOff],
+    to: Phases.PHASES.issue.handedOff,
+  },
   // A park from before each site had a phase of its own, moved onto its own
   // (movedPark).
   {
@@ -109,10 +119,11 @@ export const READY_WITHIN = Duration.days(14);
 
 // What backfill found for one open item: a phase to write, with its data,
 // if any, and the facts it read; or a person to decide, with why. A write is
-// from no record, or, with `from`, from the record the survey read: a park
-// moved off a phase it shared onto its site's own. Plain JSON, as the binary
-// reads it from the repo's SDK (loadRepoBackfill) and hands it back to
-// `apply`.
+// from no record, or, with `over`, from the record the survey read: a park
+// moved off a phase it shared onto its site's own, or a handed-off record
+// rewritten to keep the author's session a marker held beside it (S1). Plain
+// JSON, as the binary reads it from the repo's SDK (loadRepoBackfill) and
+// hands it back to `apply`.
 export type Finding =
   | {
       readonly kind: "write";
@@ -692,6 +703,94 @@ const planFindings = (all: ReadonlyMap<string, PhaseRecord>, withPerson: Readonl
     (found) => found.flatMap((finding) => Option.toArray(finding)),
   );
 
+// S1 and S2: the author's session an implement run from before the ledger
+// kept it left on an open pull request, as a persona's session marker, onto
+// the issue it names: its handed-off record, rewritten from the version read
+// to keep the session beside the data it has (S1), or a handed-off record for
+// an issue with none (S2). None for a pull request with no such marker, an
+// issue whose record keeps a session for it already, or one at another phase,
+// which a run has moved on since.
+const sessionFinding = (
+  pull: PullRequest,
+  all: ReadonlyMap<string, PhaseRecord>,
+  logins: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const marker = Option.filter(
+      latestMarker(
+        sessionMarker.read,
+        (yield* (yield* GitHub).comments(pull.number))
+          .filter((found) => isOneOf(logins, found.author))
+          .map((found) => found.body),
+      ),
+      (found) => found.issue > 0,
+    );
+
+    if (Option.isNone(marker)) {
+      return Option.none<Finding>();
+    }
+
+    const session = marker.value;
+    const item = Phases.issueItem(session.issue);
+    const why = `#${pull.number}'s session marker names #${session.issue}`;
+    const found = Phases.recordOf(all, item);
+    const handedOff = Phases.handedOffData(pull.number, Option.some(session));
+
+    if (Option.isNone(found)) {
+      return Option.some(write(item, Phases.PHASES.issue.handedOff, why, handedOff));
+    }
+
+    if (
+      found.value.phase !== Phases.PHASES.issue.handedOff ||
+      Option.isSome(Phases.authorOf(new Map([[item, found.value]]), pull.number))
+    ) {
+      return Option.none<Finding>();
+    }
+
+    const data = { ...Option.getOrElse(found.value.data, () => ({})), ...handedOff };
+
+    if (!isPhaseData(data)) {
+      return Option.some(
+        person(item, `${why}, but the session doesn't fit beside its record's data`),
+      );
+    }
+
+    return Option.some<Finding>({
+      kind: "write",
+      item,
+      phase: Phases.PHASES.issue.handedOff,
+      data,
+      why,
+      over: { phase: found.value.phase, version: found.value.version },
+    });
+  });
+
+// What backfill finds from one open pull request: the author's session its
+// marker names, onto its issue (sessionFinding), and its own record
+// (surveyPullRequest); none for an item with a person, whose hand-off
+// withPersonFindings writes.
+const pullRequestFindings = (
+  pull: PullRequest,
+  all: ReadonlyMap<string, PhaseRecord>,
+  logins: ReadonlyArray<string>,
+  withPerson: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    const session = Option.filter(
+      yield* sessionFinding(pull, all, logins),
+      (found) => !withPerson.has(found.item),
+    );
+
+    if (withPerson.has(Phases.pullRequestItem(pull.number))) {
+      return Option.toArray(session);
+    }
+
+    return [
+      ...Option.toArray(session),
+      ...Option.toArray(yield* surveyPullRequest(pull, all, logins)),
+    ];
+  });
+
 // Every open item that holds no record and needs one, each with the phase
 // to write or why a person must decide, read as the repo's personas, by its
 // committed config (Repo.personas), and every one labelled auto:needs-human
@@ -715,11 +814,7 @@ export const survey = Effect.gen(function* () {
     Option.isNone(Phases.recordOf(all, item)) && !withPerson.has(item);
 
   for (const pull of yield* github.openPullRequests) {
-    if (withPerson.has(Phases.pullRequestItem(pull.number))) {
-      continue;
-    }
-
-    for (const found of Option.toArray(yield* surveyPullRequest(pull, all, logins))) {
+    for (const found of yield* pullRequestFindings(pull, all, logins, withPerson)) {
       findings.push(found);
     }
   }
@@ -797,7 +892,8 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
       }
 
       // From the record the survey read, by its version: for a hand-off to a
-      // person, or a park moved onto its site's phase. Else from no record:
+      // person, a park moved onto its site's phase, or a handed-off record
+      // that keeps the author's session (S1). Else from no record:
       // an item a run recorded since is a lost race, and keeps the run's
       // record. Or from the record a review is copied into, by its version.
       const from = yield* Option.match(Option.fromUndefinedOr(finding.over), {

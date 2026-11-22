@@ -19,7 +19,6 @@ import {
   GitHub,
   type Issue,
   type Json,
-  latestMarker,
   Markers,
   NeedsHuman,
   NothingCommitted,
@@ -30,7 +29,7 @@ import {
   reportAs,
   Run,
   RunLog,
-  sessionMarker,
+  type SessionMarker,
   Skip,
   sleep,
   StepFailed,
@@ -369,7 +368,7 @@ export const baseHead = (base: string) =>
   });
 
 // The base a run that already holds the claim recorded, which it keeps
-// whatever it is given now; the flow's integration base for a marker without one.
+// whatever it is given now; the flow's integration base for a claim without one.
 export const claimedBase = (marker: ClaimMarker) => baseOf({ base: marker.base });
 
 // The account is the one machine config expects, and it has room for a task.
@@ -485,16 +484,35 @@ export const closingPullRequests = (issue: number) =>
     );
   });
 
-// The latest claim marker on the issue, from its comments.
+// The claim on the issue as its claim ref names it (ADR 21, decision 7), not
+// as its claim comment says: the run that holds it, since when, the base it
+// claimed the issue on, and whether a person works on it. Its branch is the
+// issue's own; a pull request a run adopted is in the issue's record. None
+// when nobody holds the issue.
 export const latestClaim = (issue: number) =>
-  GitHub.use((github) => github.comments(issue)).pipe(
-    Effect.map((comments) =>
-      latestMarker(
-        claimMarker.read,
-        comments.map((comment) => comment.body),
-      ),
-    ),
+  Effect.map(
+    Claims.holder(Claims.issue(issue)),
+    Option.map((holder): ClaimMarker => {
+      const claim: ClaimMarker = {
+        runId: holder.runId,
+        claimedAt: holder.claimedAt,
+        branch: branchFor(issue),
+        withPerson: holder.withPerson,
+        ref: true,
+      };
+
+      return Option.match(Option.fromUndefinedOr(holder.base), {
+        onNone: () => claim,
+        onSome: (base) => ({ ...claim, base }),
+      });
+    }),
   );
+
+// Whether `claim`, read before this run acquired the issue, is this run's
+// own: the run claimed it already, for an earlier attempt, or before it
+// stopped inside claim and resumed.
+const claimedByThisRun = (claim: Option.Option<ClaimMarker>) =>
+  Run.use((run) => Effect.succeed(Option.exists(claim, (found) => found.runId === run.runId)));
 
 // Labels the issue in progress, moves it to In Progress on the board, if the
 // repo has one, and assigns the persona, as a person picking it up would.
@@ -579,6 +597,9 @@ const referToPerson = (issue: number, label: string, reason: string) =>
     return yield* new NeedsHuman({ reason });
   });
 
+// The pull request an issue's record says a wait was on.
+const WaitedOn = Schema.Struct({ pullRequest: Schema.Finite });
+
 // Takes on the one open pull request, on a branch other than the issue's
 // own, that already closes the issue: marks the issue claimed, labels it
 // awaiting-ready when the pull request is a draft, and records the adoption
@@ -586,27 +607,27 @@ const referToPerson = (issue: number, label: string, reason: string) =>
 // the persona's (ADOPTED_LABEL). The run names it as a subject, as it would
 // one it opened. None closing it is none to adopt;
 // several, or one on a fork, go to a person (NeedsHuman), named. A run that
-// resumes inside claim keeps what its marker records.
-const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =>
+// claimed the issue already (`again`) takes the one it adopted up from GitHub
+// as it stands, with nothing put on the issue a second time.
+const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>, resumed: boolean) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const run = yield* Run;
-    const latest = yield* latestClaim(issue);
-
-    if (Option.isSome(latest) && latest.value.runId === run.runId) {
-      const marker = latest.value;
-      const base = yield* claimedBase(marker);
-
-      return Option.map(Option.fromUndefinedOr(marker.adopted), (adopted) => ({
-        branch: marker.branch,
-        base,
-        adopted,
-      }));
-    }
 
     const closing = (yield* closingPullRequests(issue)).filter(
       (pull) => pull.headRefName !== branchFor(issue),
     );
+
+    if (resumed) {
+      return Option.map(
+        Option.filter(Arr.head(closing), (only) => closing.length === 1 && !only.isCrossRepository),
+        (only) => ({
+          branch: only.headRefName,
+          base: only.baseRefName,
+          adopted: { number: only.number, url: only.url, draft: only.isDraft },
+        }),
+      );
+    }
 
     const first = Arr.head(closing);
 
@@ -651,8 +672,15 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
       adopted,
     };
 
-    // An earlier run's claim adopted the same one: this run takes it up again.
-    const again = Option.exists(latest, (found) => found.adopted?.number === adopted.number);
+    // An earlier run's wait on the same one, which the issue's record keeps
+    // (awaiting-ready, ready-timed-out, awaiting-ci): this run takes it up again.
+    const again = Option.exists(
+      Option.flatMap(
+        Option.flatMap(yield* Phases.current(Phases.issueItem(issue)), (found) => found.data),
+        Schema.decodeUnknownOption(WaitedOn),
+      ),
+      (found) => found.pullRequest === adopted.number,
+    );
 
     yield* github.comment(
       issue,
@@ -689,7 +717,9 @@ export const claim = (
       const item = Claims.issue(issue);
       const base = yield* landedBase(yield* baseOf(options));
       const baseSha = yield* baseHead(base);
-      const claimed = yield* Claims.acquire(item);
+      const before = yield* latestClaim(issue);
+      const resumed = yield* claimedByThisRun(before);
+      const claimed = yield* Claims.acquire(item, { base });
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -699,7 +729,7 @@ export const claim = (
 
       if (options.adopt === true) {
         const takenOver = Option.toArray(Option.map(claimed.takenOver, Claims.describeTakeover));
-        const adopted = yield* adopt(issue, label, takenOver);
+        const adopted = yield* adopt(issue, label, takenOver, resumed);
 
         if (Option.isSome(adopted)) {
           return adopted.value;
@@ -707,19 +737,18 @@ export const claim = (
       }
 
       if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
-        const latest = yield* latestClaim(issue);
-
-        // This run claimed it before, for an earlier attempt: the queue label
-        // comes off again, and a base the caller gives is the task's now,
-        // which may have moved since that claim (#249).
-        if (Option.isSome(latest) && latest.value.runId === run.runId) {
+        // This run claimed it before, for an earlier attempt, as its claim
+        // ref says: the queue label comes off again, and a base the caller
+        // gives is the task's now, which may have moved since that claim
+        // (#249); otherwise the one the claim ref recorded.
+        if (resumed && Option.isSome(before)) {
           yield* github.removeLabel(issue, label);
 
           if (Option.isSome(Option.fromUndefinedOr(options.base))) {
             return { branch, base };
           }
 
-          return { branch, base: yield* claimedBase(latest.value) };
+          return { branch, base: yield* claimedBase(before.value) };
         }
       } else {
         yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
@@ -1730,17 +1759,18 @@ const handedOffAs = (options: { readonly draft?: boolean }): Phases.Phase => {
 // review or, as a draft, for a person to mark it ready, with who had reviewed
 // it already, such as an adopted one's reviewers (Phases.reviewedBefore), and
 // then the issue's,
-// whose progress goes on as the pull request's. In that order, so a crash
-// between the two leaves the pull request findable, and a replay of the
-// hand-off writes the issue's.
+// whose progress goes on as the pull request's, naming the pull request and
+// the `session` that wrote it, which address-review resumes
+// (Phases.recordHandedOff). In that order, so a crash between the two leaves
+// the pull request findable, and a replay of the hand-off writes the issue's.
 export const recordHandOff = (
   issue: number,
   pullRequest: number,
-  options: { readonly draft?: boolean },
+  options: { readonly draft?: boolean; readonly session?: SessionMarker },
 ) =>
   Effect.gen(function* () {
     yield* Phases.recordAwaitingReview(pullRequest, handedOffAs(options));
-    yield* Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.handedOff);
+    yield* Phases.recordHandedOff(issue, pullRequest, Option.fromUndefinedOr(options.session));
   });
 
 // Hands the green pull request to review: a review requested of one reviewer
@@ -1759,9 +1789,10 @@ export const handOff = (
       const repo = yield* Repo;
       const run = yield* Run;
 
-      // The fix flow resumes this session to answer a review. For an adopted
-      // pull request it is one a CI fix started, or none yet.
-      const session = {
+      // The fix flow resumes this session to answer a review, which the
+      // issue's record keeps. For an adopted pull request it is one a CI fix
+      // started, or none yet.
+      const session: SessionMarker = {
         adapter: repo.agent,
         sessionId: sessionIdFor(run.runId, named(options, "implement")),
         issue,
@@ -1773,7 +1804,7 @@ export const handOff = (
         onSome: () => `Taken on by Chernabog for #${issue}; ${repo.agent} answers its reviews.`,
       });
 
-      yield* github.comment(pullRequest.number, `${by} ${sessionMarker.write(session)}`);
+      yield* github.comment(pullRequest.number, by);
 
       // Only now is an adopted pull request the persona's to answer reviews on.
       if (Option.isSome(Option.fromUndefinedOr(options.adoptedBranch))) {
@@ -1782,7 +1813,7 @@ export const handOff = (
       }
 
       yield* dropInProgress(issue);
-      yield* recordHandOff(issue, pullRequest.number, options);
+      yield* recordHandOff(issue, pullRequest.number, { ...options, session });
 
       if (options.draft === true) {
         yield* github.comment(
@@ -1864,7 +1895,7 @@ export const awaitReady = (issue: number, pullRequest: number, timeout: Duration
 
       return activity(
         `ready-timed-out-${pullRequest}`,
-        Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.readyTimedOut),
+        Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.readyTimedOut, { pullRequest }),
       );
     }),
     Effect.tap(() =>

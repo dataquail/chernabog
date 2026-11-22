@@ -10,7 +10,6 @@ import {
   latestMarker,
   Repo,
   reviewMarker,
-  sessionMarker,
   Stack,
   StepFailed,
 } from "@chernabog/sdk";
@@ -45,7 +44,7 @@ const UPPER = "auto/issue-2";
 // The fake's first pull request: the upper layer, stacked on the lower one.
 const PULL = 1;
 
-// The session the implement run left its marker for.
+// The session the implement run recorded in the issue's record.
 const AUTHOR_SESSION = "author-session-2";
 
 // git runs for real.
@@ -168,12 +167,7 @@ const refreshOn = (
     github.comments.set(PULL, [
       {
         id: 1,
-        body: `Implemented by claude for #2. ${sessionMarker.write({
-          adapter: "claude",
-          sessionId: AUTHOR_SESSION,
-          issue: 2,
-          branch: UPPER,
-        })}`,
+        body: "Implemented by claude for #2.",
         user: { login: "chernabog-bot" },
         author_association: "OWNER",
         created_at: "2026-10-28T00:00:00Z",
@@ -279,6 +273,7 @@ const refreshOn = (
     });
 
     const fake = makeFake("approve");
+    fake.handedOff({ adapter: "claude", sessionId: AUTHOR_SESSION, issue: 2, branch: UPPER }, PULL);
 
     const finished = yield* runToEnd(
       flowHandle(repo, "demo", flow),
