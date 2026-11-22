@@ -69,6 +69,9 @@ export type Holder = {
   readonly renewedAt?: string;
   // The run whose expired lease this run took over.
   readonly takenOverFrom?: string;
+  // The branch the run builds on, so a run that resumes keeps it; a claim
+  // that names none is on whatever base its run is given.
+  readonly base?: string;
 };
 
 const trailer = (name: string, value: Option.Option<string>) =>
@@ -86,6 +89,7 @@ export const messageOf = (holder: Holder) =>
     ...trailer("Expires-At", Option.fromUndefinedOr(holder.expiresAt)),
     ...trailer("Renewed-At", Option.fromUndefinedOr(holder.renewedAt)),
     ...trailer("Taken-Over-From", Option.fromUndefinedOr(holder.takenOverFrom)),
+    ...trailer("Base", Option.fromUndefinedOr(holder.base)),
   ].join("\n");
 
 // An optional field from a trailer that is there, else nothing.
@@ -124,6 +128,7 @@ export const holderOf = (message: string): Option.Option<Holder> => {
     ...optional(Option.fromUndefinedOr(trailers.get("Taken-Over-From")), (takenOverFrom) => ({
       takenOverFrom,
     })),
+    ...optional(Option.fromUndefinedOr(trailers.get("Base")), (base) => ({ base })),
   }));
 };
 
@@ -391,6 +396,8 @@ export const refMarker = Markers.define(
 export type AcquireOptions = {
   // A person works on the item in the run, on the hybrid path.
   readonly withPerson?: boolean;
+  // The branch the run builds on, which the claim commit records (Holder's base).
+  readonly base?: string;
 };
 
 export type Acquired =
@@ -486,6 +493,7 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
       claimedAt: DateTime.formatIso(now),
       withPerson: options.withPerson === true,
       expiresAt: leaseEnd(now, leaseTtlOf(run)),
+      ...optional(Option.fromUndefinedOr(options.base), (base) => ({ base })),
     };
 
     const taken = yield* take(item, mine, Option.fromUndefinedOr(run.takesOver));

@@ -57,6 +57,7 @@ export type Holder = {
     readonly expiresAt?: string;
     readonly renewedAt?: string;
     readonly takenOverFrom?: string;
+    readonly base?: string;
 };
 export declare const messageOf: (holder: Holder) => string;
 export declare const holderOf: (message: string) => Option.Option<Holder>;
@@ -94,6 +95,7 @@ export declare const refMarker: Markers.Definition<{
 }>;
 export type AcquireOptions = {
     readonly withPerson?: boolean;
+    readonly base?: string;
 };
 export type Acquired = {
     readonly acquired: true;
