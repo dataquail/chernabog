@@ -79,17 +79,31 @@ describe("the park sites' catalogue", () => {
             records: Schema.optionalKey(
               Schema.Array(Schema.Struct({ item: Schema.String, phase: Schema.String })),
             ),
+            parks: Schema.optionalKey(Schema.String),
           }),
         ),
       }),
     )(Compose.describe());
 
+    // A block that parks on a phase records it too; one that records a park
+    // site's phase without parking there, as plan.propose records proposed
+    // for plan.awaitAnswer to park on, is no second site.
+    // Some sites are a recipe's wait, or a wait a run is woken from rather
+    // than taken up (pr.awaitReady, epic.park), with no block that parks.
     for (const phase of parkPhases) {
-      const recording = described.blocks.filter((block) =>
-        (block.records ?? []).some((recorded) => recorded.phase === phase),
-      );
+      const parking = described.blocks.filter((block) => block.parks === phase);
 
-      expect([phase, recording.map((block) => block.name).length]).toEqual([phase, 1]);
+      expect([phase, parking.length <= 1]).toEqual([phase, true]);
+
+      for (const block of parking) {
+        expect((block.records ?? []).map((recorded) => recorded.phase)).toContain(phase);
+      }
+    }
+
+    for (const block of described.blocks) {
+      for (const phase of Option.toArray(Option.fromUndefinedOr(block.parks))) {
+        expect(parkPhases).toContain(phase);
+      }
     }
   });
 });

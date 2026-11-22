@@ -23,9 +23,7 @@ import {
   planNodeMarker,
   Progress,
   Repo,
-  reportAs,
   Run,
-  sleep,
   StepFailed,
   type WorkItem,
   Worktree,
@@ -626,45 +624,67 @@ const specWaiting = (number: number) =>
     );
   });
 
-// Whether a flow document's run parked on a person's answer to its plan may
-// be taken up (ADR 0021, decision 4): once a person answers, or nobody does
-// within the time its plan.awaitAnswer was given since the plan was posted,
-// routed by assignees, as the recipe's are (answered); held while neither.
-// A spec closed or handed to a person has nothing left to resume.
-export const documentAnswerResumes = (
-  data: { readonly [key: string]: Json },
-  item: WorkItem,
-  at: DateTime.Utc,
-) =>
-  Effect.gen(function* () {
-    const parked = Schema.decodeUnknownOption(DocumentWait)(data);
+// Specs a flow document's run parked on a person's answer to their plan (a
+// proposed record that says how long a person has, which its
+// plan.awaitAnswer was given), as work a run may start (ADR 0021, decision
+// 4): once a person answers, or nobody does within that time since the plan
+// was posted, routed by assignees, as the recipe's are (answered); held, with
+// why, while neither. Each says the round it parked in (answerRound). A spec
+// closed or handed to a person has nothing left to take up.
+export const documentAnswers = Effect.gen(function* () {
+  const items: Array<WorkItem> = [];
 
-    if (Option.isNone(parked)) {
-      return Option.none<WorkItem>();
+  for (const [name, record] of yield* Phases.records) {
+    const number = Option.map(Option.fromNullOr(SPEC_RECORD.exec(name)), (match) =>
+      Number(match[1]),
+    );
+
+    const parked = Option.flatMap(
+      Option.filter(record.data, () => record.phase === Phases.PHASES.issue.proposed),
+      Schema.decodeUnknownOption(DocumentWait),
+    );
+
+    if (Option.isNone(number) || Option.isNone(parked)) {
+      continue;
     }
 
-    const spec = yield* specWaiting(yield* issueOf(item));
+    const spec = yield* specWaiting(number.value);
 
-    if (Option.isNone(spec)) {
-      return Option.none<WorkItem>();
+    for (const open of Option.toArray(spec)) {
+      const item: WorkItem = {
+        ...issueItem(open),
+        data: { issue: open.number, answerRound: parked.value.round },
+      };
+
+      const waiting = {
+        spec: open,
+        round: parked.value.round,
+        since: record.at,
+        anchor: anchorOf(record.data, record.at),
+      };
+
+      if (Option.isNone(yield* takenAnswer(waiting, parked.value.within))) {
+        items.push({
+          ...item,
+          held: `waits on a person's answer to the plan of round ${parked.value.round}`,
+        });
+
+        continue;
+      }
+
+      items.push(yield* routed(open, item));
     }
+  }
 
-    const waiting = {
-      spec: spec.value,
-      round: parked.value.round,
-      since: at,
-      anchor: anchorOf(Option.some(data), at),
-    };
+  return items;
+});
 
-    if (Option.isNone(yield* takenAnswer(waiting, parked.value.within))) {
-      return Option.some<WorkItem>({
-        ...item,
-        held: `waits on a person's answer to the plan of round ${parked.value.round}`,
-      });
-    }
+const AnswerItem = Schema.Struct({ answerRound: Schema.Finite });
 
-    return Option.some(yield* routed(spec.value, item));
-  }).pipe(reportAs("trigger"));
+// The round of the plan a work item from documentAnswers takes the answer to
+// up; none for any other.
+export const answerRoundOf = (item: WorkItem): Option.Option<number> =>
+  Option.map(Schema.decodeUnknownOption(AnswerItem)(item.data), (data) => data.answerRound);
 
 // The answer to the plan of `round` a flow document's run acts on, read in
 // the step `step`: a person's, or a timeout once `within` has passed since
@@ -698,26 +718,6 @@ const answerIn = (step: string, spec: number, round: number, within: Duration.In
 // answered, which waits again.
 export const answerNow = (spec: number, round: number, within: Duration.Input) =>
   answerIn(`plan-answer-${round}`, spec, round, within);
-
-// How often a flow document's wait that can't be taken up from its record
-// looks for an answer.
-const ANSWER_POLL = Duration.minutes(15);
-
-// Polls for the answer to the plan of `round`, as answerIn reads it, for a
-// flow document's wait that can't be taken up from its record: not a park,
-// so its run isn't stranded.
-export const pollAnswer = (spec: number, round: number, within: Duration.Input) =>
-  Effect.gen(function* () {
-    for (let poll = 1; ; poll++) {
-      const answer = yield* answerIn(`plan-answer-${round}-${poll}`, spec, round, within);
-
-      if (Option.isSome(answer)) {
-        return answer.value;
-      }
-
-      yield* sleep(`plan-${round}-wait-${poll}`, ANSWER_POLL);
-    }
-  });
 
 const decodePlanText = Schema.decodeUnknownOption(Schema.fromJsonString(Plan));
 
@@ -968,7 +968,7 @@ const carriedPlan = (spec: number, round: number) =>
 
 // The wait on a person's answer to the plan of `round`, as the spec's
 // proposed record (plan-<round>-waits): the round, and what else the record
-// keeps, such as a document's `resume`. A wait of the round already there
+// keeps, such as how long a document's wait gives a person. A wait of the round already there
 // is kept, so a run that took the plan up waits on from it, and `timeout`
 // counts from when the plan was posted; the record plan.propose wrote, which
 // says when no wait began, is not a wait yet. The wait's record carries on

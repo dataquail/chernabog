@@ -9,16 +9,14 @@
 // pull request's phase, as none did while the run that waited owned it.
 //
 // Every pull request a run opened has a record (backfill gave one to those
-// from before records), so one with none goes to a person. A wait whose
-// record, kept beside the rest, doesn't fit the record's 4 KB polls.
+// from before records), so one with none goes to a person.
 
 import {
   activity,
-  GitHub,
+  type Json,
   NeedsHuman,
   type PhaseData,
   type PhaseRecord,
-  reportAs,
   type WorkItem,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
@@ -40,9 +38,8 @@ const Restore = Schema.Struct({
 
 export type Restore = typeof Restore.Type;
 
-// What a parked wait's record keeps beside where a document resumes: the
-// record it parked over, and when the round's wait began, which every
-// wait for CI keeps.
+// What a parked wait's record keeps: the record it parked over, and when the
+// round's wait began, which every wait for CI keeps.
 const Parked = Schema.Struct({ restore: Restore, since: Schema.optionalKey(Schema.String) });
 
 const decodeParked = Schema.decodeUnknownOption(Parked);
@@ -84,14 +81,9 @@ const reviewPhase = (pullRequest: number) =>
   );
 
 // Where a recipe's wait parks: on the pull request's record, with what it
-// parked over, when that fits a record.
+// parked over.
 export const parkOnPullRequest = (pullRequest: number) => (restore: Restore) =>
-  Effect.succeed(
-    Option.map(Option.liftPredicate({ restore }, Phases.fitsAPark), (data) => ({
-      item: Phases.pullRequestItem(pullRequest),
-      data,
-    })),
-  );
+  Effect.succeedSome({ item: Phases.pullRequestItem(pullRequest), data: { restore } });
 
 // Records the phase the wait parked over again, once it has ended, when the
 // pull request still holds the wait's phase (restored#resolve). Nothing for a
@@ -117,7 +109,8 @@ const restoreReview = (pullRequest: number, restore: Restore) =>
 // session that resolved the conflict, as Implement.waitForCi does. A first
 // reading still pending records awaiting-conflict-ci on the pull request, with
 // the record it parks over and when the wait began, and parks (`parkAt` says
-// where: parkOnPullRequest for the recipe, Resume.parking for a document).
+// where: parkOnPullRequest for the recipe, Resume.parking for a document's
+// node a run can take the wait up at).
 // A run that takes it up waits on from `firstRound`, and past ciTimeout,
 // counted from when the round began, fails with CiTimedOut. However the wait
 // ends, short of the park, the record it parked over is recorded again.
@@ -127,7 +120,11 @@ export const waitForCi = <E, R>(
   target: Implement.CiBranch,
   parkAt: (
     restore: Restore,
-  ) => Effect.Effect<Option.Option<{ readonly item: string; readonly data: PhaseData }>, E, R>,
+  ) => Effect.Effect<
+    Option.Option<{ readonly item: string; readonly data: { readonly [key: string]: Json } }>,
+    E,
+    R
+  >,
   firstRound: Option.Option<number> = Option.none(),
 ) =>
   Effect.gen(function* () {
@@ -180,11 +177,11 @@ export const resumingCi = (item: WorkItem): Option.Option<number> =>
   Option.map(Schema.decodeUnknownOption(ResumingItem)(item.data), (found) => found.resumeCi.round);
 
 // Pull requests this persona wrote whose resolve-conflicts recipe run parked
-// on CI for its merge (their record is awaiting-conflict-ci, with no
-// document's `resume`), as work items that take the wait up: held while the
-// checks are pending and ciTimeout hasn't passed, and free to start once CI
-// is green or red, or the time is up. One a person has (auto:needs-human), or
-// a run owns, is left alone. A document's parks are Resume.parked's.
+// on CI for its merge (their record is awaiting-conflict-ci), as work items
+// that take the wait up, for the recipe and its document alike: held while
+// the checks are pending and ciTimeout hasn't passed, and free to start once
+// CI is green or red, or the time is up. One a person has (auto:needs-human),
+// or a run owns, is left alone.
 export const parkedOnCi = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
@@ -205,7 +202,6 @@ export const parkedOnCi = Effect.gen(function* () {
 
     if (
       Option.isNone(parked) ||
-      "resume" in parked.value.data ||
       pull.labels.includes(labelNames.needsHuman) ||
       (yield* Review.ownedByARun(pull))
     ) {
@@ -231,39 +227,3 @@ export const parkedOnCi = Effect.gen(function* () {
 
   return items;
 });
-
-const DocumentConflict = Schema.Struct({ pullRequest: Schema.Finite });
-
-// Whether a document's run parked on CI for its merge may be taken up, as
-// parkedOnCi says for the recipe's. One whose pull request closed or went to
-// a person has nothing left to resume.
-export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
-  Effect.gen(function* () {
-    const parked = Schema.decodeUnknownOption(DocumentConflict)(item.data);
-
-    if (Option.isNone(parked)) {
-      return Option.none<WorkItem>();
-    }
-
-    const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
-
-    const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
-      Effect.asSome,
-      Effect.catchTag("NotFound", () => Effect.succeedNone),
-    );
-
-    if (
-      Option.isNone(pull) ||
-      pull.value.state !== "open" ||
-      pull.value.labels.includes(labelNames.needsHuman)
-    ) {
-      return Option.none<WorkItem>();
-    }
-
-    return Option.some(yield* heldUnlessSettled(parked.value.pullRequest, data, item));
-  }).pipe(reportAs("trigger"));
-
-// What a document's run at conflict.waitForCi parks with: what the record
-// parked over beside where it resumes, when the node can resume (Resume.parking).
-export const keptWith = (restore: Restore) => ({ restore });

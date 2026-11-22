@@ -66,6 +66,9 @@ const CatalogueBlock = Schema.Struct({
   ),
   recordsInput: Schema.optionalKey(Schema.String),
   wakeReads: Schema.optionalKey(Schema.Array(Reading)),
+  // The phase it parks on, for a block that parks: a run that takes the item
+  // up starts at it.
+  parks: Schema.optionalKey(Schema.String),
   // The GitHub events that settle the wait its wakes look for; none from an
   // SDK from before events.
   wakeEvents: Schema.optionalKey(Schema.Array(WakingEvent)),

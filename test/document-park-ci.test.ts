@@ -1,10 +1,13 @@
 // A flow document parked in a CI job (audit W8, ADR 0021 decision 4): a
-// daemon's run or a CI job's ends at the park, so a document's wait for CI
-// records awaiting-ci on the run's item, with the node it parked at and what
-// the steps from there on read (Resume). The document's own source offers the
-// item again once CI has finished, as work a run may start, never only a
-// wake, and the new run starts at that node, so nothing before it runs again.
-// The epic document's rounds start from what its waiting record kept.
+// daemon's run or a CI job's ends at the park, and a park is a phase
+// boundary. A document's wait for CI records its site's own phase on the
+// run's item, awaiting-ci for implement's, with only the facts the next run
+// needs and nothing of the run: no node, no item, no step's output. The
+// document's own source offers the item again by that phase once CI has
+// finished, as work a run may start, never only a wake, and the new run
+// starts at the node that parks there, which takes the wait up from the
+// record and the world, so nothing before it runs again. The epic
+// document's rounds start from what its waiting record kept.
 
 import {
   Blocks,
@@ -25,7 +28,6 @@ import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
@@ -62,23 +64,6 @@ const ISSUE_ITEM = Phases.issueItem(ISSUE);
 const PR_ITEM = Phases.pullRequestItem(PULL);
 const PULL_URL = `https://github.com/dataquail/demo/pull/${PULL}`;
 const POOL = { reviewers: ["zach", "data-quail"] };
-
-const ParkedData = Schema.Struct({
-  pullRequest: Schema.Finite,
-  resume: Schema.Struct({
-    flow: Schema.String,
-    node: Schema.String,
-    login: Schema.String,
-    item: Schema.Struct({ key: Schema.String, data: Schema.Json }),
-    kept: Schema.Record(Schema.String, Schema.Json),
-  }),
-});
-
-// What the item's record keeps for the run that takes it up.
-const parkedData = (fake: Fake, name: string) =>
-  Option.flatMap(Option.fromUndefinedOr(fake.records().get(name)), (record) =>
-    Option.flatMap(record.data, Schema.decodeUnknownOption(ParkedData)),
-  );
 
 // The record's data as it is, to seed another fake's record with.
 const rawData = (fake: Fake, name: string) =>
@@ -139,7 +124,7 @@ describe("the implement document in a CI job", () => {
   };
 
   effect(
-    "records the wait on the issue, with the node it parked at and what the steps after it read",
+    "records awaiting-ci on the issue, with when the wait began and nothing of the run",
     () =>
       Effect.gen(function* () {
         const { fake, run } = yield* parked(yield* loaded);
@@ -149,26 +134,8 @@ describe("the implement document in a CI job", () => {
         expect(fake.phases()[ISSUE_ITEM]).toBe("awaiting-ci");
         // Not handed off: nobody is asked to review it yet.
         expect(fake.people.requested).toEqual([]);
-
-        const data = parkedData(fake, ISSUE_ITEM);
-        expect(
-          Option.map(data, (found) => ({
-            pullRequest: found.pullRequest,
-            flow: found.resume.flow,
-            node: found.resume.node,
-            item: found.resume.item,
-            kept: Object.keys(found.resume.kept).toSorted(),
-          })),
-        ).toEqual(
-          Option.some({
-            pullRequest: PULL,
-            flow: "implement",
-            node: "ci",
-            item: { key: `issue-${ISSUE}`, data: { issue: ISSUE } },
-            // The worktree is made again, on whichever machine takes it up.
-            kept: ["agent", "claim", "opened"],
-          }),
-        );
+        // As the recipe's: the pull request is the one on the issue's branch.
+        expect(Object.keys(rawData(fake, ISSUE_ITEM))).toEqual(["since"]);
       }),
     ENGINE_TIMEOUT,
   );
@@ -192,8 +159,9 @@ describe("the implement document in a CI job", () => {
         expect(Option.fromUndefinedOr(ready.held)).toEqual(Option.none());
         expect(Option.fromUndefinedOr(ready.wakeOnly)).toEqual(Option.none());
         expect(mayStart(ready)).toBe(true);
-        expect(Option.map(Resume.resumedAt(ready), (at) => [at.node, at.phase])).toEqual(
-          Option.some(["ci", "awaiting-ci"]),
+        expect(Resume.resumedAt(ready)).toEqual(Option.some("awaiting-ci"));
+        expect(Option.map(Implement.resumingCi(ready), (at) => [at.pullRequest, at.round])).toEqual(
+          Option.some([PULL, 1]),
         );
       }),
     ENGINE_TIMEOUT,
@@ -270,32 +238,29 @@ describe("the implement document in a CI job", () => {
   );
 
   effect(
-    "leaves an item another persona parked to it, and holds one parked at a node the document lost",
+    "takes up a record parked before a park was a phase boundary by its phase alone",
     () =>
       Effect.gen(function* () {
         const flow = yield* loaded;
         const { fake: before } = yield* parked(flow);
-        const data = Option.getOrThrow(parkedData(before, ISSUE_ITEM));
 
-        const theirs = seeded(before, "awaiting-ci", {
+        // As #537's documents parked: the node, and what the steps after it read.
+        const fake = seeded(before, "awaiting-ci", {
           ...rawData(before, ISSUE_ITEM),
-          resume: { ...data.resume, login: "someone-else" },
+          pullRequest: PULL,
+          resume: { flow: "implement", node: "waitedOnce", login: "someone-else", kept: {} },
         });
 
-        theirs.merge.ci = { state: "green" };
-        expect((yield* resumes(theirs, flow)).map((found) => found.elsewhere)).toEqual([
-          "parked by someone-else",
-        ]);
+        fake.merge.ci = { state: "green" };
 
-        const lost = seeded(before, "awaiting-ci", {
-          ...rawData(before, ISSUE_ITEM),
-          resume: { ...data.resume, node: "waitedOnce" },
-        });
+        const finished = yield* runToEnd(
+          flowHandle(repo, "implement", flow),
+          fake,
+          yield* onlyResume(fake, flow),
+        );
 
-        lost.merge.ci = { state: "green" };
-        expect((yield* resumes(lost, flow)).map((found) => found.held)).toEqual([
-          "parked at waitedOnce, a step implement no longer has",
-        ]);
+        expect(finished.status).toBe("done");
+        expect(fake.phases()[ISSUE_ITEM]).toBe("handed-off");
       }),
     ENGINE_TIMEOUT,
   );
@@ -366,9 +331,7 @@ describe("the address-review document in a CI job", () => {
         expect(run.status).toBe("running");
         expect(fake.git.pushes).toBe(2);
         expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
-        expect(Option.map(parkedData(fake, PR_ITEM), (found) => found.resume.node)).toEqual(
-          Option.some("ci"),
-        );
+        expect(Object.keys(rawData(fake, PR_ITEM))).toEqual(["since"]);
         // The reviewer isn't asked again until CI has finished.
         expect(fake.people.requested).toEqual([]);
 

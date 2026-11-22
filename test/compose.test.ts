@@ -364,13 +364,13 @@ describe("Compose.check", () => {
     const ciAgain = {
       id: "ciAgain",
       use: "ci.waitPreparing",
-      in: { pr: "opened.number", branch: "claim.branch", base: "claim.base" },
+      in: { adopted: "claim.adopted", branch: "claim.branch", base: "claim.base" },
     };
 
     test("waiting on CI both ways", () => {
-      expect(messages(before(implement, "done", ciAgain))).toEqual([
-        "ci.waitPreparing runs on one path with ci.waitAndFix, and their step names would collide",
-      ]);
+      expect(messages(before(implement, "ci", ciAgain))).toContain(
+        "ci.waitAndFix runs on one path with ci.waitPreparing, and their step names would collide",
+      );
     });
 
     test("preparing a worktree and a block that prepares its own", () => {
@@ -383,7 +383,7 @@ describe("Compose.check", () => {
       const handOffAgain = {
         id: "handOffAgain",
         use: "issue.handOffAdopted",
-        in: { issue: "trigger.issue", adopted: "opened", branch: "claim.branch" },
+        in: { issue: "trigger.issue", adopted: "ci.pr", branch: "ci.pr.url" },
       };
 
       const after = withSteps(implement, [
@@ -560,7 +560,7 @@ describe("Compose.check", () => {
   test("takes the message for a person under with, not in", () => {
     const wired = changing(implementReady, "done", (step) => ({
       ...step,
-      in: { ...step.in, message: "agent.outcome" },
+      in: { ...step.in, message: "ci.outcome" },
       with: {},
     }));
 
@@ -1053,6 +1053,12 @@ describe("Compose.check", () => {
         message:
           "pr.land waits for the flow's trigger to wake it, and a flow a person starts has no trigger",
       },
+      // And a run that ends at its park is taken up by none.
+      {
+        path: "steps[0].on.approve.steps[0]",
+        message:
+          "pr.land parks, and can't wait inside the run, so it must be where a run can take it up: on the document's path or a branch of it, or in a repeat's round that never reads its state after it, in a flow a trigger starts, and with no if",
+      },
     ]);
   });
 
@@ -1079,6 +1085,133 @@ describe("Compose.check", () => {
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
+  });
+});
+
+// A park is a phase boundary (ADR 0021, decision 4): a run that takes a park
+// up has the record and the world, and nothing the run before it gave.
+describe("a document's parks", () => {
+  test("refuses a step after a park that reads an output from before it", () => {
+    const crossing = changing(implement, "done", (step) => ({
+      ...step,
+      in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
+    }));
+
+    expect(Compose.check(crossing)).toEqual([
+      {
+        path: "steps[7]",
+        message:
+          "done reads opened, from before ci parks: a step after a park may read only the trigger, what ci records (its output) and the steps after it",
+      },
+      {
+        path: "steps[7]",
+        message:
+          "done reads agent, from before ci parks: a step after a park may read only the trigger, what ci records (its output) and the steps after it",
+      },
+    ]);
+  });
+
+  test("refuses one deep in a park's branches, and in the branches after it", () => {
+    const reading = postMergeWith(
+      "            in: { ci: red }",
+      "            in: { ci: watching }",
+    );
+
+    expect(messages(reading)).toContain(
+      "failed reads watching, from before ci parks: a step after a park may read only the trigger, what ci records (its output) and the steps after it",
+    );
+  });
+
+  test("takes the trigger, the park's output and what it binds, and what comes after it", () => {
+    for (const doc of [implement, addressReview, resolveConflicts, postMerge, review, reReview]) {
+      expect(Compose.check(doc)).toEqual([]);
+    }
+  });
+
+  test("refuses the rounds of a repeat reading what came before it, where a run takes a round up", () => {
+    const plan = documentOf(PLAN_DOCUMENT);
+
+    const reading = documentOf(
+      PLAN_DOCUMENT.replace(
+        "in: { issue: trigger.issue, round: round, changes: state.changes }",
+        "in: { issue: claim.branch, round: round, changes: state.changes }",
+      ),
+    );
+
+    expect(Compose.check(plan)).toEqual([]);
+    expect(messages(reading)).toContain(
+      "rounds's rounds read claim, from before the repeat, and a run that takes up answer's park starts the rounds after it without it: a step after a park may read only the trigger, what answer records (its output) and the steps after it",
+    );
+  });
+
+  test("takes two parks on one phase that go on alike, as re-review's two merges do", () => {
+    const flow = generated(reReview);
+
+    expect(flow).toContain('if (Option.contains($resumed, "merge-held")) {');
+    expect(flow.match(/Option\.contains\(\$resumed/g)).toHaveLength(1);
+  });
+
+  test("refuses two parks on one phase that go on differently", () => {
+    const apart = reReviewWith(
+      `                  - id: landed
+                    use: pr.land
+                    in: { pr: trigger.pr, approved: approval.approved }
+                    with: { method: squash }
+                  - end: done
+                    summary: landed`,
+      `                  - id: landed
+                    use: pr.land
+                    in: { pr: trigger.pr, approved: approval.approved }
+                    with: { method: merge }
+                  - end: done
+                    summary: landed`,
+    );
+
+    expect(messages(apart)).toEqual([
+      "landed parks on merge-held, as land does, but goes on differently: a run that takes the phase up couldn't tell which to start at",
+    ]);
+  });
+
+  test("refuses a park that can't wait inside the run where no run can take it up", () => {
+    const iffed = changing(review, "review", (step) => ({
+      ...step,
+      on: {
+        ...step.on,
+        approve: {
+          as: "verdict",
+          steps: [
+            {
+              id: "land",
+              use: "pr.land",
+              if: "verdict.approved",
+              in: { pr: "trigger.pr", approved: "verdict.approved" },
+              with: { method: "squash" },
+            },
+            { end: "done" },
+          ],
+        },
+      },
+    }));
+
+    expect(messages(iffed)).toContain(
+      "pr.land parks, and can't wait inside the run, so it must be where a run can take it up: on the document's path or a branch of it, or in a repeat's round that never reads its state after it, in a flow a trigger starts, and with no if",
+    );
+  });
+
+  test("starts a run that takes a park up at the node that parks on its phase", () => {
+    const flow = generated(implement);
+
+    expect(flow).toContain(
+      'resumes: { flow: "implement", blocks: ["ci.waitPreparing","ci.waitAndFix"] },',
+    );
+    expect(flow).toContain('if (Option.contains($resumed, "awaiting-ci")) {');
+    expect(flow).toContain(
+      'const ci = yield* Resume.takeUp(catalogue["ci.waitAndFix"], item, {}).pipe(Resume.parkable, PlanNodes.at("ci", Option.none()));',
+    );
+    expect(flow).toContain(
+      'failureContext.pr = Resume.pullRequestOf(catalogue["ci.waitAndFix"], item);',
+    );
+    expect(flow).not.toContain("kept");
   });
 });
 
@@ -1192,8 +1325,8 @@ describe("tsc on a document's flow file", () => {
   rejected(
     "asking the approver again about a merge that wasn't pushed",
     resolveConflictsWith(
-      "in: { pr: trigger.pr, base: trigger.base, pushed: pushed.pushed }",
-      "in: { pr: trigger.pr, base: trigger.base, pushed: resolved.committed }",
+      "in: { pr: trigger.pr, base: trigger.base, pushed: ci.pushed }",
+      "in: { pr: trigger.pr, base: trigger.base, pushed: ci }",
     ),
     "Pushed",
   );
@@ -1251,7 +1384,7 @@ describe("tsc on a document's flow file", () => {
 
   rejected(
     "a pull request's number where an issue's goes",
-    wiring(implement, "done", "issue", "opened.number"),
+    wiring(implement, "done", "issue", "ci.pr.number"),
     "IssueNumber",
   );
 
@@ -1319,7 +1452,17 @@ describe("tsc on a document's flow file", () => {
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(without(implement, "gate"))).toEqual([]);
-        expect(yield* compileErrors(without(implement, "ci"))).toEqual([]);
+        expect(
+          yield* compileErrors(
+            without(
+              changing(implement, "done", (step) => ({
+                ...step,
+                in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
+              })),
+              "ci",
+            ),
+          ),
+        ).toEqual([]);
       }),
     TIMEOUT,
   );
@@ -1928,7 +2071,7 @@ describe("the order a document's blocks run in", () => {
   });
 
   test("still refuses a way past pr.readyForPerson's place that skips it", () => {
-    const maybe = changing(implementReady, "done", (step) => ({ ...step, if: "agent.committed" }));
+    const maybe = changing(implementReady, "done", (step) => ({ ...step, if: "ci.pr.draft" }));
 
     expect(messages(maybe)).toEqual(["a way through pr.open finishes here with hand-off not done"]);
     expect(paths(maybe)).toEqual(["steps[8]"]);
@@ -1937,7 +2080,7 @@ describe("the order a document's blocks run in", () => {
   test("excuses a way that ends with a person", () => {
     const toPerson = withSteps(implement, [
       ...implement.steps.filter((step) => Compose.isUse(step) && !named(step, "done")),
-      { end: "needs-human", reason: "opened.url" },
+      { end: "needs-human", reason: "ci.pr.url" },
     ]);
 
     expect(Compose.check(toPerson)).toEqual([]);
@@ -2004,7 +2147,7 @@ describe("the order a document's blocks run in", () => {
   });
 
   test("sees a hand-off that may not run as one that may not happen", () => {
-    const maybe = changing(implement, "done", (step) => ({ ...step, if: "agent.committed" }));
+    const maybe = changing(implement, "done", (step) => ({ ...step, if: "ci.pr.draft" }));
 
     expect(messages(maybe)).toContain("a way through pr.open finishes here with hand-off not done");
   });
@@ -2020,7 +2163,7 @@ describe("the order a document's blocks run in", () => {
             {
               id: "adoptedCi",
               use: "ci.waitPreparing",
-              in: { pr: "adopted.number", branch: "claim.branch", base: "claim.base" },
+              in: { adopted: "adopted", branch: "claim.branch", base: "claim.base" },
             },
             { end: "done" },
           ],
@@ -2138,7 +2281,17 @@ describe("the order a document's blocks run in", () => {
   // A team's to choose, and no order breaks them.
   test("leaves a team's choices alone", () => {
     expect(Compose.check(without(implement, "gate"))).toEqual([]);
-    expect(Compose.check(without(implement, "ci"))).toEqual([]);
+    expect(
+      Compose.check(
+        without(
+          changing(implement, "done", (step) => ({
+            ...step,
+            in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
+          })),
+          "ci",
+        ),
+      ),
+    ).toEqual([]);
     expect(Compose.check(lane((steps) => steps.filter((step) => !named(step, "gate"))))).toEqual(
       [],
     );
@@ -3069,7 +3222,7 @@ describe("the plan document", () => {
     const fallsThrough = planWith(
       `                - id: epic
                   use: plan.becomeEpic
-                  in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                  in: { issue: trigger.issue, plan: approval.plan, created: created.created }
                 - id: cleaned
                   use: plan.doneDrafting
                   in: { issue: trigger.issue }
@@ -3088,10 +3241,16 @@ describe("the plan document", () => {
 `,
     );
 
+    // Nor can a run take its wait up: the round would run off its end.
     expect(Compose.check(fallsThrough)).toEqual([
       {
         path: "steps[1].repeat.steps[3]",
         message: "plan.create runs only on a run's way out, and this way goes on to another round",
+      },
+      {
+        path: "steps[1].repeat.steps[2]",
+        message:
+          "plan.awaitAnswer parks, and can't wait inside the run, so it must be where a run can take it up: on the document's path or a branch of it, or in a repeat's round that never reads its state after it, in a flow a trigger starts, and with no if",
       },
     ]);
   });
@@ -3220,7 +3379,7 @@ describe("the plan document", () => {
 
   rejected(
     "refuses, in tsc, issues made from a plan nobody approved",
-    planWith("approved: approval.approved", "approved: proposed.plan"),
+    planWith("approved: approval.approved", "approved: approval.plan"),
     "PlanApproved",
   );
 

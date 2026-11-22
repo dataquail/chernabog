@@ -37,7 +37,6 @@ import {
 import * as Conflict from "./conflict.ts";
 import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
-import * as Phases from "./phases.ts";
 import { PHASES } from "./phases.ts";
 import { renderPrompt } from "./prompt.ts";
 import * as PullRequest from "./pull-request.ts";
@@ -66,12 +65,6 @@ const Resolution = Schema.Struct({
 });
 
 type Resolution = typeof Resolution.Type;
-
-// The session that resolved the conflict, as a record keeps it.
-const KeptSession = Schema.Struct({
-  sessionId: Schema.Option(Schema.String),
-  adapter: Schema.Option(Schema.String),
-});
 
 const resolutionJsonSchema = {
   type: "object",
@@ -246,11 +239,28 @@ const committedNoMerge = <A, E, R>(effect: Effect.Effect<A, E | NothingCommitted
     ),
   );
 
+// Waits for CI on the merge pushed to the pull request, from `firstRound`
+// for a run that took the wait up; it parks where a run can take it up
+// (Resume.parking).
+const waitForMerge = (
+  pullRequest: number,
+  worktree: string,
+  target: Implement.CiBranch,
+  firstRound: Option.Option<number>,
+) =>
+  committedNoMerge(
+    Conflict.waitForCi(
+      pullRequest,
+      worktree,
+      target,
+      (restore) => Resume.parking({ restore }),
+      firstRound,
+    ),
+  );
+
 export const resolveConflictsBlocks = {
   "conflict.resolve": defineBlock({
     name: "conflict.resolve",
-    // A run that resumes at conflict.waitForCi needs only the session.
-    keeps: Schema.toCodecJson(Schema.Struct({ session: KeptSession })),
     about:
       "Merges the pull request's base into its branch, never by a rebase, and has an agent resolve the conflicts and commit the merge, in a session of the run's own. On a layer of a stack whose layer below squash- or rebase-merged into the base, it first records that layer's commits as already here (merged-below, update-from-base#resolve), so the merge doesn't bring back what the base has since moved or deleted; the agent resolves what that leaves, and with nothing left no agent runs. A conflict in the base before that layer's commits stops the record short, and once the agent commits it the flow merges again (resolve-2). Its prompt is .chernabog/prompts/resolve-conflicts.md, which `chernabog recipes add resolve-conflicts` bakes.",
     inputKinds: {
@@ -339,7 +349,6 @@ export const resolveConflictsBlocks = {
 
   "conflict.push": defineBlock({
     name: "conflict.push",
-    keeps: Schema.toCodecJson(Schema.Struct({ pushed: Pushed })),
     about:
       "Pushes the merge to the pull request's branch as push-resolved: a plain push, since a merge only adds commits. It is checked against the pull request's base, the layer below's branch on a layer of a stack, so only the branch's own commits count; one that touches humanOnlyPaths goes to a person.",
     inputKinds: {
@@ -400,15 +409,16 @@ export const resolveConflictsBlocks = {
   "conflict.waitForCi": defineBlock({
     name: "conflict.waitForCi",
     about:
-      "Waits for CI on the pushed merge, resuming the session that resolved the conflict to fix red, up to ciRounds. Its steps carry #resolve. It reads the pull request's record first (review-phase#resolve). A first reading still pending records awaiting-conflict-ci on the pull request, with the record it parks over and when the wait began, and the run ends at the park; Resume.parked offers it again once CI is green or red, or ciTimeout from when the wait began has passed, and the run that takes it up starts here and waits on from the round the record names. However the wait ends, the record it parked over is recorded again (review-restored#resolve), so the review phase is back. A pull request with no record goes to a person; at a node the document can't resume at, the wait polls.",
+      "Waits for CI on the pushed merge, resuming the session that resolved the conflict to fix red, up to ciRounds. Its steps carry #resolve. It reads the pull request's record first (review-phase#resolve). A first reading still pending records awaiting-conflict-ci on the pull request, with the record it parks over and when the wait began, and the run ends at the park; it is offered again once CI is green or red, or ciTimeout from when the wait began has passed, and the run that takes it up starts here, in a worktree on the branch, and waits on from the round the record names, fixing red in a session of its own. However the wait ends, the record it parked over is recorded again (review-restored#resolve), so the review phase is back. A pull request with no record goes to a person; where a run can't take the wait up, it polls. Its output, that the merge was pushed, is what the steps after it read.",
     inputKinds: {
       pr: "PullRequestNumber",
       worktree: "WorktreePath: from author.worktree",
       branch: "BranchName: the pull request's, trigger.branch",
       base: "BaseBranch: the pull request's, trigger.base",
       session: "the session that resolved the conflict, from conflict.resolve",
+      pushed: "Pushed: from conflict.push",
     },
-    outputKinds: "nothing",
+    outputKinds: { pushed: "Pushed: proof for conflict.askApproverAgain" },
     outcomeKinds: {},
     before: ["conflict.askApproverAgain"],
     inputs: {
@@ -417,6 +427,7 @@ export const resolveConflictsBlocks = {
       branch: "required",
       base: "required",
       session: "required",
+      pushed: "required",
     },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -424,22 +435,14 @@ export const resolveConflictsBlocks = {
       readonly branch: BranchName;
       readonly base: BaseBranch;
       readonly session: Implement.AuthorSession;
+      readonly pushed: Pushed;
     }) =>
-      Effect.gen(function* () {
-        const resumed = Option.flatMap(yield* Resume.resumedPhase, (phase) =>
-          Phases.roundOf(PHASES.pullRequest.awaitingConflictCi, phase),
-        );
-
-        return yield* committedNoMerge(
-          Conflict.waitForCi(
-            input.pr,
-            input.worktree,
-            { ...input.session, branch: input.branch, base: input.base },
-            (restore) => Resume.parking(Conflict.keptWith(restore)),
-            resumed,
-          ),
-        );
-      }),
+      waitForMerge(
+        input.pr,
+        input.worktree,
+        { ...input.session, branch: input.branch, base: input.base },
+        Option.none(),
+      ).pipe(Effect.as({ pushed: input.pushed })),
     failures: {
       CiTimedOut: "person",
       NeedsHuman: "person",
@@ -450,7 +453,34 @@ export const resolveConflictsBlocks = {
     outcomes: {},
     mustRoute: [],
     records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingConflictCi }],
-    parks: Conflict.documentCiResumes,
+    // As the resolve-conflicts recipe takes it up (Conflict.parkedOnCi).
+    parks: {
+      site: PHASES.pullRequest.awaitingConflictCi,
+      offers: () => Conflict.parkedOnCi,
+      takeUp: (item: WorkItem) =>
+        Effect.gen(function* () {
+          const conflict = yield* Schema.decodeUnknownEffect(ConflictItem)(item.data).pipe(
+            Effect.mapError((issue) => new StepFailed({ step: "item", message: issue.message })),
+          );
+
+          const worktree = yield* Review.prepareAuthorWorktree(conflict.headRef);
+
+          yield* waitForMerge(
+            conflict.pullRequest,
+            worktree,
+            {
+              sessionId: Option.none(),
+              adapter: Option.none(),
+              branch: conflict.headRef,
+              base: conflict.baseRef,
+            },
+            Conflict.resumingCi(item),
+          );
+
+          return { pushed: new Pushed({}) };
+        }),
+      polls: true,
+    },
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],

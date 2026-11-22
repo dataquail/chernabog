@@ -5,7 +5,6 @@
 import { reportAs } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import { Approved, defineBlock, defineSource, type PullRequestNumber } from "./block.ts";
 import * as Events from "./events.ts";
@@ -119,7 +118,6 @@ export const reReviewBlocks = {
 
   "review.recheck": defineBlock({
     name: "review.recheck",
-    keeps: Schema.toCodecJson(Schema.Struct({ verdict: Schema.String, round: Schema.Finite })),
     about:
       "Resumes the reviewer's session of the earlier review with the change since, posts the next review, and comments which of the earlier review's findings are remediated and which are still open. A finding that doesn't block the merge never requests changes.",
     inputKinds: {
