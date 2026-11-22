@@ -70,7 +70,19 @@ describe("the park sites' catalogue", () => {
     expect(ciPhase(Review.parkOnPullRequest(PULL), 3)).toBe("awaiting-fix-ci-3");
   });
 
-  test("across the documents' blocks, each park site's phase is one block's", () => {
+  // Blocks that write a park's phase without parking, each with why: they are
+  // not a second site, since the phase still says where the next run starts
+  // (ADR 21, decision 4: no two park sites share a phase).
+  // - plan.propose records the spec proposed with the plan as a blob, before
+  //   plan.awaitAnswer's wait, which carries that plan on (#563).
+  const RECORDS_WITHOUT_PARKING: ReadonlyArray<{ readonly block: string; readonly phase: string }> =
+    [{ block: "plan.propose", phase: Phases.PHASES.issue.proposed }];
+
+  // The block a site names, as "(block.name)" at the end of its description;
+  // a site that names none expects its own description, which no block is.
+  const siteBlock = (site: Phases.ParkSite) => /\(([\w.]+)\)$/.exec(site.site)?.[1] ?? site.site;
+
+  test("across the documents' blocks, each park site's phase is its own block's", () => {
     const described = Schema.decodeUnknownSync(
       Schema.Struct({
         blocks: Schema.Array(
@@ -84,12 +96,18 @@ describe("the park sites' catalogue", () => {
       }),
     )(Compose.describe());
 
-    for (const phase of parkPhases) {
-      const recording = described.blocks.filter((block) =>
-        (block.records ?? []).some((recorded) => recorded.phase === phase),
-      );
+    for (const site of Phases.PARKS) {
+      const recording = described.blocks
+        .filter((block) => (block.records ?? []).some((recorded) => recorded.phase === site.phase))
+        .map((block) => block.name)
+        .filter(
+          (name) =>
+            !RECORDS_WITHOUT_PARKING.some(
+              (writer) => writer.block === name && writer.phase === site.phase,
+            ),
+        );
 
-      expect([phase, recording.map((block) => block.name).length]).toEqual([phase, 1]);
+      expect([site.phase, recording]).toEqual([site.phase, [siteBlock(site)]]);
     }
   });
 });
