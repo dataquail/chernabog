@@ -91,6 +91,7 @@ describe("the park sites' catalogue", () => {
             records: Schema.optionalKey(
               Schema.Array(Schema.Struct({ item: Schema.String, phase: Schema.String })),
             ),
+            parks: Schema.optionalKey(Schema.String),
           }),
         ),
       }),
@@ -108,6 +109,24 @@ describe("the park sites' catalogue", () => {
         );
 
       expect([site.phase, recording]).toEqual([site.phase, [siteBlock(site)]]);
+    }
+
+    // A block that parks on a phase records it too, and parks on a park
+    // site's phase; no two blocks park on the same one.
+    for (const phase of parkPhases) {
+      const parking = described.blocks.filter((block) => block.parks === phase);
+
+      expect([phase, parking.length <= 1]).toEqual([phase, true]);
+
+      for (const block of parking) {
+        expect((block.records ?? []).map((recorded) => recorded.phase)).toContain(phase);
+      }
+    }
+
+    for (const block of described.blocks) {
+      for (const phase of Option.toArray(Option.fromUndefinedOr(block.parks))) {
+        expect(parkPhases).toContain(phase);
+      }
     }
   });
 });

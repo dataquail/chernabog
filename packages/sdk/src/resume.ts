@@ -1,272 +1,139 @@
 // How a run of a flow document takes up an item where a run before it parked
-// (ADR 0021, decision 4). A run ends at every park, so a document that waits
-// on CI records the wait, and the next run starts at the node that recorded
-// it rather than at the top.
+// (ADR 0021, decision 4). A run ends at every park, and a park is a phase
+// boundary: each park site records a phase of its own (Phases.PARKS), so the
+// phase alone says where the next run starts, and the record holds only the
+// facts that run needs, never a step's output.
 //
-// The record's data names the node (`resume.node`), not just the phase. Each
-// park site records a phase of its own now (Phases.PARKS), so the phase
-// alone says where a run starts; until documents resume by it (#567), the
-// node is what they go by. With the node it keeps the run's work item,
-// the persona that parked it, and the outputs of the steps before it that the
-// steps from that node on read (`kept`), which the compiler works out. A step
-// can be kept only when its block says how its output goes into JSON
-// (Block.keeps). A run that takes the item up restores those outputs and goes
-// on from the node, so nothing before it, such as the agent's work, runs again.
-//
-// What a node keeps must fit the record's 4 KB. When it doesn't, the block
-// waits inside the run, as it did before a record could carry anything: it
-// polls.
+// The document's source of parked items (`parked`) offers, for each phase
+// one of its nodes parks on, the items that node's block says a run may take
+// up (Block.parks.offers): built from each record's thread and data, routed
+// to a persona as its source routes them, and held, with why, while what it
+// waits on hasn't settled. The run that takes one up starts at that node,
+// whose block takes the wait up from the record and the world
+// (Block.parks.takeUp), and goes on from there. Nothing before the park runs
+// again, and nothing it gave carries over: the compiler holds the steps after
+// a park to reading the trigger, what the park records (its block's output),
+// and what comes after it.
 
 import {
   activity,
   Claims,
   type FlowError,
-  GitHub,
-  isPhaseData,
   type Json,
-  type PhaseData,
+  type ReportedError,
   Skip,
   StepFailed,
   type TriggerServices,
   type WorkItem,
 } from "@chernabog/core";
 import * as Context from "effect/Context";
-import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import * as Phases from "./phases.ts";
 import * as StatusLabels from "./status-labels.ts";
 
-type JsonObject = { readonly [key: string]: Json };
-
-const isJsonObject = (json: Json): json is JsonObject =>
-  Predicate.isObject(json) && !Array.isArray(json);
-
-// What a block says of how its output goes into a record, and back.
-type Keeps<Kept> = { readonly keeps: Option.Option<Schema.Codec<Kept, Json>> };
-
-// And how it reads its output back from what it kept, for one too big to keep.
-type Recalls<Kept, Output, E, R> = Keeps<Kept> & {
-  readonly recall: Option.Option<(kept: Kept) => Effect.Effect<Output, E, R>>;
-};
-
-// A step's output as a record keeps it: none for a block that can't say, or
-// an output its codec refuses.
-export const keep = <Kept, Output extends Kept>(block: Keeps<Kept>, output: Output) =>
-  Option.flatMap(block.keeps, (codec) => Schema.encodeOption(codec)(output));
-
-// What a document passes the block at a node it can resume at: the flow, the
-// run's work item, the node, the round of the repeat it is in, and each kept
-// step's output as JSON. At the node a run resumed at, in the round it
-// resumed, `resumed` is the phase the record it resumed from held, for the
-// block to go on from (a wait for CI's round).
-export type Keep = {
-  readonly flow: string;
-  readonly item: WorkItem;
-  readonly node: string;
-  readonly round: Option.Option<number>;
-  readonly kept: { readonly [name: string]: Option.Option<Json> };
-  readonly resumed: Option.Option<string>;
-};
-
-// The node a block runs at, when its document can resume there; none in a
-// recipe, or at a node a document can't resume at.
-export const Keeping = Context.Reference<Option.Option<Keep>>("@chernabog/sdk/Keeping", {
-  defaultValue: () => Option.none(),
+// Whether a block runs at a node its document can take its park up at: none
+// in a recipe, or at a node a run can't be taken up at, such as in a
+// forEach's lanes, where a wait that can waits inside the run instead.
+export const Parkable = Context.Reference<boolean>("@chernabog/sdk/Parkable", {
+  defaultValue: () => false,
 });
 
-// Runs a block at a node its document can resume at.
-export const keeping =
-  (found: Keep) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    Effect.provideService(effect, Keeping, Option.some(found));
+// Runs a block at a node its document can take its park up at.
+export const parkable = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.provideService(effect, Parkable, true);
 
-// The work item a record keeps, as the run that parked had it.
-const KeptItem = Schema.Struct({
-  key: Schema.String,
-  title: Schema.optionalKey(Schema.String),
-  url: Schema.optionalKey(Schema.String),
-  data: Schema.Json,
-});
-
-// What a record at a node a document resumes at keeps, under `resume`, and,
-// for a node in a repeat, the round, as `round` beside it: a plan's proposed
-// record has its round there already.
-const Parked = Schema.Struct({
-  round: Schema.optionalKey(Schema.Finite),
-  resume: Schema.Struct({
-    flow: Schema.String,
-    node: Schema.String,
-    login: Schema.String,
-    item: KeptItem,
-    kept: Schema.Record(Schema.String, Schema.Json),
-  }),
-});
-
-type Parked = typeof Parked.Type;
-
-// What a work item that resumes a document carries, under `resume`: the node,
-// the round, for one in a repeat, the phase its record held, and the kept
-// outputs.
-const Resumed = Schema.Struct({
-  node: Schema.String,
-  round: Schema.optionalKey(Schema.Finite),
-  phase: Schema.String,
-  kept: Schema.Record(Schema.String, Schema.Json),
-});
-
-export type Resumed = typeof Resumed.Type;
-
-const ResumingItem = Schema.Struct({ resume: Resumed });
-
-// Where a run takes its document up: the node and what was kept, for a work
-// item from a parked record; none for any other.
-export const resumedAt = (item: WorkItem): Option.Option<Resumed> =>
-  Option.map(Schema.decodeUnknownOption(ResumingItem)(item.data), (data) => data.resume);
-
-// A kept step's output, typed by its block's codec: a step that fails when the
-// record holds no output for it, or one the codec refuses.
-export const kept = <Kept>(resumed: Resumed, name: string, block: Keeps<Kept>) =>
+// Where a block records its wait, and the facts it records: on the item the
+// document's run works on, at a node a run can take it up at; none anywhere
+// else, where the block waits inside the run.
+export const parking = (data: { readonly [key: string]: Json }) =>
   Effect.gen(function* () {
-    const output = Option.flatMap(Record.get(resumed.kept, name), (json) =>
-      Option.flatMap(block.keeps, (codec) => Schema.decodeOption(codec)(json)),
+    const can = yield* Parkable;
+    const on = yield* Phases.RecordedOn;
+
+    return Option.map(
+      Option.filter(on, () => can),
+      (item) => ({ item, data }),
     );
-
-    if (Option.isNone(output)) {
-      return yield* new StepFailed({
-        step: `resume-${resumed.node}`,
-        message: `the record parked at ${resumed.node} keeps no ${name} this flow can read`,
-      });
-    }
-
-    return output.value;
   });
 
-// A kept step's output, read back from what its block kept (Block.recall).
-export const recalled = <Kept, Output, E, R>(
-  resumed: Resumed,
-  name: string,
-  block: Recalls<Kept, Output, E, R>,
+// What a work item a run takes up carries, under `resume`: the phase it parked
+// on, its site's, without the round of a wait for CI.
+const Resuming = Schema.Struct({ resume: Schema.Struct({ site: Schema.String }) });
+
+// The phase a work item from a parked record parked on, which says the node
+// its run starts at; none for any other item.
+export const resumedAt = (item: WorkItem): Option.Option<string> =>
+  Option.map(Schema.decodeUnknownOption(Resuming)(item.data), (data) => data.resume.site);
+
+const JsonObject = Schema.Record(Schema.String, Schema.Json);
+
+// The item, as one a run takes up from a record parked on `site`: every
+// block's items carry an object of data, which says what the item is.
+const resuming = (item: WorkItem, site: string): WorkItem => {
+  const data = Option.getOrElse(Schema.decodeUnknownOption(JsonObject)(item.data), () => ({}));
+
+  return { ...item, data: { ...data, resume: { site } } };
+};
+
+// A block as a document's generated flow names it, by what it says of its park.
+type Parking<P> = { readonly name: string; readonly parks: Option.Option<P> };
+
+const noPark = (block: { readonly name: string }) =>
+  new StepFailed({ step: `resume-${block.name}`, message: `${block.name} doesn't park` });
+
+// The block's output for a run that takes up the item it parked (Block.parks),
+// from the record and the world, given what the document gives it under
+// `with`, and what its failures mean.
+export const takeUp = <F, O, A, E, R>(
+  block: Parking<{
+    readonly takeUp: (item: WorkItem, fixed: F, overrides?: O) => Effect.Effect<A, E, R>;
+  }>,
+  item: WorkItem,
+  fixed: F,
+  overrides?: O,
+): Effect.Effect<A, E | StepFailed, R> =>
+  Option.match(block.parks, {
+    onNone: () => Effect.fail(noPark(block)),
+    onSome: (parks) => parks.takeUp(item, fixed, overrides),
+  });
+
+// The round of the repeat a taken-up item parked in, by its block's say: a
+// step that fails for an item that says none.
+export const round = (
+  block: Parking<{
+    readonly site: string;
+    readonly round: Option.Option<(item: WorkItem) => Option.Option<number>>;
+  }>,
+  item: WorkItem,
 ) =>
   Effect.gen(function* () {
-    const found = yield* kept(resumed, name, block);
+    const found = Option.flatMap(block.parks, (parks) =>
+      Option.flatMap(parks.round, (roundOf) => roundOf(item)),
+    );
 
-    if (Option.isNone(block.recall)) {
-      return yield* new StepFailed({
-        step: `resume-${resumed.node}`,
-        message: `${name}'s block can't read its output back from the record parked at ${resumed.node}`,
-      });
-    }
-
-    return yield* block.recall.value(found);
-  });
-
-// The round of the repeat a record parked in: a step that fails for a record
-// that kept none.
-export const round = (resumed: Resumed) =>
-  Effect.gen(function* () {
-    const inRound = Option.fromUndefinedOr(resumed.round);
-
-    if (Option.isNone(inRound)) {
-      return yield* new StepFailed({
-        step: `resume-${resumed.node}`,
-        message: `the record parked at ${resumed.node} keeps no round of its repeat`,
-      });
-    }
-
-    return inRound.value;
-  });
-
-// The value an outcome bound before the node, worked out again from its
-// step's kept output: the run parked in that outcome's branch, so it holds.
-export const outcome = <A>(resumed: Resumed, name: string, found: Option.Option<A>) =>
-  Effect.gen(function* () {
     if (Option.isNone(found)) {
       return yield* new StepFailed({
-        step: `resume-${resumed.node}`,
-        message: `the record parked at ${resumed.node} keeps a step that no longer comes to ${name}`,
+        step: `resume-${block.name}`,
+        message: `the item ${block.name} parked says no round of its repeat`,
       });
     }
 
     return found.value;
   });
 
-// The work item's data as the run that parked it was given it, without what
-// a resumed run's item adds.
-const itemData = (item: WorkItem): Json =>
-  Option.match(Option.liftPredicate(item.data, isJsonObject), {
-    onNone: () => item.data,
-    onSome: (data) => Record.remove(data, "resume"),
-  });
+// The pull request a failure taking up the item's park tells a person of, by
+// its block's say.
+export const pullRequestOf = <N>(
+  block: Parking<{ readonly pullRequest: Option.Option<(item: WorkItem) => Option.Option<N>> }>,
+  item: WorkItem,
+): Option.Option<N> =>
+  Option.flatMap(block.parks, (parks) => Option.flatMap(parks.pullRequest, (named) => named(item)));
 
-const keptItem = (item: WorkItem) => ({
-  key: item.key,
-  ...Option.match(Option.fromUndefinedOr(item.title), {
-    onNone: () => ({}),
-    onSome: (title) => ({ title }),
-  }),
-  ...Option.match(Option.fromUndefinedOr(item.url), {
-    onNone: () => ({}),
-    onSome: (url) => ({ url }),
-  }),
-  data: itemData(item),
-});
-
-// Where a block at a resumable node records its wait, and the data, with its
-// own beside, and the round of a node in a repeat: none outside a document's
-// resumable node, or when what the node keeps can't go into a record, and
-// the block waits inside the run.
-export const parking = (own: JsonObject = {}) =>
-  Effect.gen(function* () {
-    const found = yield* Keeping;
-    const on = yield* Phases.RecordedOn;
-
-    if (Option.isNone(found)) {
-      return Option.none<{ readonly item: string; readonly data: PhaseData }>();
-    }
-
-    const login = yield* GitHub.use((github) => github.login).pipe(Effect.option);
-
-    const data = Option.flatMap(
-      Option.all({ values: Option.all(found.value.kept), who: login }),
-      ({ values, who }) =>
-        Option.filter(
-          Option.liftPredicate(
-            {
-              ...own,
-              ...Option.match(found.value.round, {
-                onNone: () => ({}),
-                onSome: (inRound) => ({ round: inRound }),
-              }),
-              resume: {
-                flow: found.value.flow,
-                node: found.value.node,
-                login: who,
-                item: keptItem(found.value.item),
-                kept: values,
-              },
-            },
-            isPhaseData,
-          ),
-          // With room for when the wait began, which a park adds.
-          Phases.fitsAPark,
-        ),
-    );
-
-    return Option.all({ item: on, data });
-  });
-
-// The phase a run resumed from, at the node it resumed at; none anywhere else.
-export const resumedPhase = Effect.map(Keeping, (found) =>
-  Option.flatMap(found, (at) => at.resumed),
-);
-
-// A resumed run claims its item again, as the run that parked held it until
-// it ended: on the item it records on, which for an issue is its claim's.
+// A run that takes an item up claims it again, as the run that parked held it
+// until it ended: on the item it records on, which for an issue is its claim's.
 export const claimAgain = Effect.gen(function* () {
   const on = yield* Phases.RecordedOn;
 
@@ -286,77 +153,24 @@ export const claimAgain = Effect.gen(function* () {
   }
 });
 
-// How a block at a resumable node says whether its item may start again:
-// the item, held with why while what it waits on hasn't settled, or none
-// when there is nothing left to resume, as for a pull request closed since.
-export type Resumes = (
-  data: PhaseData,
-  item: WorkItem,
-  at: DateTime.Utc,
-) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
-
-const sameLogin = (one: string, other: string) => one.toLowerCase() === other.toLowerCase();
-
-const decodeParked = Schema.decodeUnknownOption(Parked);
-
-// The item a parked record offers, as its run had it, carrying where to resume.
-const resumingItem = (record: Parked, phase: string): Option.Option<WorkItem> =>
-  Option.map(Option.liftPredicate(record.resume.item.data, isJsonObject), (data) => ({
-    ...record.resume.item,
-    data: {
-      ...data,
-      resume: {
-        node: record.resume.node,
-        ...Option.match(Option.fromUndefinedOr(record.round), {
-          onNone: () => ({}),
-          onSome: (inRound) => ({ round: inRound }),
-        }),
-        phase,
-        kept: record.resume.kept,
-      },
-    },
-  }));
-
-// The source a document that can resume gets: items whose record says one of
-// its runs parked at one of its nodes, as work a run may start, never only a
-// wake (ADR 0021, decision 4). Each node's block says whether its item may
-// start yet (`nodes`). One parked by another persona is left for it; one
-// parked at a node the document no longer has is held, with why, for a
-// person to see in status.
-export const parked = (flow: string, nodes: { readonly [node: string]: Resumes }) =>
+// The source a document whose nodes park gets: for each phase one of them
+// parks on, the items its block offers, as work a run may start, never only
+// a wake (ADR 0021, decision 4), each saying the phase it parked on.
+export const parked = (
+  flow: string,
+  sites: ReadonlyArray<{
+    readonly site: string;
+    readonly offers: (
+      flow: string,
+    ) => Effect.Effect<ReadonlyArray<WorkItem>, FlowError | ReportedError, TriggerServices>;
+  }>,
+) =>
   Effect.gen(function* () {
-    const login = yield* GitHub.use((github) => github.login);
     const items: Array<WorkItem> = [];
 
-    for (const [, found] of yield* Phases.records) {
-      const ours = Option.filter(
-        Option.flatMap(found.data, decodeParked),
-        (record) => record.resume.flow === flow,
-      );
-
-      for (const [record, data] of Option.toArray(Option.all([ours, found.data]))) {
-        for (const item of Option.toArray(resumingItem(record, found.phase))) {
-          const resumes = Record.get(nodes, record.resume.node);
-
-          if (Option.isNone(resumes)) {
-            items.push({
-              ...item,
-              held: `parked at ${record.resume.node}, a step ${flow} no longer has`,
-            });
-
-            continue;
-          }
-
-          if (!sameLogin(record.resume.login, login)) {
-            items.push({ ...item, elsewhere: `parked by ${record.resume.login}` });
-
-            continue;
-          }
-
-          for (const ready of Option.toArray(yield* resumes.value(data, item, found.at))) {
-            items.push(ready);
-          }
-        }
+    for (const { offers, site } of sites) {
+      for (const item of yield* offers(flow)) {
+        items.push(resuming(item, site));
       }
     }
 

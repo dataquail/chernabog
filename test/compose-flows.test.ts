@@ -9,7 +9,6 @@ import {
   isManual,
   labelsOf,
   Plan,
-  PullRequest,
   Settings,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -511,20 +510,11 @@ describe("an implement document that gives its pull request to a person", () => 
 
 const composedWithStage = loadFlow(documentOf(REVIEW_WITH_STAGE_DOCUMENT));
 
-// The scenarios whose run waits for the base to turn green: a land that
-// reads a stage's output can't be taken up from its record, since a stage's
-// output isn't kept, so it polls the base rather than park and be woken
-// (test/merge-hold.test.ts holds a poll to that).
-const heldOnBase = (scenario: (typeof REVIEW_SCENARIOS)[number]) =>
-  Option.exists(
-    Option.fromUndefinedOr(scenario.wake),
-    (wake) => wake.signal === PullRequest.BASE_GREEN,
-  );
-
 describe("a document that runs a stage", () => {
   // The stage names the pull request the recipe takes from its trigger, so
-  // the run is the recipe's, with the stage's step besides; but for a hold.
-  for (const scenario of REVIEW_SCENARIOS.filter((each) => !heldOnBase(each))) {
+  // the run is the recipe's, with the stage's step besides, a merge held
+  // for a red base too.
+  for (const scenario of REVIEW_SCENARIOS) {
     effect(
       `runs as the recipe does, ${scenario.title}`,
       () =>
@@ -542,12 +532,14 @@ describe("a document that runs a stage", () => {
     );
   }
 
-  test("has no node a run can resume at, so its land polls a hold", () => {
-    expect(REVIEW_SCENARIOS.filter(heldOnBase)).toHaveLength(1);
-    expect(generated(documentOf(REVIEW_WITH_STAGE_DOCUMENT))).not.toContain("resumes:");
-    expect(generated(documentOf(REVIEW_DOCUMENT))).toContain(
-      'resumes: { flow: "review", nodes: { "land": "pr.land" } }',
-    );
+  // What comes after the land reads only the land, so a run takes it up
+  // from its record, as the review document's does: the stage is before it.
+  test("parks its land on merge-held, as the review document does", () => {
+    for (const document of [REVIEW_WITH_STAGE_DOCUMENT, REVIEW_DOCUMENT]) {
+      expect(generated(documentOf(document))).toContain(
+        'resumes: { flow: "review", blocks: ["pr.land"] }',
+      );
+    }
   });
 
   effect(

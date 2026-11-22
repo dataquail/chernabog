@@ -1,12 +1,13 @@
 // A flow document's waits on a person and on a red base in a CI job (audit
 // W8, ADR 0021 decision 4), as document-park-ci.test.ts checks its waits for
-// CI. A daemon's run or a CI job's ends at the park, so plan.awaitAnswer adds
-// the node it parked at to the spec's proposed record, whose round is the
-// repeat's, and pr.land to the pull request's merge-held record. The
-// document's own source offers the item again once a person answers, or the
-// base is green, or the wait runs out, and the new run starts at that node:
-// in the plan's round it parked in, with the plan read back from the blob
-// the record names.
+// CI. A daemon's run or a CI job's ends at the park, and a park is a phase
+// boundary: plan.awaitAnswer records the spec's proposed phase, whose round
+// is the repeat's, and pr.land the pull request's merge-held, each with its
+// facts and nothing of the run. The document's own source offers the item
+// again by that phase once a person answers, or the base is green, or the
+// wait runs out, and the new run starts at the node that parks there: in the
+// plan's round it parked in, with the plan read from the blob the record
+// names.
 
 import {
   type CiState,
@@ -59,24 +60,11 @@ const SPEC_ITEM = `issue-${ISSUE}`;
 const PR_ITEM = `pr-${PULL}`;
 const LONG_AGO = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
 
-const Parked = Schema.Struct({
-  resume: Schema.Struct({
-    flow: Schema.String,
-    node: Schema.String,
-    login: Schema.String,
-    item: Schema.Json,
-    kept: Schema.Record(Schema.String, Schema.Json),
-  }),
-});
-
 // The record's data as it is, to read or to seed another fake's record with.
 const rawData = (fake: Fake, name: string) =>
   Option.getOrThrow(
     Option.flatMap(Option.fromUndefinedOr(fake.records().get(name)), (record) => record.data),
   );
-
-const parkedOf = (fake: Fake, name: string) =>
-  Schema.decodeUnknownSync(Parked)(rawData(fake, name)).resume;
 
 // Whether the run waits on `signal`, under the deferred `deferred`.
 const waitsOn = (signal: string, deferred: string) => (run: EngineRun) =>
@@ -140,18 +128,11 @@ describe("the plan document in a CI job", () => {
     fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Plan.LABELS.proposed]);
     fake.comment(Plan.planComment(round, SUMMARY, Schema.decodeSync(Plan.Plan)(NODES)));
     const data = rawData(from, SPEC_ITEM);
-    const resume = Schema.decodeUnknownSync(Parked)(data).resume;
     const blob = Plan.planBlob(NODES);
 
     fake.recordPhase(SPEC_ITEM, "proposed", {
       at,
-      data: {
-        ...data,
-        round,
-        plan: blob.hash,
-        after: 0,
-        resume: { ...resume, kept: { proposed: { issue: ISSUE, round } } },
-      },
+      data: { ...data, round, plan: blob.hash, after: 0 },
       blobs: [blob.text],
     });
 
@@ -159,7 +140,7 @@ describe("the plan document in a CI job", () => {
   };
 
   effect(
-    "adds the node it parked at to the spec's proposed record, which keeps its round",
+    "records the spec's proposed phase, with its round and how long a person has, and nothing of the run",
     () =>
       Effect.gen(function* () {
         const flow = yield* loaded;
@@ -169,17 +150,9 @@ describe("the plan document in a CI job", () => {
         expect(fake.phases()[SPEC_ITEM]).toBe("proposed");
 
         const data = rawData(fake, SPEC_ITEM);
-        const resume = parkedOf(fake, SPEC_ITEM);
-        expect([data.round, data.within, resume.flow, resume.node]).toEqual([
-          1,
-          "14 days",
-          "plan",
-          "answer",
-        ]);
-        // The plan isn't kept in the node's resume: its spec and round are,
-        // and a run that takes it up reads it back from the blob the record
+        expect([data.round, data.within, "resume" in data]).toEqual([1, "14 days", false]);
+        // A run that takes it up reads the plan from the blob the record
         // names, which the wait carried on from plan.propose's record.
-        expect(resume.kept).toEqual({ proposed: { issue: ISSUE, round: 1 } });
         expect(fake.records().get(SPEC_ITEM)?.blobs).toEqual([String(data.plan)]);
 
         // Nobody has answered: held, with why.
@@ -187,13 +160,12 @@ describe("the plan document in a CI job", () => {
           "waits on a person's answer to the plan of round 1",
         ]);
 
-        // A person asks for changes: work a run may start, at the node, in round 1.
+        // A person asks for changes: work a run may start, by the phase, in round 1.
         fake.comment("Split the API in two.", "zach");
         const asked = yield* onlyResume(fake, flow);
         expect(mayStart(asked)).toBe(true);
-        expect(Option.map(Resume.resumedAt(asked), (at) => [at.node, at.round, at.phase])).toEqual(
-          Option.some(["answer", 1, "proposed"]),
-        );
+        expect(Resume.resumedAt(asked)).toEqual(Option.some("proposed"));
+        expect(Plan.answerRoundOf(asked)).toEqual(Option.some(1));
       }),
     ENGINE_TIMEOUT,
   );
@@ -208,7 +180,7 @@ describe("the plan document in a CI job", () => {
         fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), Plan.LABELS.approved]);
 
         const resumed = yield* onlyResume(fake, flow);
-        expect(Option.map(Resume.resumedAt(resumed), (at) => at.round)).toEqual(Option.some(2));
+        expect(Plan.answerRoundOf(resumed)).toEqual(Option.some(2));
 
         const finished = yield* runToEnd(flowHandle(repo, "plan", flow), fake, resumed);
 
@@ -245,7 +217,7 @@ describe("the plan document in a CI job", () => {
         expect(fake.requests[0]?.prompt).toContain("Split the API in two.");
 
         const data = rawData(fake, SPEC_ITEM);
-        expect([data.round, parkedOf(fake, SPEC_ITEM).node]).toEqual([3, "answer"]);
+        expect([data.round, "resume" in data]).toEqual([3, false]);
       }),
     ENGINE_TIMEOUT,
   );
@@ -330,7 +302,7 @@ describe("pr.land's merge hold in a CI job", () => {
   };
 
   effect(
-    "adds the node it parked at to the merge-held record, beside the work item that holds it",
+    "records merge-held on the pull request, with the flow and work item that hold it, and nothing of the run",
     () =>
       Effect.gen(function* () {
         const flow = yield* loaded;
@@ -340,14 +312,12 @@ describe("pr.land's merge hold in a CI job", () => {
         expect(fake.phases()[PR_ITEM]).toBe("merge-held");
 
         const data = rawData(fake, PR_ITEM);
-        const resume = parkedOf(fake, PR_ITEM);
-        expect([data.key, data.pullRequest, resume.flow, resume.node]).toEqual([
+        expect([data.key, data.pullRequest, data.flow, "resume" in data]).toEqual([
           PR_ITEM,
           PULL,
           "review",
-          "land",
+          false,
         ]);
-        expect(Object.keys(resume.kept)).toEqual(["review"]);
 
         // Still red, with time left: held, with why.
         expect((yield* resumes(fake, flow, HOLDING)).map((found) => found.held)).toEqual([
@@ -403,30 +373,19 @@ describe("pr.land's merge hold in a CI job", () => {
   );
 
   effect(
-    "re-review's document resumes at the land of the branch it parked in",
+    "re-review's document takes up a hold its own runs parked, which the review document leaves",
     () =>
       Effect.gen(function* () {
         const flow = yield* loadFlow(documentOf(RE_REVIEW_DOCUMENT));
         const { fake: before } = yield* parked(yield* loaded);
         const data = rawData(before, PR_ITEM);
-        const resume = parkedOf(before, PR_ITEM);
         const fake = approvedEarlier();
         fake.merge.baseCi = Option.some(GREEN);
 
-        // As re-review's recheck parked it: its own flow, node and work item.
+        // As re-review's recheck parked it: its own flow and work item.
         fake.recordPhase(PR_ITEM, "merge-held", {
           at: yield* DateTime.now,
-          data: {
-            ...data,
-            key: `${PR_ITEM}-again`,
-            resume: {
-              ...resume,
-              flow: "re-review",
-              node: "landed",
-              item: { key: `${PR_ITEM}-again`, data: REVIEWED },
-              kept: { recheck: { verdict: "approve", round: 2 } },
-            },
-          },
+          data: { ...data, key: `${PR_ITEM}-again`, flow: "re-review" },
         });
 
         const resumed = yield* onlyResume(fake, flow, HOLDING);

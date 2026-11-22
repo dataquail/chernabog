@@ -17,26 +17,15 @@ import {
   planNodeMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import { effect } from "./effect-test.ts";
-import {
-  type Fake,
-  flowTriggered,
-  ISSUE,
-  item,
-  makeFake,
-  onFake,
-  PULL,
-  triggered,
-} from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, ISSUE, item, makeFake, onFake, triggered } from "./sdk-fakes.ts";
 
 const ISSUE_ITEM = Phases.issueItem(ISSUE);
-const PR_ITEM = Phases.pullRequestItem(PULL);
 const WITH_PERSON = "with-person";
 const PERSON = "a-maintainer";
 const STRANGER = "a-stranger";
@@ -131,28 +120,40 @@ describe("the implement recipe's CI-wait source", () => {
 });
 
 describe("a document's run parked on a pull request's CI", () => {
-  const work = item(ISSUE_ITEM, { issue: ISSUE });
+  // The issue's document run parked on its pull request's CI, as a block that
+  // parks on awaiting-ci records it.
+  const parkedInCi = () => {
+    const fake = makeFake("approve", { reviewers: ["zach", "data-quail"] });
+    fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+    fake.git.opened = true;
+    fake.recordPhase(ISSUE_ITEM, Phases.inRound(Phases.PHASES.issue.awaitingCi, 1));
+
+    return fake;
+  };
 
   const resumes = (fake: Fake) =>
-    onFake(fake, Implement.documentCiResumes({ pullRequest: PULL }, work)).pipe(Effect.orDie);
+    onFake(fake, Implement.awaitingCiOn(Phases.PHASES.issue.awaitingCi)).pipe(
+      Effect.map((items) => items.map((found) => found.key)),
+      Effect.orDie,
+    );
 
-  effect("its pull request's label deleted by a stranger leaves it with the person", () =>
+  effect("its issue's label deleted by a stranger leaves it with the person", () =>
     Effect.gen(function* () {
-      const fake = makeFake("approve");
-      handedOver(fake, PR_ITEM, PULL);
-      unlabelledBy(fake, PULL, STRANGER);
+      const fake = parkedInCi();
+      handedOver(fake, ISSUE_ITEM, ISSUE);
+      unlabelledBy(fake, ISSUE, STRANGER);
       yield* handingBack(fake);
 
-      expect(yield* resumes(fake)).toEqual(Option.none());
+      expect(yield* resumes(fake)).toEqual([]);
     }),
   );
 
-  effect("its pull request's label added by hand, with no record, holds nothing", () =>
+  effect("its issue's label added by hand, with no record, holds nothing", () =>
     Effect.gen(function* () {
-      const fake = makeFake("approve");
-      fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      const fake = parkedInCi();
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, DEFAULT_LABELS.needsHuman]);
 
-      expect(Option.isSome(yield* resumes(fake))).toBe(true);
+      expect(yield* resumes(fake)).toEqual([ISSUE_ITEM]);
     }),
   );
 });
@@ -181,33 +182,38 @@ describe("a plan waiting on a person's answer", () => {
     }),
   );
 
+  // The same, parked by a flow document's plan.awaitAnswer, which records how
+  // long a person has.
+  const documentApproved = () => {
+    const fake = approved();
+    fake.recordPhase(SPEC_ITEM, "proposed", { data: { round: 1, within: "3 days" } });
+
+    return fake;
+  };
+
   const documentResumes = (fake: Fake) =>
-    onFake(
-      fake,
-      Plan.documentAnswerResumes(
-        { round: 1, within: "3 days" },
-        item(SPEC_ITEM, { issue: ISSUE }),
-        DateTime.makeUnsafe("2026-11-20T00:00:00Z"),
-      ),
-    ).pipe(Effect.orDie);
+    onFake(fake, Plan.documentAnswers).pipe(
+      Effect.map((items) => items.map((found) => found.key)),
+      Effect.orDie,
+    );
 
   effect("the document's: a spec whose label a stranger deletes stays with the person", () =>
     Effect.gen(function* () {
-      const fake = approved();
+      const fake = documentApproved();
       handedOver(fake, SPEC_ITEM, ISSUE);
       unlabelledBy(fake, ISSUE, STRANGER);
       yield* handingBack(fake);
 
-      expect(yield* documentResumes(fake)).toEqual(Option.none());
+      expect(yield* documentResumes(fake)).toEqual([]);
     }),
   );
 
   effect("the document's: the label added by hand hands nothing over", () =>
     Effect.gen(function* () {
-      const fake = approved();
+      const fake = documentApproved();
       fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), DEFAULT_LABELS.needsHuman]);
 
-      expect(Option.isSome(yield* documentResumes(fake))).toBe(true);
+      expect(yield* documentResumes(fake)).toEqual([SPEC_ITEM]);
     }),
   );
 });

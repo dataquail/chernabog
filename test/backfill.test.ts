@@ -742,14 +742,64 @@ describe("progress backfill's park phases", () => {
     }),
   );
 
-  effect("a document's park stays where it is: it resumes by its node", () =>
+  effect("a document's park from before #567 keeps its phase, with only its facts", () =>
     Effect.gen(function* () {
       const fake = fresh();
+      const resume = { flow: "implement", node: "ci", login: ME, kept: { opened: {} } };
+
       fake.recordPhase(ISSUE_ITEM, "awaiting-ci", {
-        data: { pullRequest: PULL, since: SINCE, resume: { node: "ci" } },
+        data: { pullRequest: PULL, since: SINCE, resume },
       });
 
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([
+        writes(ISSUE_ITEM, Phases.PHASES.issue.awaitingCi),
+      ]);
+
+      yield* backfill(fake);
+
+      // As the recipe parks it: the pull request is the one on the issue's branch.
+      expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+        phase: Phases.PHASES.issue.awaitingCi,
+        data: Option.some({ since: SINCE }),
+      });
       expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
+  effect("a document's merge hold from before #567 names the flow that holds it", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      const resume = { flow: "re-review", node: "landed", login: ME, kept: {} };
+
+      fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.mergeHeld, {
+        data: { pullRequest: PULL, key: `${PR_ITEM}-again`, resume },
+      });
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: Phases.PHASES.pullRequest.mergeHeld,
+        data: Option.some({ pullRequest: PULL, key: `${PR_ITEM}-again`, flow: "re-review" }),
+      });
+    }),
+  );
+
+  effect("a pull request's document park on the shared phase moves without where it resumed", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      const resume = { flow: "address-review", node: "ci", login: ME, kept: {} };
+      fake.recordPhase(PR_ITEM, "awaiting-ci", {
+        data: { pullRequest: PULL, since: SINCE, resume },
+      });
+
+      expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([writes(PR_ITEM, "awaiting-fix-ci")]);
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: "awaiting-fix-ci",
+        data: Option.some({ pullRequest: PULL, since: SINCE }),
+      });
     }),
   );
 

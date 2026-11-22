@@ -1541,74 +1541,37 @@ export const heldOnCi = (
   });
 
 // How a flow document's wait for CI on the pull request goes on, at the park
-// site whose phase is `waits`: at a node the document can resume at, it
-// records the wait on the run's item, in its round of `waits`, with where to
-// resume and the pull request (Resume.parking), and parks; anywhere else, or
-// when what the node keeps doesn't fit a record, it polls. At the node a run
-// resumed at, it waits on from the round the record names.
+// site whose phase is `waits`: at a node a run can take it up at, it records
+// the wait on the run's item, in its round of `waits`, with the facts `data`
+// (Resume.parking), and parks; anywhere else, it polls. A run that took the
+// wait up waits on from `firstRound`, the round its record names.
 export const documentCiWait = (
   waits: Phases.Rounded,
-  pullRequest: number,
+  data: { readonly [key: string]: Json },
   options: RepeatOptions = {},
+  firstRound: Option.Option<number> = Option.none(),
 ) =>
   Effect.gen(function* () {
-    const parking = yield* Resume.parking({ pullRequest });
+    const parking = yield* Resume.parking(data);
 
-    const resumed = Option.flatMap(yield* Resume.resumedPhase, (phase) =>
-      Phases.roundOf(waits, phase),
-    );
-
-    const from = Option.match(resumed, {
+    const from = Option.match(firstRound, {
       onNone: () => ({}),
-      onSome: (firstRound) => ({ firstRound }),
+      onSome: (round) => ({ firstRound: round }),
     });
 
     return Option.match(parking, {
       onNone: (): CiWait => ({ ...options, ...from }),
-      onSome: ({ data, item }): CiWait => ({
+      onSome: (found): CiWait => ({
         ...options,
         ...from,
-        park: (round) => ({ item, phase: Phases.inRound(waits, round), data }),
+        park: (round) => ({
+          item: found.item,
+          phase: Phases.inRound(waits, round),
+          data: found.data,
+        }),
       }),
     });
   });
-
-const DocumentCi = Schema.Struct({ pullRequest: Schema.Finite });
-
-// Whether a document's run parked on a pull request's CI may be taken up:
-// held while the checks pend, and free once they're green or red. One whose
-// pull request closed or went to a person (its record is with-person) has
-// nothing left to resume.
-export const documentCiResumes = (data: { readonly [key: string]: Json }, item: WorkItem) =>
-  Effect.gen(function* () {
-    const parked = Schema.decodeUnknownOption(DocumentCi)(data);
-
-    if (Option.isNone(parked)) {
-      return Option.none<WorkItem>();
-    }
-
-    const github = yield* GitHub;
-
-    const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
-      Effect.asSome,
-      Effect.catchTag("NotFound", () => Effect.succeedNone),
-    );
-
-    if (
-      Option.isNone(pull) ||
-      pull.value.state !== "open" ||
-      (yield* Phases.withPerson(Phases.pullRequestItem(parked.value.pullRequest)))
-    ) {
-      return Option.none<WorkItem>();
-    }
-
-    return Option.some(
-      Option.match(yield* heldOnCi(parked.value.pullRequest, Option.some(data)), {
-        onNone: () => item,
-        onSome: (held): WorkItem => ({ ...item, held }),
-      }),
-    );
-  }).pipe(reportAs("trigger"));
 
 export type CiBranch = AuthorSession & BaseOptions & { readonly branch: string };
 
@@ -2105,29 +2068,37 @@ const awaitingCiItem = (
 // checks are pending, and free to start once they're green or red, when a
 // finished CI run (Events.ciCompleted) or the sweep plans them. One closed,
 // one a person has (its record is with-person, not awaitingCi), or one whose
-// pull request is no longer open is left alone. Each is routed by its assignees.
-export const awaitingCi = Effect.gen(function* () {
-  const items: Array<WorkItem> = [];
+// pull request is no longer open is left alone. Each is routed by its
+// assignees. awaitingCiOn gives those parked on the waits named, as a
+// document's block that parks on one offers them (Block.parks); awaitingCi,
+// those on either.
+export const awaitingCiOn = (...on: ReadonlyArray<ResumingCi["phase"]>) =>
+  Effect.gen(function* () {
+    const items: Array<WorkItem> = [];
 
-  for (const [name, found] of yield* Phases.records) {
-    const parked = Option.all({
-      number: issueNamed(name),
-      waits: Option.flatMap(Phases.roundedOf(found.phase), (rounded) =>
-        Option.liftPredicate(rounded, isImplementsWait),
-      ),
-    });
+    for (const [name, found] of yield* Phases.records) {
+      const parked = Option.all({
+        number: issueNamed(name),
+        waits: Option.flatMap(Phases.roundedOf(found.phase), (rounded) =>
+          Option.filter(Option.liftPredicate(rounded, isImplementsWait), (wait) =>
+            on.includes(wait.phase),
+          ),
+        ),
+      });
 
-    for (const { number, waits } of Option.toArray(parked)) {
-      const taken = yield* awaitingCiItem(number, waits.phase, waits.round, found);
+      for (const { number, waits } of Option.toArray(parked)) {
+        const taken = yield* awaitingCiItem(number, waits.phase, waits.round, found);
 
-      for (const resumed of Option.toArray(taken)) {
-        items.push(resumed);
+        for (const resumed of Option.toArray(taken)) {
+          items.push(resumed);
+        }
       }
     }
-  }
 
-  return items;
-});
+    return items;
+  });
+
+export const awaitingCi = awaitingCiOn(ISSUE_PHASES.awaitingCi, ISSUE_PHASES.awaitingAdoptedCi);
 
 // The wait a work item from awaitingCi resumes; none for any other.
 export const resumingCi = (item: WorkItem): Option.Option<ResumingCi> =>

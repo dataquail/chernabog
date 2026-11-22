@@ -209,7 +209,8 @@ for (const [form, loading] of forms) {
             ),
           ).toBe(true);
 
-          expect("resume" in recorded.data).toBe(form === "the document");
+          // Neither record says where to resume: its phase does.
+          expect("resume" in recorded.data).toBe(false);
           // Nothing was handed off yet.
           expect(fake.people.requested).toEqual([]);
         }),
