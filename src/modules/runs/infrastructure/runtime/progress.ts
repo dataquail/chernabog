@@ -214,11 +214,14 @@ export const parseRecord = (
 export const fromPhase = (transition: PhaseTransition) =>
   Option.map(transition.from, (read) => read.phase);
 
-// The record is this transition, by this writer: a retry of a write that landed.
+// The record is this transition, by this writer: a retry of a write that
+// landed. A writer that read this very record isn't retrying it, though it
+// makes the same move again, as a wait recorded over its own: it advances.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, fromPhase(transition));
+  Equal.equals(record.from, fromPhase(transition)) &&
+  !Option.exists(transition.from, (read) => read.version === record.version);
 
 // What an advance does, given the record the item holds: succeed with that
 // record (its own write, retried), fail as a lost race when it isn't the
