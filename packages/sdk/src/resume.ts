@@ -39,6 +39,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import * as Phases from "./phases.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 type JsonObject = { readonly [key: string]: Json };
 
@@ -273,7 +274,7 @@ export const claimAgain = Effect.gen(function* () {
     yield* activity(
       "claim-again",
       Effect.gen(function* () {
-        const claimed = yield* Claims.acquire(item);
+        const claimed = yield* StatusLabels.acquire(item);
 
         if (!claimed.acquired) {
           return yield* new Skip({

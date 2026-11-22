@@ -55,7 +55,7 @@ export const humanInitiatedBlocks = {
     // Only these subjects' scopes let its claim go when the run ends.
     suits: ["issue", "spec"],
     about:
-      "Claims the issue a person started with chernabog start, so only this run works on it, and makes its branch, auto/issue-<n>, or takes up the one an earlier start left. It labels the issue auto:in-progress, takes it out of the unattended queues (auto:eligible and auto:ship), and settles its base. An issue another run holds skips the run, naming how to let it go; one an unattended run left a branch for is left to it. The claim goes when the run ends, however it ends, and a session the person closes keeps the issue in progress for their next start.",
+      "Claims the issue a person started with chernabog start, so only this run works on it, and makes its branch, auto/issue-<n>, or takes up the one an earlier start left. Its claim projects auto:in-progress onto the issue. It takes the issue out of the unattended queues (auto:eligible and auto:ship), and settles its base. An issue another run holds skips the run, naming how to let it go; one an unattended run left a branch for is left to it. The claim goes when the run ends, however it ends, and a session the person closes keeps the issue assigned for their next start.",
     inputKinds: { issue: "IssueNumber" },
     outputKinds: { branch: "BranchName", base: "Option<BaseBranch>" },
     outcomeKinds: {},
@@ -245,7 +245,7 @@ export const humanInitiatedBlocks = {
   "hybrid.handOff": defineBlock({
     name: "hybrid.handOff",
     about:
-      "Hands the pull request to review: leaves the session marker, so answering a review reopens the person's session, takes auto:in-progress off the issue and comments there with open-pr's summary, and asks one reviewer from the pool; a pull request closed meanwhile goes to a person. review, address-review and re-review take it from there, and a person merges.",
+      "Hands the pull request to review: leaves the session marker, so answering a review reopens the person's session, records the hand-off, whose projection takes auto:in-progress off the issue, comments there with open-pr's summary, and asks one reviewer from the pool; a pull request closed meanwhile goes to a person. review, address-review and re-review take it from there, and a person merges.",
     inputKinds: {
       issue: "IssueNumber",
       pr: "the pull request, from hybrid.openPullRequest",

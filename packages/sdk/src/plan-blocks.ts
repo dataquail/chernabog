@@ -31,6 +31,7 @@ import * as Plan from "./plan.ts";
 import * as Resume from "./resume.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // That a person approved the plan, which only plan.awaitAnswer gives, so no
 // document makes a plan's issues before a person has said yes.
@@ -82,7 +83,7 @@ export const specSubject = {
     );
 
     if (options.claims) {
-      return handled.pipe(Claims.releasing(Claims.issue(trigger.issue)));
+      return handled.pipe(StatusLabels.releasing(Claims.issue(trigger.issue)));
     }
 
     return handled;
@@ -186,7 +187,7 @@ export const planBlocks = {
     name: "plan.propose",
     suits: ON_SPEC,
     about:
-      "Posts the plan on the spec as a comment: its summary, a Mermaid graph of which task blocks which, each task folded, and how to answer it. It adds a verify task last, for a person, blocked by every other, that checks the work against the spec's acceptance criteria. It labels the spec auto:plan-proposed, waiting on a person, and records the spec's proposed phase with the plan as a blob beside the round: the record, not the comment, is the plan plan.create makes.",
+      "Posts the plan on the spec as a comment: its summary, a Mermaid graph of which task blocks which, each task folded, and how to answer it. It adds a verify task last, for a person, blocked by every other, that checks the work against the spec's acceptance criteria. It records the spec's proposed phase, waiting on a person, which projects auto:plan-proposed, with the plan as a blob beside the round: the record, not the comment, is the plan plan.create makes.",
     inputKinds: {
       issue: "IssueNumber: the spec",
       round: "the round",
@@ -268,7 +269,7 @@ export const planBlocks = {
     name: "plan.changesAsked",
     suits: ON_SPEC,
     about:
-      "Reads what a person asked to change of the plan, from the comments of the repo's members since it was posted, and takes auto:plan-proposed off the spec. Its changes go to the next round, with next: { changes: <this step>.changes }.",
+      "Reads what a person asked to change of the plan, from the comments of the repo's members since it was posted. Its changes go to the next round, with next: { changes: <this step>.changes }.",
     inputKinds: { issue: "IssueNumber: the spec", round: "the round" },
     outputKinds: { changes: "what to change, for the next round's plan.draft" },
     outcomeKinds: {},
@@ -287,7 +288,7 @@ export const planBlocks = {
     name: "plan.create",
     suits: ON_SPEC,
     about:
-      "Makes each task of the approved plan an issue and a sub-issue of the spec, links each to the tasks that block it, and only then labels them by kind (auto:eligible for auto, auto:needs-human for human, none for hybrid), so no flow picks one up before its blockers are linked. A task's issue made before a crash is found by its marker, not made twice. It runs only on the run's way out.",
+      "Makes each task of the approved plan an issue and a sub-issue of the spec, links each to the tasks that block it, and only then queues them by kind: auto:eligible for auto, a with-person record, which projects auto:needs-human, for human, nothing for hybrid,, so no flow picks one up before its blockers are linked. A task's issue made before a crash is found by its marker, not made twice. It runs only on the run's way out.",
     inputKinds: {
       issue: "IssueNumber: the spec",
       plan: "the plan as posted, from plan.propose",
@@ -313,7 +314,7 @@ export const planBlocks = {
     name: "plan.becomeEpic",
     suits: ON_SPEC,
     about:
-      "Labels the spec auto:epic, which the epic flow picks up, takes the plan's labels and auto:in-progress off it, deletes its branch, and says which issue each task became. It runs only on the run's way out.",
+      "Labels the spec auto:epic, which the epic flow picks up, and takes auto:plan-approved off it; its became-epic record takes the rest of its status labels off. It deletes its branch, and says which issue each task became. It runs only on the run's way out.",
     inputKinds: {
       issue: "IssueNumber: the spec",
       plan: "the plan as posted, from plan.propose",
@@ -357,7 +358,7 @@ export const planBlocks = {
     name: "plan.askClarification",
     suits: ON_SPEC,
     about:
-      "Posts the agent's questions on the spec, labels it auto:needs-clarification, and says to answer them and apply auto:plan again. Its output is the reason to end with: end: needs-human, and the run lets the claim go. It runs only on the run's way out, and a failure of its own fails the run.",
+      "Posts the agent's questions on the spec, records it asked-questions, which projects auto:needs-clarification, and says to answer them and apply auto:plan again. Its output is the reason to end with: end: needs-human, and the run lets the claim go. It runs only on the run's way out, and a failure of its own fails the run.",
     inputKinds: {
       issue: "IssueNumber: the spec",
       draft: "the agent's answer, from plan.draft's needs-clarification",

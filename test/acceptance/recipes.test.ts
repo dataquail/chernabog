@@ -238,7 +238,7 @@ describe("a repo baked before recipes were packages", () => {
 
   // implement as an earlier chernabog baked it, before claims were refs.
   const baked = recipeFiles(["implement"])["flows/implement.ts"].replace(
-    "        Claims.releasing(Claims.issue(issue)),\n",
+    "        StatusLabels.releasing(Claims.issue(issue)),\n",
     "",
   );
 
@@ -258,7 +258,7 @@ describe("a repo baked before recipes were packages", () => {
   });
 
   test("recipes diff points to init, which installs @chernabog/recipes without touching a flow, so diff then shows what the recipe changed", async () => {
-    expect(baked).not.toContain("Claims.releasing");
+    expect(baked).not.toContain("StatusLabels.releasing");
 
     const before = await sandbox.runCli(["recipes", "diff"]);
     expect(before.code).toBe(0);
@@ -277,7 +277,7 @@ describe("a repo baked before recipes were packages", () => {
     expect(after.output).toContain(
       ".chernabog/flows/implement.ts: differs from the implement recipe in @chernabog/recipes@0.2.0, the version installed",
     );
-    expect(after.output).toContain("-        Claims.releasing(Claims.issue(issue)),");
+    expect(after.output).toContain("-        StatusLabels.releasing(Claims.issue(issue)),");
     expect(after.output).not.toContain("No recipe package is installed");
   }, 90_000);
 });

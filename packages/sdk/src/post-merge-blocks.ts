@@ -654,12 +654,12 @@ const fileFollowUp = (merged: Merged, body: string, fixed: Option.Option<IssueNu
             const issue = yield* (yield* GitHub).createIssue({
               title: `CI is red on ${merged.base} after #${merged.pr} merged`,
               body,
-              labels: [
-                Option.match(fixed, {
-                  onNone: () => labelNames.eligible,
-                  onSome: () => labelNames.needsHuman,
-                }),
-              ],
+              // Queued, unless it is a person's: then its with-person
+              // record, below, projects auto:needs-human.
+              labels: Option.match(fixed, {
+                onNone: () => [labelNames.eligible],
+                onSome: () => [],
+              }),
             });
 
             return issue.number;
@@ -857,7 +857,7 @@ export const postMergeBlocks = {
   "merged.fileFollowUp": defineBlock({
     name: "merged.fileFollowUp",
     about:
-      "Files an issue, CI is red on <base> after #<n> merged, linking the merged pull request, the merge commit and each failed run with the tail of its log, with acceptance criteria for the fix (file-follow-up). It is labelled auto:eligible so implement takes it, or auto:needs-human when the pull request was a follow-up's own fix. Its body carries a hidden marker with the merge commit's sha (chernabog-post-merge): a run that resumes after filing finds that issue among the ones the persona opened lately and files no other.",
+      "Files an issue, CI is red on <base> after #<n> merged, linking the merged pull request, the merge commit and each failed run with the tail of its log, with acceptance criteria for the fix (file-follow-up). It is labelled auto:eligible so implement takes it, or recorded with-person, which projects auto:needs-human, when the pull request was a follow-up's own fix. Its body carries a hidden marker with the merge commit's sha (chernabog-post-merge): a run that resumes after filing finds that issue among the ones the persona opened lately and files no other.",
     inputKinds: {
       pr: "PullRequestNumber: the merged pull request, trigger.pr",
       url: "its URL, trigger.url",

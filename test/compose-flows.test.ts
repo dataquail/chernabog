@@ -400,8 +400,14 @@ describe("a review document that gives the approved pull request to a person", (
         expect(fromDocument.reviews).toEqual(fromRecipe.reviews);
         expect(fromDocument.submitted).toEqual(fromRecipe.submitted);
 
+        // Each ends at its own phase, which projects its label: approved for
+        // the recipe, ready-for-person for the document.
         expect(fromRecipe.pullLabels).not.toContain(READY);
-        expect(fromDocument.pullLabels).toEqual([...fromRecipe.pullLabels, READY]);
+        expect(fromRecipe.pullLabels).toContain(DEFAULT_LABELS.approved);
+        expect(fromDocument.pullLabels).toEqual([
+          ...fromRecipe.pullLabels.filter((label) => label !== DEFAULT_LABELS.approved),
+          READY,
+        ]);
         expect(fromDocument.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
 
         expect(fromDocument.comments).toEqual([...fromRecipe.comments, READY_MESSAGE]);

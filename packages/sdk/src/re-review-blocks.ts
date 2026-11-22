@@ -176,7 +176,7 @@ export const reReviewBlocks = {
     name: "pr.handToPerson",
     either: ["reason"],
     about:
-      "Labels the pull request auto:needs-human (the repo's needs-human label) and comments why a person must take it over. Use it when the run couldn't do its part: a cap, a rule or a dispute stopped it, and the run ends needs-human. Its output is the reason to end with: follow it with end: needs-human. A way that ends so owes no hand-off, so it can follow pr.open in place of issue.handOff to give every pull request to a person. When the person is only asked to do the next ordinary thing, such as merge an approved pull request, use pr.readyForPerson, and end done.",
+      "Records the pull request with-person, which projects auto:needs-human (the repo's needs-human label), and comments why a person must take it over. Use it when the run couldn't do its part: a cap, a rule or a dispute stopped it, and the run ends needs-human. Its output is the reason to end with: follow it with end: needs-human. A way that ends so owes no hand-off, so it can follow pr.open in place of issue.handOff to give every pull request to a person. When the person is only asked to do the next ordinary thing, such as merge an approved pull request, use pr.readyForPerson, and end done.",
     inputKinds: {
       pr: "PullRequestNumber",
       reason: "why, as text a person reads on the pull request",

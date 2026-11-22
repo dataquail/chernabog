@@ -919,7 +919,7 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         onSome: (data) => ({ ...base, data: asData(data) }),
       });
 
-      const written = yield* progress.advance(finding.item, transition).pipe(
+      const written = yield* Phases.advance(finding.item, transition).pipe(
         Effect.as(true),
         Effect.catchTag("PhaseMoved", () => Effect.succeed(false)),
       );

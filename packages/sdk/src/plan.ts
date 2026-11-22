@@ -913,7 +913,6 @@ export const propose = (spec: number, round: number, answer: PlanDraft) =>
       const plan = withVerify(yield* github.issue(spec), answer.nodes);
       const after = Math.max(0, ...(yield* github.comments(spec)).map((comment) => comment.id));
       yield* github.comment(spec, planComment(round, answer.summary, plan));
-      yield* github.addLabel(spec, LABELS.proposed);
 
       const blob = planBlob(encodePlan(plan));
 
@@ -1012,8 +1011,6 @@ export const changesAsked = (spec: number, round: number) =>
     `changes-asked-${round}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      yield* github.removeLabel(spec, LABELS.proposed);
-
       const found = yield* Progress.use((progress) => progress.read(Phases.issueItem(spec)));
 
       const anchor = Option.match(found, {
@@ -1032,13 +1029,11 @@ export const changesAsked = (spec: number, round: number) =>
 // Why a plan's human task is with a person.
 export const PERSONS_TASK = "a person's task";
 
+// The intent a task's kind carries: an auto task is queued. A human task's
+// auto:needs-human is its with-person record's projection.
 const labelsFor = (kind: string, labels: Settings.LabelNames): ReadonlyArray<string> => {
   if (kind === "auto") {
     return [labels.eligible];
-  }
-
-  if (kind === "human") {
-    return [labels.needsHuman];
   }
 
   return [];
@@ -1179,13 +1174,11 @@ export const becomeEpic = (spec: number, plan: Plan, created: Created) =>
     "epic",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
       yield* github.addLabel(spec, LABELS.epic);
       yield* Phases.record(Phases.issueItem(spec), Phases.PHASES.issue.becameEpic);
-
-      for (const label of [LABELS.approved, LABELS.proposed, labelNames.inProgress]) {
-        yield* github.removeLabel(spec, label);
-      }
+      // The person's approval, acknowledged; the became-epic record
+      // projects the rest of the spec's status labels.
+      yield* github.removeLabel(spec, LABELS.approved);
 
       yield* github.deleteBranch(branchFor(spec));
 
@@ -1219,14 +1212,10 @@ export const handToHuman = (spec: number, reason: string) =>
     "needs-human",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
       // Nothing waits on the plan any more; auto:plan again proposes afresh.
+      // The with-person record projects the spec's status labels.
       yield* Phases.record(Phases.issueItem(spec), Phases.PHASES.issue.planHandedBack);
       yield* Phases.handToPerson(Phases.issueItem(spec), reason);
-
-      for (const label of [LABELS.proposed, labelNames.inProgress]) {
-        yield* github.removeLabel(spec, label);
-      }
 
       yield* github.deleteBranch(branchFor(spec));
       yield* github.comment(

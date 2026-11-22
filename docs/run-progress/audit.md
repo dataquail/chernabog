@@ -189,6 +189,19 @@ Each is a status label a flow adds or removes itself. #569 replaces every one wi
 the projector, which derives the labels from the record's phase and the claim after
 each advance and claim change.
 
+**Done (#569).** `StatusLabels` (`packages/sdk/src/status-labels.ts`) is the
+projector. `StatusLabels.project` maps a record and a live claim to the labels;
+`Phases.advance`, which every SDK write of a record goes through (`record`,
+`reconcile`, backfill, acknowledging an anomaly), sets an item's status labels to
+exactly that set afterwards, and so does `StatusLabels.acquire`, the one way the
+SDK claims an item. An issue's in-progress label is held as core's `claimLabel`
+marker, which `StatusLabels.release` and `releasing` drop and a run's end
+releases, so it goes with the claim however the run ends. Adoption and an unasked
+review are facts in the pull request's record (`adopted`, `unasked`), carried
+through its later records, so `auto:adopted` and `auto:needs-review` are
+projections too. `chernabog doctor` lists every open item whose labels differ from
+their projection (`Ledger.labelDrift`). No row below writes a label any more.
+
 | #   | Where                                                                                                                                                         | Label                                                                                | Task |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---- |
 | L1  | `implement.ts:511`, `:512` (on claim; the `Markers.hold(Markers.label, …)` takes it off when the run ends), `implement.ts:532` (`dropInProgress`, on release) | `auto:in-progress`                                                                   | #569 |

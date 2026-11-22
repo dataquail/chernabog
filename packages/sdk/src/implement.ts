@@ -53,11 +53,12 @@ import { ADDRESS, CONSIDER } from "./default-prompts.ts";
 import * as Phases from "./phases.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
-import { requestReview } from "./pull-request.ts";
+import { hasReviewer, requestReview } from "./pull-request.ts";
 import * as Resume from "./resume.ts";
 import type { ReviewResult } from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // The work branch of an issue, as core's claims name it.
@@ -394,16 +395,17 @@ export const claimComment = (claim: ClaimMarker) =>
   ].join("\n");
 
 // The label on a pull request a run adopted, which a person opened for the
-// issue before it was queued. hand-off puts it on and assigns the persona,
+// issue before it was queued: the projection (StatusLabels) of the pull
+// request's record once hand-off records it adopted and assigns the persona,
 // and only then do address-review and resolve-conflicts take it as the
 // persona's own (Review.authoredByMe): until then the implement run is the
 // only one working on it.
-export const ADOPTED_LABEL = "auto:adopted";
+export const ADOPTED_LABEL = StatusLabels.ADOPTED;
 
 // The label on an issue whose run waits for its adopted draft to be marked
-// ready, so a person sees it. The run holds it as a marker. `readied` reads
-// the issue's awaiting-ready record, not this label.
-export const AWAITING_READY_LABEL = "auto:awaiting-ready";
+// ready, so a person sees it: the projection of its awaiting-ready record.
+// `readied` reads the record, not this label.
+export const AWAITING_READY_LABEL = StatusLabels.AWAITING_READY;
 
 // For a flow's `labels`, so `chernabog labels` creates them.
 export const adoptionLabels: ReadonlyArray<FlowLabel> = [
@@ -514,22 +516,17 @@ export const latestClaim = (issue: number) =>
 const claimedByThisRun = (claim: Option.Option<ClaimMarker>) =>
   Run.use((run) => Effect.succeed(Option.exists(claim, (found) => found.runId === run.runId)));
 
-// Labels the issue in progress, moves it to In Progress on the board, if the
-// repo has one, and assigns the persona, as a person picking it up would.
-// Each is a marker the run holds, held before it is put on, so however the
-// run ends the engine takes it off: the label always; the board Status and
-// the assignment unless the run is done, when the pull request carries on.
-// `keepOn` adds endings on which all three stay.
+// Moves the issue to In Progress on the board, if the repo has one, and
+// assigns the persona, as a person picking it up would. Each is a marker the
+// run holds, held before it is put on, so the engine takes it off unless the
+// run is done, when the pull request carries on. `keepOn` adds endings on
+// which both stay. Its in-progress label is the claim's projection
+// (StatusLabels.acquire), not this.
 export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labels = yield* Settings.labels;
     const board = yield* Settings.board;
     const also = options.keepOn ?? [];
-    const inProgress = { number: issue, label: labels.inProgress };
-
-    yield* Markers.hold(Markers.label, inProgress, { keepOn: also });
-    yield* github.addLabel(issue, labels.inProgress);
 
     if (Option.isSome(board)) {
       yield* Markers.hold(
@@ -548,11 +545,10 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
     yield* github.assignSelf(issue);
   });
 
-// Takes the in-progress label off now, rather than when the run ends.
-export const dropInProgress = (issue: number) =>
-  Effect.flatMap(Settings.labels, (labels) =>
-    Markers.drop(Markers.label, { number: issue, label: labels.inProgress }),
-  );
+// Projects the issue's status labels now (StatusLabels): its in-progress
+// label comes off once its record says the run let it go, as a hand-off's
+// record does. Every record and claim change projects them already.
+export const dropInProgress = (issue: number) => StatusLabels.projectItem(Phases.issueItem(issue));
 
 const describePull = (pull: { readonly number: number; readonly url: string }) =>
   `#${pull.number} (${pull.url})`;
@@ -658,11 +654,6 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>, r
     yield* markClaimed(issue);
     yield* github.removeLabel(issue, label);
 
-    if (adopted.draft) {
-      yield* Markers.hold(Markers.label, { number: issue, label: AWAITING_READY_LABEL });
-      yield* github.addLabel(issue, AWAITING_READY_LABEL);
-    }
-
     const marker: ClaimMarker = {
       runId: run.runId,
       claimedAt: DateTime.formatIso(yield* DateTime.now),
@@ -719,7 +710,7 @@ export const claim = (
       const baseSha = yield* baseHead(base);
       const before = yield* latestClaim(issue);
       const resumed = yield* claimedByThisRun(before);
-      const claimed = yield* Claims.acquire(item, { base });
+      const claimed = yield* StatusLabels.acquire(item, { base });
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -1182,7 +1173,6 @@ export const askForClarification = (
     named(options, "needs-clarification"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labels = yield* Settings.labels;
       const board = yield* Settings.board;
       const label = yield* queueLabel(options);
       const questions = outcome.questions ?? outcome.summary;
@@ -1194,9 +1184,7 @@ export const askForClarification = (
           `To requeue: answer the questions above, then ${requeueHint(board)} \`${label}\` again.`,
         ].join("\n"),
       );
-      yield* github.addLabel(issue, labels.needsClarification);
       yield* Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.askedQuestions);
-      yield* dropInProgress(issue);
       yield* github.deleteBranch(branchFor(issue));
       yield* (yield* Worktree).remove(branchFor(issue));
 
@@ -1766,10 +1754,27 @@ const handedOffAs = (options: { readonly draft?: boolean }): Phases.Phase => {
 export const recordHandOff = (
   issue: number,
   pullRequest: number,
-  options: { readonly draft?: boolean; readonly session?: SessionMarker },
+  options: {
+    readonly draft?: boolean;
+    readonly session?: SessionMarker;
+    // The pull request is one claim adopted, which projects auto:adopted.
+    readonly adopted?: boolean;
+    // No reviewer in the pool could be asked, which projects needs-review.
+    readonly unasked?: boolean;
+  },
 ) =>
   Effect.gen(function* () {
-    yield* Phases.recordAwaitingReview(pullRequest, handedOffAs(options));
+    const facts: Record<string, Json> = {};
+
+    if (options.adopted === true) {
+      facts[StatusLabels.ADOPTED_KEY] = true;
+    }
+
+    if (options.unasked === true) {
+      facts[StatusLabels.UNASKED_KEY] = true;
+    }
+
+    yield* Phases.recordAwaitingReview(pullRequest, handedOffAs(options), facts);
     yield* Phases.recordHandedOff(issue, pullRequest, Option.fromUndefinedOr(options.session));
   });
 
@@ -1806,14 +1811,16 @@ export const handOff = (
 
       yield* github.comment(pullRequest.number, by);
 
-      // Only now is an adopted pull request the persona's to answer reviews on.
-      if (Option.isSome(Option.fromUndefinedOr(options.adoptedBranch))) {
-        yield* github.addLabel(pullRequest.number, ADOPTED_LABEL);
+      const adopted = Option.isSome(Option.fromUndefinedOr(options.adoptedBranch));
+
+      // Only now is an adopted pull request the persona's to answer reviews
+      // on: its record says it was adopted, which projects ADOPTED_LABEL.
+      if (adopted) {
         yield* github.assignSelf(pullRequest.number);
       }
 
-      yield* dropInProgress(issue);
-      yield* recordHandOff(issue, pullRequest.number, { ...options, session });
+      const unasked = options.needsReview && !(yield* hasReviewer(pullRequest.number));
+      yield* recordHandOff(issue, pullRequest.number, { ...options, session, adopted, unasked });
 
       if (options.draft === true) {
         yield* github.comment(
@@ -1898,12 +1905,6 @@ export const awaitReady = (issue: number, pullRequest: number, timeout: Duration
         Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.readyTimedOut, { pullRequest }),
       );
     }),
-    Effect.tap(() =>
-      activity(
-        `ready-${pullRequest}`,
-        Markers.drop(Markers.label, { number: issue, label: AWAITING_READY_LABEL }),
-      ),
-    ),
   );
 };
 
@@ -2167,7 +2168,6 @@ export const handToHuman = (
     Effect.gen(function* () {
       const github = yield* GitHub;
       yield* Phases.handToPerson(Phases.issueItem(issue), reason);
-      yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
         yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest.value), reason);

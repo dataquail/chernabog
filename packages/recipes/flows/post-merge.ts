@@ -650,12 +650,12 @@ const fileFollowUp = (merged: MergedItem, body: string, fixed: Option.Option<num
             const issue = yield* (yield* GitHub).createIssue({
               title: `CI is red on ${merged.baseRef} after #${merged.pullRequest} merged`,
               body,
-              labels: [
-                Option.match(fixed, {
-                  onNone: () => labelNames.eligible,
-                  onSome: () => labelNames.needsHuman,
-                }),
-              ],
+              // Queued, unless it is a person's: then its with-person
+              // record, below, projects auto:needs-human.
+              labels: Option.match(fixed, {
+                onNone: () => [labelNames.eligible],
+                onSome: () => [],
+              }),
             });
 
             return issue.number;

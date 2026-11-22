@@ -167,14 +167,14 @@ describe("an issue an open pull request already closes", () => {
       }),
   );
 
-  effect("records no reviewers at the hand-off of one nobody has reviewed", () =>
+  effect("records no reviewers at the hand-off of one nobody has reviewed, only its adoption", () =>
     Effect.gen(function* () {
       const fake = queuedWithPull();
 
       yield* runToEnd(implementing, fake, work);
       expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
         phase: "review-asked",
-        data: Option.none(),
+        data: Option.some({ adopted: true }),
       });
     }),
   );

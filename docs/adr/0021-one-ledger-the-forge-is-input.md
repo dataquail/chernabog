@@ -565,6 +565,15 @@ change.
      the next change. A person removing `auto:needs-human` is intent, not a
      label to put back: the observer records `handed-back` first (decision
      1), and the projector projects from that record.
+   - **Where it runs (#569):** the SDK's `StatusLabels`. Every write of a
+     record goes through `Phases.advance`, which projects the item after it,
+     and every claim through `StatusLabels.acquire`. An issue's and the epic
+     it became share one GitHub issue, so their projections are one set. An
+     issue's `auto:in-progress` shows a live claim, but not once its record
+     says the run let it go (handed-off, asked-questions, with-person,
+     became-epic); core's `claimLabel` marker takes it off when the run
+     releases the claim or ends. `chernabog doctor` lists the open items
+     whose labels differ from their projection.
    - **No flow writes a status label directly.** `auto:in-progress`,
      `auto:needs-human`, `auto:awaiting-ready`, `auto:plan-proposed`,
      `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`,

@@ -46,6 +46,7 @@ import * as PullRequest from "./pull-request.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
 import * as Stack from "./stack.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 export type EpicNumber = number & Brand.Brand<"EpicNumber">;
 
@@ -93,7 +94,7 @@ const queuedAs = (ships: boolean) =>
 // Lets the task's claim go once its attempt ends with a person, as a step of
 // the attempt's own, so a later attempt lets it go again.
 const releaseTask = (issue: number, id: string) =>
-  activity(`release-claim#${id}`, Claims.release(Claims.issue(issue)));
+  activity(`release-claim#${id}`, StatusLabels.release(Claims.issue(issue)));
 
 // Where a stacked task's pull request goes once its work is done, as the step
 // `task-base#<id>`: its base, or, when the layer below merged while the task
@@ -1459,7 +1460,7 @@ export const epicSubject = {
         (failure): failure is ToPerson => failure instanceof ToPerson,
         (failure) => Effect.fail(new NeedsHuman({ reason: failure.reason })),
       ),
-      Claims.releasing(Claims.epic(trigger.epic)),
+      StatusLabels.releasing(Claims.epic(trigger.epic)),
     ),
   stillValid: Option.some(Epic.stillValid),
 };
