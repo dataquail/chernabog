@@ -1550,8 +1550,8 @@ const DocumentCi = Schema.Struct({ pullRequest: Schema.Finite });
 
 // Whether a document's run parked on a pull request's CI may be taken up:
 // held while the checks pend, and free once they're green or red. One whose
-// pull request closed or went to a person (auto:needs-human) has nothing left
-// to resume.
+// pull request closed or went to a person (its record is with-person) has
+// nothing left to resume.
 export const documentCiResumes = (data: { readonly [key: string]: Json }, item: WorkItem) =>
   Effect.gen(function* () {
     const parked = Schema.decodeUnknownOption(DocumentCi)(data);
@@ -1561,7 +1561,6 @@ export const documentCiResumes = (data: { readonly [key: string]: Json }, item: 
     }
 
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
       Effect.asSome,
@@ -1571,7 +1570,7 @@ export const documentCiResumes = (data: { readonly [key: string]: Json }, item: 
     if (
       Option.isNone(pull) ||
       pull.value.state !== "open" ||
-      pull.value.labels.includes(labelNames.needsHuman)
+      (yield* Phases.withPerson(Phases.pullRequestItem(parked.value.pullRequest)))
     ) {
       return Option.none<WorkItem>();
     }
@@ -1984,21 +1983,18 @@ const parkedPull = (number: number, record: PhaseRecord) =>
 // One issue whose record says a CI job parked its run on CI, as a work item
 // that resumes the wait, when its pull request is still open and no person
 // has it: the one the record keeps, for an adopted one, or else the one on
-// the issue's branch.
+// the issue's branch. The record, parked on CI, is not with-person, so no
+// person has the issue; auto:needs-human, its projection, isn't read.
 const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const issue = yield* github.issue(number).pipe(
       Effect.asSome,
       Effect.catchTag("NotFound", () => Effect.succeedNone),
     );
 
-    const open = Option.filter(
-      issue,
-      (found) => found.state !== "closed" && !found.labels.includes(labelNames.needsHuman),
-    );
+    const open = Option.filter(issue, (found) => found.state !== "closed");
 
     if (Option.isNone(open)) {
       return Option.none<WorkItem>();
@@ -2032,8 +2028,8 @@ const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
 // record is awaitingCi), as work items that resume that wait: held while the
 // checks are pending, and free to start once they're green or red, when a
 // finished CI run (Events.ciCompleted) or the sweep plans them. One closed,
-// one a person has (auto:needs-human), or one whose pull request is no longer
-// open is left alone. Each is routed by its assignees.
+// one a person has (its record is with-person, not awaitingCi), or one whose
+// pull request is no longer open is left alone. Each is routed by its assignees.
 export const awaitingCi = Effect.gen(function* () {
   const items: Array<WorkItem> = [];
 

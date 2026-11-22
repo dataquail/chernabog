@@ -12,6 +12,7 @@ import {
   type AgentResult,
   DEFAULT_LABELS,
   Epic,
+  Phases,
   Plan,
   Repo,
   reviewMarker,
@@ -428,11 +429,15 @@ describe("epic: carrying a change up the stack", () => {
         const repoHistory = yield* history(tasks, true);
 
         // The fix conflicts with the middle layer, and its author agent needs a person.
-        const { asked, github, pulls, throughParks } = yield* startEpic(tasks, repoHistory, {
-          status: "needs-clarification",
-          summary: "Both changed a.txt.",
-          questions: "Which a.txt should the middle layer keep?",
-        });
+        const { asked, github, pulls, recordPhase, throughParks } = yield* startEpic(
+          tasks,
+          repoHistory,
+          {
+            status: "needs-clarification",
+            summary: "Both changed a.txt.",
+            questions: "Which a.txt should the middle layer keep?",
+          },
+        );
 
         const [, middle, top] = pulls;
 
@@ -451,6 +456,10 @@ describe("epic: carrying a change up the stack", () => {
               resolved = sha;
               const labels = github.pull(middle).labels;
               labels.splice(labels.indexOf(DEFAULT_LABELS.needsHuman), 1);
+              // As observer:handed-back records a trusted person's removal.
+              recordPhase(Phases.pullRequestItem(middle), "handed-back", {
+                by: Phases.HANDED_BACK_BY,
+              });
             }),
           ),
         ]);

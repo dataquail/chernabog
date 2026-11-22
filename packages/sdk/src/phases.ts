@@ -767,6 +767,16 @@ export const numberOf = (item: string): Option.Option<number> =>
     Number(found[1]),
   );
 
+// Whether a person has the item whose record is `found` (ADR 21, decision 1):
+// its record is with-person. A hand-back moves the record on, which releases
+// it; auto:needs-human, the record's projection, says nothing either way.
+export const isWithPerson = (found: Option.Option<PhaseRecord>) =>
+  Option.exists(found, (held) => held.phase === PHASES.issue.withPerson);
+
+// Whether a person has `item`, by its record (isWithPerson), as a source or
+// a run reads it (current).
+export const withPerson = (item: string) => Effect.map(current(item), isWithPerson);
+
 // Records that `item` is with a person, and why, from whatever phase it
 // holds; nothing when it is with one already. Without the label: for an item
 // labelled as it is made, such as a plan's human task. Call it inside the

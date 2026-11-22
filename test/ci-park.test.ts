@@ -299,7 +299,9 @@ describe("implement in a CI job", () => {
   effect("offers nothing to resume for an issue a person has, or with no pull request open", () =>
     Effect.gen(function* () {
       const handed = parkedInCi(1);
-      handed.setLabels(ISSUE, [DEFAULT_LABELS.needsHuman]);
+      handed.recordPhase(ISSUE_ITEM, "with-person", {
+        data: Phases.withPersonData("the agent gave up", Option.none()),
+      });
       expect(yield* resumes(handed)).toEqual([]);
 
       const unopened = parkedInCi(1);
