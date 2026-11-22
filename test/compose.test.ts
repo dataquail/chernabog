@@ -1206,7 +1206,7 @@ describe("a document's parks", () => {
     );
     expect(flow).toContain('if (Option.contains($resumed, "awaiting-ci")) {');
     expect(flow).toContain(
-      'const ci = yield* Resume.takeUp(catalogue["ci.waitAndFix"], item, {}).pipe(Resume.parkable, PlanNodes.at("ci", Option.none()));',
+      'const ci = yield* Resume.takeUp(catalogue["ci.waitAndFix"], item, {  }).pipe(Resume.parkable, PlanNodes.at("ci", Option.none()));',
     );
     expect(flow).toContain(
       'failureContext.pr = Resume.pullRequestOf(catalogue["ci.waitAndFix"], item);',

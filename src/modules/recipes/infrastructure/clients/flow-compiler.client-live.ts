@@ -461,13 +461,14 @@ export const FlowCompilerClientLive = Layer.effect(
         if (found.length > 0) {
           return {
             source: Option.none(),
-            // A step a run can resume at is in the generated flow twice, at
-            // its resume entry and on its path: one problem in the document.
+            // A step a run can take a park up at is in the generated flow
+            // twice, where the run takes it up and on its path, whose types
+            // TypeScript words apart: one problem in the document, the first.
             problems: Arr.dedupeWith(
               found.map((each) =>
                 problemAt(pathOfLine(source, text, each.line, each.column), each.message),
               ),
-              (one, other) => one.path === other.path && one.message === other.message,
+              (one, other) => one.path === other.path,
             ),
             // These are what the check of its types found.
             typeChecked: true,
