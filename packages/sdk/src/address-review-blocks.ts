@@ -454,9 +454,10 @@ export const addressReviewBlocks = {
 export const addressReviewSources = {
   // Pull requests this persona wrote whose record says changes asked, by a
   // review on the current head, so nothing was pushed since
-  // (Review.changesToAddress). A person has one labelled auto:needs-human, and
-  // a run of another flow one it owns; both are left alone. Each is routed by
-  // its assignees and reviewers.
+  // (Review.changesToAddress). A person has one whose record is with-person,
+  // and a run of another flow one it owns; both are left alone. One a person
+  // handed back from changes-asked answers the changes asked on its head.
+  // Each is routed by its assignees and reviewers.
   "review.changesRequested": defineSource(
     "review.changesRequested",
     "changes-asked",
@@ -479,6 +480,8 @@ export const addressReviewSources = {
             // (Review.changesToAddress): a review asking for changes on its
             // head is new work.
             PHASES.pullRequest.awaitingCi,
+            // Handed back from changes-asked (Review.changesToAddress).
+            PHASES.pullRequest.handedBack,
           ],
           to: PHASES.pullRequest.changesAsked,
         },

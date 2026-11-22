@@ -150,9 +150,11 @@ export const reviewRequests = Effect.gen(function* () {
 
 // What a review request asks of this persona, by the pull request's phase:
 // its first review (review's), a review again (re-review's), one whose
-// record moves on to review-asked-again first, or a record GitHub disagrees
-// with, which status shows rather than starting either.
+// record moves on to review-asked-again first, a record GitHub disagrees
+// with, which status shows rather than starting either, or nothing, while a
+// person has it.
 type Asked =
+  | { readonly kind: "withPerson" }
   | { readonly kind: "first" }
   | { readonly kind: "again"; readonly record: PhaseRecord }
   | { readonly kind: "reconcile"; readonly record: PhaseRecord }
@@ -169,10 +171,26 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
   Option.match(request.record, {
     onNone: (): Asked => ({ kind: "first" }),
     onSome: (found): Asked => {
-      // Handed back by a person, from no record before it went to them
-      // (Phases.reconcileHandedBack): a review asked of it is a first, as of
-      // one with no record.
+      // With a person (ADR 21, decision 1), by its record, whatever its
+      // label says: no review starts until they hand it back.
+      if (Phases.isWithPerson(Option.some(found))) {
+        return { kind: "withPerson" };
+      }
+
+      // Handed back by a person (Phases.reconcileHandedBack), by the phase it
+      // went to them from: a review again from review-asked-again, or from
+      // changes-asked, as a request of one recorded changes-asked is; a first
+      // from any other, or none, as of one with no record.
       if (found.phase === P.handedBack) {
+        const again = Option.exists(
+          Phases.handedBackFrom(found),
+          (left) => left === P.reviewAskedAgain || left === P.changesAsked,
+        );
+
+        if (again) {
+          return { kind: "reconcile", record: found };
+        }
+
         return { kind: "first" };
       }
 
@@ -281,7 +299,7 @@ const againKey = (request: ReviewRequest, asked: Asked) => {
 };
 
 // review.requestedAgain's items: open pull requests that ask this persona to
-// review again, unless a person has them (auto:needs-human), routed by their
+// review again, unless a person has them (their record is with-person), routed by their
 // assignees and reviewers. Each item's key carries the record it reads,
 // `pr-7-review-asked-again-1a2b3c4`, so each request is a run of its own. A
 // review asked again of a pull request whose record says changes asked or
@@ -289,15 +307,10 @@ const againKey = (request: ReviewRequest, asked: Asked) => {
 // to review-asked-again first. One with no record is a first review's
 // (review.requested).
 export const requestedAgain = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const me = yield* reviewerLogin;
   const items: Array<WorkItem> = [];
 
   for (const request of yield* reviewRequests) {
-    if (request.pull.labels.includes(labelNames.needsHuman)) {
-      continue;
-    }
-
     const key = yield* againKey(request, askedOf(request, me));
 
     for (const found of Option.toArray(key)) {
@@ -966,7 +979,8 @@ const changesAskedRecord = (item: string, found: PhaseRecord) => {
 // One pull request with a record, for changesToAddress: an item to address
 // when its record says changes asked and the review it names is on the head;
 // held, with why, when GitHub disagrees; moved to changes-asked first when a
-// review asks for changes on the head of one in a phase before it.
+// review asks for changes on the head of one in a phase before it, or of one
+// a person handed back that went to them from changes-asked.
 const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
   Effect.gen(function* () {
     const item = Phases.pullRequestItem(pull.number);
@@ -974,8 +988,16 @@ const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
     // A fix whose CI a CI job left pending (awaitingCi): a review asking for
     // changes on its head is new work, as it is after a hand-off.
     const fixPending = Option.isSome(Phases.ciRoundOf(found.phase));
+    // Handed back from changes-asked: the latest review asking for changes on
+    // the head is answered, read again from GitHub, as nothing carries over.
+    const handedBack = Option.contains(Phases.handedBackFrom(found), P.changesAsked);
 
-    if (!asks && !fixPending && !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])) {
+    if (
+      !asks &&
+      !fixPending &&
+      !handedBack &&
+      !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])
+    ) {
       return Option.none<WorkItem>();
     }
 
@@ -1024,21 +1046,16 @@ const routedUnlessHeld = (pull: PullRequest, item: WorkItem) => {
 // head, so nothing was pushed since. Each item's key carries the record,
 // `pr-7-changes-asked-1a2b3c4`. A person's review that asks for changes on
 // the head of one whose record is before it moves the record on first. One a
-// person has (auto:needs-human), or a run of another flow owns, is left
+// person has (its record is with-person), or a run of another flow owns, is left
 // alone; one whose record GitHub disagrees with is held, with why, for status
 // to show. One with no record isn't one a run of this persona's opened
 // (backfill gave one to those from before records). Each is routed by its
 // assignees and reviewers.
 export const changesToAddress = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* authoredByMe) {
-    if (pull.labels.includes(labelNames.needsHuman)) {
-      continue;
-    }
-
     const found = yield* Option.match(Phases.recordOf(all, Phases.pullRequestItem(pull.number)), {
       onNone: () => Effect.succeedNone,
       onSome: (record) => changesByRecord(pull, record),
@@ -1127,19 +1144,14 @@ const fixAwaitingCi = (pull: PullRequest, found: PhaseRecord, round: number) =>
 // Pull requests this persona wrote whose fix for a review a CI job pushed,
 // and ended the job while its CI ran (their record is awaitingCi), as work
 // items that resume that wait: held while the checks are pending, and free to
-// start once they're green or red. One a person has (auto:needs-human), or a
+// start once they're green or red. One a person has (its record is with-person), or a
 // run of another flow owns, is left alone. Each is routed by its assignees
 // and reviewers.
 export const fixesAwaitingCi = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* authoredByMe) {
-    if (pull.labels.includes(labelNames.needsHuman)) {
-      continue;
-    }
-
     const parked = Option.flatMap(
       Phases.recordOf(all, Phases.pullRequestItem(pull.number)),
       (found) => Option.map(Phases.ciRoundOf(found.phase), (round) => ({ found, round })),

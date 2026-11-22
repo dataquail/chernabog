@@ -778,6 +778,31 @@ export const handToPerson = (item: string, why: string) =>
     }
   });
 
+// Whether an item's record says it is with a person (ADR 21, decision 1): the
+// one thing a source holds it by. Its auto:needs-human label is only the
+// record's projection, so a label taken off by someone the repo doesn't
+// trust, or added by hand with no record, changes nothing.
+export const isWithPerson = (found: Option.Option<PhaseRecord>) =>
+  Option.exists(found, (held) => held.phase === PHASES.issue.withPerson);
+
+// Whether `item`'s current record says it is with a person (isWithPerson).
+export const withPersonNow = (item: string) => Effect.map(current(item), isWithPerson);
+
+const HandedBackData = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
+
+// The phase a handed-back record says the item went to the person from; none
+// for any other record, or one that came from no phase. Nothing else of that
+// phase carries over (ADR 21, decision 4): a flow that takes the item up
+// again reads what it needs from GitHub.
+export const handedBackFrom = (found: PhaseRecord): Option.Option<string> =>
+  Option.flatMap(
+    Option.filter(found.data, () => found.phase === PHASES.issue.handedBack),
+    (data) =>
+      Option.flatMap(Schema.decodeUnknownOption(HandedBackData)(data), (said) =>
+        Option.fromNullishOr(said.from),
+      ),
+  );
+
 // Who records that a person handed an item back (handedBack).
 export const HANDED_BACK_BY = "observer:handed-back";
 

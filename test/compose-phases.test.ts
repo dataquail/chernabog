@@ -131,6 +131,7 @@ describe("the catalogue's phases", () => {
             "draft",
             "ready-for-person",
             "awaiting-ci",
+            "handed-back",
           ],
           to: "changes-asked",
         },
@@ -142,7 +143,14 @@ describe("the catalogue's phases", () => {
       reconciles: [
         {
           item: "pull-request",
-          from: ["review-asked", "changes-asked", "approved", "draft", "ready-for-person"],
+          from: [
+            "review-asked",
+            "changes-asked",
+            "approved",
+            "draft",
+            "ready-for-person",
+            "handed-back",
+          ],
           to: "review-asked-again",
         },
       ],

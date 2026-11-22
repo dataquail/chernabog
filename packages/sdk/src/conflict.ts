@@ -30,7 +30,6 @@ import * as Schema from "effect/Schema";
 import * as Implement from "./implement.ts";
 import * as Phases from "./phases.ts";
 import * as Review from "./review.ts";
-import * as Settings from "./settings.ts";
 
 // The record a wait parked over: its phase, and the data it carried, if any.
 const Restore = Schema.Struct({
@@ -179,10 +178,10 @@ export const resumingCi = (item: WorkItem): Option.Option<number> =>
 // on CI for its merge (their record is awaiting-conflict-ci, with no
 // document's `resume`), as work items that take the wait up: held while the
 // checks are pending and ciTimeout hasn't passed, and free to start once CI
-// is green or red, or the time is up. One a person has (auto:needs-human), or
-// a run owns, is left alone. A document's parks are Resume.parked's.
+// is green or red, or the time is up. One a person has (its record is
+// with-person, so not parked), or a run owns, is left alone. A document's
+// parks are Resume.parked's.
 export const parkedOnCi = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
   const items: Array<WorkItem> = [];
 
@@ -199,7 +198,6 @@ export const parkedOnCi = Effect.gen(function* () {
     if (
       Option.isNone(parked) ||
       "resume" in parked.value.data ||
-      pull.labels.includes(labelNames.needsHuman) ||
       (yield* Review.ownedByARun(pull))
     ) {
       continue;
@@ -239,7 +237,6 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
     }
 
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
       Effect.asSome,
@@ -249,7 +246,7 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
     if (
       Option.isNone(pull) ||
       pull.value.state !== "open" ||
-      pull.value.labels.includes(labelNames.needsHuman)
+      (yield* Phases.withPersonNow(Phases.pullRequestItem(pull.value.number)))
     ) {
       return Option.none<WorkItem>();
     }
