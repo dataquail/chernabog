@@ -469,11 +469,10 @@ type Waiting = {
   readonly anchor: Anchor;
 };
 
-// Specs whose record says their plan waits on a person (proposed), open and
-// not handed to one. The record, not auto:plan-proposed, says which wait
-// (ADR 0021, decision 3): the label is for people.
+// Specs whose record says their plan waits on a person (proposed), open. The
+// record, not auto:plan-proposed, says which wait (ADR 0021, decision 3), and
+// one handed to a person is with-person instead: the labels are for people.
 const waitingSpecs = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
   const found: Array<Waiting> = [];
 
   for (const [name, record] of yield* Phases.records) {
@@ -493,12 +492,7 @@ const waitingSpecs = Effect.gen(function* () {
       continue;
     }
 
-    const spec = Option.filter(
-      yield* openSpec(number.value),
-      (open) => !open.labels.includes(labelNames.needsHuman),
-    );
-
-    for (const open of Option.toArray(spec)) {
+    for (const open of Option.toArray(yield* openSpec(number.value))) {
       found.push({
         spec: open,
         round: round.value,
@@ -615,15 +609,14 @@ const DocumentWait = Schema.Struct({
 });
 
 // The spec `number`, while its plan may still be taken up: open, and not a
-// person's.
+// person's, by its record (Phases.withPerson).
 const specWaiting = (number: number) =>
   Effect.gen(function* () {
-    const labelNames = yield* Settings.labels;
+    if (yield* Phases.withPerson(Phases.issueItem(number))) {
+      return Option.none<Issue>();
+    }
 
-    return Option.filter(
-      yield* openSpec(number),
-      (open) => !open.labels.includes(labelNames.needsHuman),
-    );
+    return yield* openSpec(number);
   });
 
 // Whether a flow document's run parked on a person's answer to its plan may
