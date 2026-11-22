@@ -17,20 +17,24 @@ export const RECIPES: ReadonlyArray<string> = [
   "re-review",
 ];
 
-// The flows each persona runs, as the sandbox's review loop sets alice and
-// bob up (test/acceptance/review.test.ts): alice writes, bob reviews.
-const FLOWS_OF: Readonly<Record<Login, ReadonlyArray<string>>> = {
-  alice: ["implement", "address-review"],
-  bob: ["review", "re-review"],
-};
+// Who writes: the personas that run the writing flows, as the review loop
+// has alice write (test/features/review-loop.feature).
+const WRITERS: ReadonlyArray<Login> = ["alice"];
 
-// The recipes `login` runs, in RECIPES' order: all of them for a persona the
-// cast doesn't name.
-export const flowsOf = (login: Login): ReadonlyArray<string> =>
-  Option.match(Option.fromUndefinedOr(FLOWS_OF[login]), {
-    onNone: () => RECIPES,
-    onSome: (names) => RECIPES.filter((name) => names.includes(name)),
-  });
+const WRITING: ReadonlyArray<string> = ["implement", "address-review"];
+
+const REVIEWING: ReadonlyArray<string> = ["review", "re-review"];
+
+// The recipes `login` runs, in RECIPES' order: the writing flows for a
+// writer, and the reviewing flows for a persona that reviews for the team
+// (one in the reviewer `pool`), so a persona reviews only once a scenario
+// says it does.
+export const flowsOf = (login: Login, pool: ReadonlyArray<Login>): ReadonlyArray<string> =>
+  RECIPES.filter(
+    (name) =>
+      (WRITING.includes(name) && WRITERS.includes(login)) ||
+      (REVIEWING.includes(name) && pool.includes(login)),
+  );
 
 // Who a person's review request is by, or a push no persona made, as the
 // world shows it.
@@ -41,6 +45,16 @@ export const A_PERSON = "a person";
 const ANSWERS_A_REVIEW = /^(Not addressing|Addressed) review \d+/;
 
 export const answersAReview = (body: string) => ANSWERS_A_REVIEW.test(body);
+
+// The reasons a comment that answers a review gives for not making the
+// changes it asks for, when it gives any.
+const DECLINES = /^Not addressing review \d+:\s*([\s\S]*)$/;
+
+export const reasonsOf = (body: string): Option.Option<string> =>
+  Option.fromNullishOr(DECLINES.exec(body)).pipe(
+    Option.map((found) => found[1].trim()),
+    Option.filter((reasons) => reasons !== ""),
+  );
 
 // Whether a label added to a pull request hands it to a person.
 export const handsOff = (label: string) => label === DEFAULT_LABELS.needsHuman;

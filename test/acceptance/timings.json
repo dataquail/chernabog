@@ -8,6 +8,7 @@
     "test/acceptance/rehearse.test.ts": 63471,
     "test/acceptance/review.test.ts": 60676,
     "test/acceptance/daemon.test.ts": 57851,
+    "test/acceptance/review-loop.feature.test.ts": 52075,
     "test/acceptance/e2e.test.ts": 44774,
     "test/acceptance/hybrid.test.ts": 44303,
     "test/acceptance/claims.test.ts": 41702,

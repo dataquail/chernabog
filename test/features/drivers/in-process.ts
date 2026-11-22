@@ -50,7 +50,15 @@ import {
   type World,
 } from "../domain.ts";
 import type { Driver } from "../runner.ts";
-import { A_PERSON, answersAReview, flowsOf, handsOff, issueOfBranch, verdictOf } from "./cast.ts";
+import {
+  A_PERSON,
+  answersAReview,
+  flowsOf,
+  handsOff,
+  issueOfBranch,
+  reasonsOf,
+  verdictOf,
+} from "./cast.ts";
 
 // The recipes' flows, by name; which a persona runs is the cast's (cast.ts).
 const FLOWS = new Map<string, Flow>([
@@ -79,8 +87,8 @@ type Machine = {
 
 const failed = (message: string) => new DomainFailed({ message });
 
-const recipesOf = (login: Login) =>
-  flowsOf(login).flatMap((name) =>
+const recipesOf = (machine: Machine, login: Login) =>
+  flowsOf(login, machine.pool).flatMap((name) =>
     Option.toArray(Option.fromUndefinedOr(FLOWS.get(name))).map((flow) => [name, flow] as const),
   );
 
@@ -136,7 +144,7 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
   })),
   replies: fake.acts.comments
     .filter((found) => found.on === PULL && answersAReview(found.body))
-    .map((found) => ({ pullRequest: PULL, author: found.author })),
+    .map((found) => ({ pullRequest: PULL, author: found.author, reasons: reasonsOf(found.body) })),
   pushes: fake.acts.pushes.map((found) => ({ pullRequest: PULL, ...found })),
   reviewRequests: fake.acts.reviewRequests.flatMap((found) =>
     found.reviewers.map((reviewer) => ({ pullRequest: PULL, reviewer, by: found.by })),
@@ -144,10 +152,15 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
   handOffs: fake.acts.labelled
     .filter((found) => found.number === PULL && handsOff(found.label))
     .map(() => ({ pullRequest: PULL })),
-  sessions: fake.acts.sessions.map((found) => ({
+  // The fake agent can't say whether it resumed: a session it ran before
+  // under the same id is one the agent's adapter would resume.
+  sessions: fake.acts.sessions.map((found, index) => ({
     pullRequest: PULL,
     persona: found.persona,
     session: found.sessionId,
+    resumed: fake.acts.sessions
+      .slice(0, index)
+      .some((earlier) => earlier.sessionId === found.sessionId),
   })),
 });
 
@@ -186,7 +199,7 @@ const workFor = (fake: Fake, context: Platform, login: Login, name: string, flow
 const nextTurn = (machine: Machine, fake: Fake, context: Platform) =>
   Effect.gen(function* () {
     for (const login of machine.personas) {
-      for (const [name, flow] of recipesOf(login)) {
+      for (const [name, flow] of recipesOf(machine, login)) {
         const found = yield* workFor(fake, context, login, name, flow);
 
         if (Option.isSome(found)) {

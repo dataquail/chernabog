@@ -56,6 +56,9 @@ export type ReviewSeen = {
 export type ReplySeen = {
   readonly pullRequest: number;
   readonly author: Login;
+  // The author's reasons for not making the changes the review asks for,
+  // when it gives them rather than saying what it changed.
+  readonly reasons: Option.Option<string>;
 };
 
 export type PushSeen = {
@@ -80,6 +83,8 @@ export type SessionSeen = {
   readonly pullRequest: number;
   readonly persona: Login;
   readonly session: string;
+  // Whether it carried on a session that already was, rather than starting one.
+  readonly resumed: boolean;
 };
 
 // Everything a scenario can observe. The lists are histories, oldest first,
