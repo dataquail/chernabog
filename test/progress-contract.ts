@@ -329,6 +329,41 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
       }),
     );
 
+    // A writer's own record is the move it made: from the same read to another
+    // phase is a second move, which the item has already left behind.
+    effect(
+      "the same writer moving on again from the same read, to another phase, is a lost race",
+      () =>
+        Effect.gen(function* () {
+          const progress = yield* make;
+          const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+          const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+
+          const exit = yield* Effect.exit(
+            progress.advance(ITEM, after(asked, REVIEW_ASKED_AGAIN, RUN_A)),
+          );
+
+          expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+            Option.some([Option.some(REVIEW_ASKED), Option.some(CHANGES_ASKED)]),
+          );
+          expect(yield* progress.read(ITEM)).toEqual(Option.some(changes));
+        }),
+    );
+
+    effect("the same writer's second first phase, to another phase, is a lost race", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+
+        const exit = yield* Effect.exit(progress.advance(ITEM, first(CHANGES_ASKED, RUN_A)));
+
+        expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+          Option.some([Option.none(), Option.some(REVIEW_ASKED)]),
+        );
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(asked));
+      }),
+    );
+
     // Only the record the item holds now counts: once another writer has moved
     // it on, a retry fails as the item has moved, which it has.
     effect("a retry after another writer moved the item on is a lost race", () =>
