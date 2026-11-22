@@ -226,56 +226,51 @@ change.
      epic reads those records instead of copying them into its own `data`
      (`tasks.ci` and `layers.ci` go).
 
-   This reverses the choice #537 made, which the four paragraphs after this
-   one describe: a document resumed at the node it parked on, found by a node id
-   in the record's `data`, with the outputs of earlier steps kept beside it.
-   That carried the journal across a park inside the record. A park happens
-   mid-phase only because one phase was recorded at several nodes, so the
-   record had to say where within the phase to go on, and what the run had
-   done there. It is why size budgets exist and why a wait whose outputs
-   didn't fit polled instead. With a phase per park site, the phase alone
-   says where the next run starts, and what it needs is a fact, small and
-   readable again from the world. Until #566 and #567 land, the code does
-   what these paragraphs describe; the audit lists it. #567 deletes them,
-   when a flow document resumes at the phase it parked on.
+   This reverses the choice #537 made: a document resumed at the node it
+   parked on, found by a node id in the record's `data`, with the outputs of
+   earlier steps kept beside it. That carried the journal across a park
+   inside the record. A park happens mid-phase only because one phase was
+   recorded at several nodes, so the record had to say where within the
+   phase to go on, and what the run had done there. It is why size budgets
+   existed and why a wait whose outputs didn't fit polled instead. With a
+   phase per park site, the phase alone says where the next run starts, and
+   what it needs is a fact, small and readable again from the world.
 
-   A flow document resumes at the node it parked on, found by a **node id the
-   record's data names**, not by the phase. One phase can be recorded at
-   several nodes: implement's two waits for CI both record `awaiting-ci` on
-   the issue. A block that parks (`Block.parks`, in the SDK's `resume.ts`)
-   records under `resume`:
-   - the document's flow and the node's id;
-   - the run's work item and the persona that parked it;
-   - `kept`: the outputs of earlier steps that the node and the steps after it
-     read. The compiler works out which ones.
+   A flow document resumes at the phase it parked on (#567). A block that
+   parks says so (`Block.parks`, in the SDK's `resume.ts`): the phase it
+   parks on, its site's; the items parked there that a run may take up,
+   built from each record's thread and data, routed as its source routes
+   them, and held, with why, while what it waits on hasn't settled; and how
+   it takes the wait up, from the record and the world. The document's
+   source of parked items (`Resume.parked`) offers, for each phase one of
+   its nodes parks on, its block's items, as work a run may start. The run
+   starts at that node, which takes the wait up and goes on from there, so
+   nothing before it, such as the agent's work, runs again, and nothing it
+   gave carries over. The persona is the source's to pick, as a recipe's
+   source routes its items, and the item comes from the record's thread.
+   The record holds the wait's facts alone, as a recipe's does: a merge hold
+   names the work item and the flow that hold it, since review and
+   re-review both hold merges on `merge-held`.
 
-   A step whose block runs again (`Block.again`) is run again instead of
-   kept. This covers a cheap read, or something that belongs to the machine,
-   such as a worktree's path. A step whose output can outgrow the record
-   keeps less and reads the rest back (`Block.recall`): `plan.propose` keeps
-   its spec and round, and the resumed run reads the plan from the marker on
-   its comment, as the recipe does.
-
-   The document's source of parked items (`Resume.parked`) offers the item
-   as work a run may start. It holds the item while the node's block says
-   the wait hasn't settled, such as CI still pending, and leaves it for the
-   persona that parked it. The run starts at the node: it claims the item
-   again, restores what was kept, and goes on from the node, so nothing
-   before it, such as the agent's work, runs again. A node it no longer has
-   holds the item for a person.
-
-   What a node keeps must fit the record. A value that doesn't fit, or that
-   JSON can't hold, leaves the block polling inside the run. That is not a
-   park, so the run isn't stranded. A node in a repeat's rounds resumes
-   there too, in its round, which the record keeps as `round` beside
-   `resume` (a plan's `proposed` record has its round there already). The
-   resumed run starts the repeat at that round, runs it from the node, and
-   runs the rounds after it whole. The repeat's state starts afresh, so the
-   compiler takes such a node only when nothing from it on reads the state,
-   every `next` sets all of it, and the round can't run off its end; a wait
-   anywhere else in the rounds polls, and the epic's rounds start from its
-   `waiting` record. A wait in a forEach's lanes polls, except an epic
-   task's wait for CI: its lane can't park alone, so it ends, and the
+   The park block's output is what it records: its facts, which it gives
+   alike on the way through and on taking the wait up, as `ci.waitAndFix`
+   gives the pull request and what to tell the issue. **The compiler holds
+   the steps after a park to reading the trigger, the park block's output
+   (and what its outcomes bind) and the steps after it.** Reading anything
+   else from before the park is an error naming the step and what it reads.
+   A node in a repeat's rounds is taken up in its round, which its block
+   reads from the record (a plan's `proposed` record has its round). The
+   run starts the repeat at that round, runs it from the node, and runs the
+   rounds after it whole. The repeat's state starts afresh, so the compiler
+   takes such a node only when nothing from it on reads the state, every
+   `next` sets all of it, the round can't run off its end, and the rounds
+   read nothing from before the repeat but the trigger. Two nodes that park
+   on one phase must go on alike, as re-review's two merges do, since the
+   phase alone says where a run starts; the run starts at the first. A wait
+   for CI where a run can't take it up, as in a forEach's lanes, polls; a
+   block that can't wait inside the run (`pr.land`, `plan.awaitAnswer`)
+   must be where a run can take it up. An epic task's wait for CI is the
+   exception to a lane's polling: its lane can't park alone, so it ends, and the
    task's own record keeps its pending CI (`awaiting-task-ci`: the pull
    request, the lane, its round, and `since`; #568). `Epic.queued` reads the
    epic's tasks' records, offers the epic once that CI settles or
@@ -300,7 +295,7 @@ change.
    commit's push CI first records the pull request `watched` (which both
    triggers take for finished), then, on a first reading still pending,
    `awaiting-merge-ci`, with the merge commit and `since`, when the watch
-   began, and a document's `resume` beside them. It is not `awaiting-ci`,
+   began. It is not `awaiting-ci`,
    which address-review records on an open pull request's own CI. The trigger offers it once push CI
    settles, or no run started within `noCiGrace`, or `ciTimeout` passed,
    both counted from `since`, and holds it with why until then. The run
@@ -319,8 +314,7 @@ change.
    address-review read. The wait records `awaiting-conflict-ci` (with
    `-2` and on for later rounds, as `awaiting-ci` has) on the pull request,
    and its data keeps `restore`, the phase and data of the record it parked
-   over, with `since`, when the round's wait began, and a document's
-   `resume`. It is not `awaiting-ci`, which address-review reads as the wait
+   over, with `since`, when the round's wait began. It is not `awaiting-ci`, which address-review reads as the wait
    on its own fix. The run that takes the wait up records `restore` again
    once the wait ends, however it ends short of a park, so the review phase
    is back; an approval is then asked again, as before. While it is parked
@@ -331,11 +325,10 @@ change.
    the claim gone at the park, review and address-review would take the
    pull request up under the pending CI unless every pull-request source
    read a second record. Restoring with nothing in the data would lose
-   what the review phase carried, such as a merge hold's `resume`. The
+   what the review phase carried, such as the work item a merge hold names. The
    cost of a restore is a fresh record: a new `at` and version, so a merge
    hold put back counts its time again from there, and a source keyed by
-   the record sees new work. One whose record doesn't fit beside the rest
-   polls. A pull request with no record goes to a person: every one a run
+   the record sees new work. A pull request with no record goes to a person: every one a run
    opened has a record, backfill gave one to those from before.
 
    Every wait for CI that parks keeps `since` in its data, when the round's
@@ -352,9 +345,9 @@ change.
    phase. `chernabog progress backfill` moves a record parked on the old
    shared `awaiting-ci` onto its site's phase, in its round and with its
    data: a pull request's to `awaiting-fix-ci`, and an issue's that keeps an
-   adopted pull request to `awaiting-adopted-ci`. A flow document's park at
-   `ci.waitPreparing` stays where it is until #567, since it resumes at the
-   node its data names.
+   adopted pull request to `awaiting-adopted-ci`. A flow document's park
+   from before #567, whose data names where its run resumed (`resume`), is
+   written again at its phase with only its facts.
 
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
@@ -640,8 +633,10 @@ change.
   a layer changed since, or a day passed. A flow document's waits for CI
   (audit W8), its wait for a plan's answer (in a repeat's rounds, from the
   spec's `proposed` record) and a merge held by `pr.land` (from the pull
-  request's `merge-held` record) park at a node and resume there. Where a
-  node can't resume, the wait polls rather than park. The epic document's
+  request's `merge-held` record) park, and a run takes each up by its phase
+  at the node that parks there. Where a run can't take a wait for CI up, it
+  polls rather than park; a document whose merge or plan's answer waits
+  where a run can't take it up doesn't compile. The epic document's
   rounds start from the `waiting` record. resolve-conflicts' CI parks on
   `awaiting-conflict-ci` over the pull request's review phase, which the run
   that takes it up puts back (audit W6). No flow document's wait is stranded.

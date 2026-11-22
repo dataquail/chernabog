@@ -15,7 +15,6 @@ import {
   Git,
   GitHub,
   type Json,
-  latestMarker,
   Machine,
   NeedsHuman,
   type PhaseRecord,
@@ -27,7 +26,6 @@ import {
   type RoleOptions,
   Run,
   SessionMarker,
-  sessionMarker,
   StepFailed,
   type SubmittedReview,
   type WorkItem,
@@ -1174,19 +1172,15 @@ export const fixesAwaitingCi = Effect.gen(function* () {
 export const resumingCi = (address: AddressItem): Option.Option<ResumingCi> =>
   Option.fromUndefinedOr(address.resumeCi);
 
-// The author's session, from the marker the implement run left; a fresh one
-// for `purpose` if there is none. Outside an activity, for a block that reads
-// it under a name of its own.
+// The author's session, from the issue's handed-off record that names the
+// pull request (Phases.authorOf), not from the comment that tells people; a
+// fresh one for `purpose` if no record names it. Outside an activity, for a
+// block that reads it under a name of its own.
 export const findAuthorSession = (pullRequest: number, purpose: string) =>
   Effect.gen(function* () {
-    const github = yield* GitHub;
     const run = yield* Run;
     const repo = yield* Repo;
-
-    const found = latestMarker(
-      sessionMarker.read,
-      (yield* github.comments(pullRequest)).map((comment) => comment.body),
-    );
+    const found = Phases.authorOf(yield* Phases.records, pullRequest);
 
     return Option.getOrElse(found, (): SessionMarker => ({
       adapter: repo.agent,
@@ -1196,7 +1190,7 @@ export const findAuthorSession = (pullRequest: number, purpose: string) =>
     }));
   });
 
-// The author's session, from the marker the implement run left; a fresh one if there is none.
+// The author's session, from the issue's record; a fresh one if there is none.
 export const authorSession = (pullRequest: number) =>
   activity("find-author", findAuthorSession(pullRequest, "address-review"), SessionMarker);
 

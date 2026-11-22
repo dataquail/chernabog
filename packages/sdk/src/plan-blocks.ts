@@ -9,7 +9,15 @@
 // the issues, the epic, removing the checkout, posting questions) is `last`:
 // in a repeat it takes no round, so its step names are the recipe's.
 
-import { Claims, GitHub, NeedsHuman, reportAs, Run, type WorkItem } from "@chernabog/core";
+import {
+  Claims,
+  GitHub,
+  NeedsHuman,
+  reportAs,
+  Run,
+  StepFailed,
+  type WorkItem,
+} from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -20,12 +28,10 @@ import {
   defineSource,
   type FailureContext,
   IssueNumber,
-  Kept,
   ToPerson,
 } from "./block.ts";
 import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
-import * as Phases from "./phases.ts";
 import { PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
 import * as Resume from "./resume.ts";
@@ -112,36 +118,45 @@ export const planSources = {
 };
 
 // A document's wait on a person's answer to the plan of `round`, which the
-// spec's proposed record holds: the round, how long a person has, and, at a
-// node the document can resume at, where to resume (Resume.parking). At such
-// a node it parks (Plan.awaitAnswer), and a run that took the plan up there
-// acts on the answer given since, or, with none yet, waits again on the
-// record it took up, which still says when the plan was posted. Anywhere else
-// it records the wait and polls, so the run isn't stranded.
-const documentAnswer = (round: number, within: Days) =>
+// spec's proposed record holds: the round, and how long a person has. It
+// parks (Plan.awaitAnswer), and the run ends there; a run that takes it up
+// (Plan.documentAnswers) acts on the answer given since, or, with none yet,
+// waits again on the record it took up, which still says when the plan was
+// posted.
+const documentAnswer = (spec: number, round: number, within: Days) =>
   Effect.gen(function* () {
-    const run = yield* Run;
-    const spec = yield* Implement.issueOf(run.item);
-
-    if (Option.isSome(yield* Resume.resumedPhase)) {
-      const answer = yield* Plan.answerNow(spec, round, within);
-
-      if (Option.isSome(answer)) {
-        return answer.value;
-      }
-
-      return yield* Plan.awaitAnswer(spec, round, within);
-    }
-
     const parking = yield* Resume.parking({ within });
 
-    if (Option.isSome(parking)) {
-      return yield* Plan.awaitAnswer(spec, round, within, parking.value.data);
+    return yield* Plan.awaitAnswer(
+      spec,
+      round,
+      within,
+      Option.match(parking, { onNone: () => ({ within }), onSome: (found) => found.data }),
+    );
+  });
+
+// What a person answered, and the plan they answered: the one plan.propose
+// posted, or, for a run that took the wait up, the one the spec's record
+// keeps as a blob (Plan.posted), as plan.create makes it.
+type Answered = { readonly answer: Plan.Answer; readonly plan: Option.Option<Plan.Plan> };
+
+const answered = (answer: Plan.Answer, plan: Option.Option<Plan.Plan>): Answered => ({
+  answer,
+  plan: Option.filter(plan, () => answer === "approved"),
+});
+
+// The answer, or, with nobody answering within `within`, a person's to pick up.
+const answerOrPerson = <E, R>(answer: Effect.Effect<string, E, R>, within: Days) =>
+  Effect.flatMap(answer, (found) => {
+    if (found === "timeout") {
+      return Effect.fail(new NeedsHuman({ reason: `nobody answered the plan within ${within}` }));
     }
 
-    yield* Phases.recordParking(Plan.answerParking(spec, round, within, { within }));
+    if (found === "approved") {
+      return Effect.succeed<Plan.Answer>("approved");
+    }
 
-    return yield* Plan.pollAnswer(spec, round, within);
+    return Effect.succeed<Plan.Answer>("changes-requested");
   });
 
 // What every plan block suits: each reads or writes the spec's plan, whose
@@ -208,12 +223,6 @@ export const planBlocks = {
       Plan.propose(input.issue, input.round, input.draft).pipe(
         Effect.map((plan) => ({ plan, issue: input.issue, round: input.round })),
       ),
-    // A plan can outgrow a record's data: a document's run that resumes
-    // after it keeps the spec and the round, and reads the plan back from the
-    // blob the spec's record names, as the recipe's run does (Plan.posted).
-    keeps: Schema.toCodecJson(Schema.Struct({ issue: Kept.issue, round: Schema.Finite })),
-    recall: (kept: { readonly issue: IssueNumber; readonly round: number }) =>
-      Plan.posted(kept.issue, kept.round).pipe(Effect.map((plan) => ({ plan, ...kept }))),
     failures: { NeedsHuman: "person", NotFound: "skip", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
@@ -227,36 +236,84 @@ export const planBlocks = {
     fixed: ["within"],
     about:
       "Parks the run until a person answers the posted plan: approved when the spec carries auto:plan-approved, or changes when a member of the repo comments on it. Nobody answering within `within` goes to a person. It records the spec's proposed phase, with the round, so a run that ends at the park is taken up again once a person answers or the time is up, in the round it parked in.",
-    inputKinds: { round: "the round", within: 'how long, as "14 days"' },
-    outputKinds: "approved or changes-requested",
+    inputKinds: {
+      round: "the round",
+      plan: "the plan as posted, from plan.propose",
+      within: 'how long, as "14 days"',
+    },
+    outputKinds: {
+      answer: "approved or changes-requested",
+      plan: "the plan approved, for plan.create",
+    },
     outcomeKinds: {
-      approved: "an object: with as: approval, approval.approved (PlanApproved), for plan.create",
+      approved:
+        "an object: with as: approval, approval.approved (PlanApproved), for plan.create, and approval.plan, the plan approved, for plan.create and plan.becomeEpic",
       changes: "nothing: plan.changesAsked reads what to change",
     },
-    inputs: { round: "required", within: "required" },
-    run: (input: { readonly round: number; readonly within: Days }) =>
+    inputs: { round: "required", plan: "required", within: "required" },
+    run: (input: { readonly round: number; readonly plan: Plan.Plan; readonly within: Days }) =>
       Effect.gen(function* () {
-        const answer = yield* documentAnswer(input.round, input.within);
+        const run = yield* Run;
+        const spec = yield* Implement.issueOf(run.item);
 
-        if (answer === "timeout") {
-          return yield* new NeedsHuman({
-            reason: `nobody answered the plan within ${input.within}`,
-          });
-        }
-
-        return answer;
+        return answered(
+          yield* answerOrPerson(documentAnswer(spec, input.round, input.within), input.within),
+          Option.some(input.plan),
+        );
       }),
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
     outcomes: {
-      approved: (answer: string) =>
-        Option.liftPredicate({ approved: new PlanApproved({}) }, () => answer === "approved"),
-      changes: (answer: string) => Option.liftPredicate({}, () => answer !== "approved"),
+      approved: (done: Answered) =>
+        Option.map(
+          Option.filter(done.plan, () => done.answer === "approved"),
+          (plan) => ({ approved: new PlanApproved({}), plan }),
+        ),
+      changes: (done: Answered) => Option.liftPredicate({}, () => done.answer !== "approved"),
     },
     mustRoute: ["approved", "changes"],
     exhaustive: true,
     waits: true,
     records: [{ item: "issue", phase: PHASES.issue.proposed }],
-    parks: Plan.documentAnswerResumes,
+    // A run that takes the wait up acts on the answer given since, in the
+    // round the record names, reading an approved plan from the spec's record.
+    parks: {
+      site: PHASES.issue.proposed,
+      offers: () => Plan.documentAnswers,
+      takeUp: (item: WorkItem, fixed: { readonly within?: Days }) =>
+        Effect.gen(function* () {
+          const spec = yield* Implement.issueOf(item);
+          const within: Days = fixed.within ?? "14 days";
+          const round = Plan.answerRoundOf(item);
+
+          if (Option.isNone(round)) {
+            return yield* new StepFailed({
+              step: "resume-proposed",
+              message: "the work item takes up no answer to a plan",
+            });
+          }
+
+          const answer = yield* answerOrPerson(
+            Effect.gen(function* () {
+              const now = yield* Plan.answerNow(spec, round.value, within);
+
+              if (Option.isSome(now)) {
+                return now.value;
+              }
+
+              return yield* Plan.awaitAnswer(spec, round.value, within);
+            }),
+            within,
+          );
+
+          if (answer !== "approved") {
+            return answered(answer, Option.none());
+          }
+
+          return answered(answer, Option.some(yield* Plan.posted(spec, round.value)));
+        }),
+      round: Plan.answerRoundOf,
+      polls: false,
+    },
     contributes: {
       wakes: Plan.answers.pipe(reportAs("trigger")),
       wakeEvents: [Events.commentCreated],
@@ -290,7 +347,7 @@ export const planBlocks = {
       "Makes each task of the approved plan an issue and a sub-issue of the spec, links each to the tasks that block it, and only then labels them by kind (auto:eligible for auto, auto:needs-human for human, none for hybrid), so no flow picks one up before its blockers are linked. A task's issue made before a crash is found by its marker, not made twice. It runs only on the run's way out.",
     inputKinds: {
       issue: "IssueNumber: the spec",
-      plan: "the plan as posted, from plan.propose",
+      plan: "the plan approved, from plan.awaitAnswer's approved",
       approved: "PlanApproved: from plan.awaitAnswer",
     },
     outputKinds: { created: "each task's key and issue: for plan.becomeEpic" },
@@ -316,7 +373,7 @@ export const planBlocks = {
       "Labels the spec auto:epic, which the epic flow picks up, takes the plan's labels and auto:in-progress off it, deletes its branch, and says which issue each task became. It runs only on the run's way out.",
     inputKinds: {
       issue: "IssueNumber: the spec",
-      plan: "the plan as posted, from plan.propose",
+      plan: "the plan approved, from plan.awaitAnswer's approved",
       created: "the issues, from plan.create",
     },
     outputKinds: "a summary, for `end`'s summary",

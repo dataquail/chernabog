@@ -182,8 +182,8 @@ for (const [form, loading] of forms) {
             Option.exists(since, (began) => DateTime.isGreaterThanOrEqualTo(began, before)),
           ).toBe(true);
 
-          // The document's record says where it resumes; the recipe's needn't.
-          expect("resume" in recorded.data).toBe(form === "the document");
+          // Neither record says where to resume: its phase does.
+          expect("resume" in recorded.data).toBe(false);
           // Nobody is asked to review while CI runs.
           expect(fake.people.requested).toEqual([]);
         }),

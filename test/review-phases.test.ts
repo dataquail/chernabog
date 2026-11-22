@@ -61,11 +61,14 @@ const asAuthor = (fake: Fake) => {
   fake.people.me = "chernabog-bot";
 };
 
-// The implement run's session marker, and its push.
+// The implement run's session, in the issue's record, and its push.
 const implemented = (fake: Fake) => {
-  fake.comment(
-    'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-  );
+  fake.handedOff({
+    adapter: "claude",
+    sessionId: "implement-session",
+    issue: 3,
+    branch: "auto/issue-3",
+  });
   fake.git.pushes = 1;
 };
 
@@ -148,33 +151,35 @@ describe("the review loop runs on its phases", () => {
     () =>
       Effect.gen(function* () {
         const fake = makeFake(["request-changes", "approve"]);
+        // The implement run that opened it recorded the issue handed off, with its session.
+        implemented(fake);
         asReviewer(fake);
         fake.people.requested = ["data-quail"];
         fake.recordPhase(ITEM, "review-asked");
         expect(yield* keys(fake, review)).toEqual([ITEM]);
 
         yield* runToEnd(reviewing, fake, reviewWork(ITEM));
-        expect(fake.phases()).toEqual({ [ITEM]: "changes-asked" });
+        expect(fake.phases()[ITEM]).toBe("changes-asked");
         expect(yield* keys(fake, review)).toEqual([]);
 
         asAuthor(fake);
-        implemented(fake);
         const [addressKey] = yield* keys(fake, addressReview);
-        expect(addressKey).toBe(`${ITEM}-changes-asked-v2`);
+        expect(addressKey).toBe(`${ITEM}-changes-asked-v3`);
 
         const addressed = yield* runToEnd(addressing, fake, addressWork(addressKey));
         expect(addressed.status).toBe("done");
-        expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
+        // The pull request's record; the issue's handed-off one stays as it was.
+        expect(fake.phases()[ITEM]).toBe("review-asked-again");
         expect(yield* keys(fake, addressReview)).toEqual([]);
 
         asReviewer(fake);
         const [againKey] = yield* keys(fake, reReview);
-        expect(againKey).toBe(`${ITEM}-review-asked-again-v3`);
+        expect(againKey).toBe(`${ITEM}-review-asked-again-v4`);
         expect(yield* keys(fake, review)).toEqual([]);
 
         const approved = yield* runToEnd(reReviewing, fake, reviewWork(againKey));
         expect(summaryOf(approved)).toBe(`#${PULL} approved; a person merges`);
-        expect(fake.phases()).toEqual({ [ITEM]: "approved" });
+        expect(fake.phases()[ITEM]).toBe("approved");
         expect(yield* keys(fake, reReview)).toEqual([]);
       }),
   );
@@ -184,7 +189,7 @@ describe("the review loop runs on its phases", () => {
     () =>
       Effect.gen(function* () {
         const fake = changesAskedOnHead();
-        implemented(fake);
+        fake.git.pushes = 1;
         expect(yield* keys(fake, addressReview)).toEqual([]);
         expect(fake.phases()).toEqual({});
       }),

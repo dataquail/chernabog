@@ -36,10 +36,10 @@ steps:
             with: { within: 14 days }
           - id: adoptedCi
             use: ci.waitPreparing
-            in: { pr: adopted.number, branch: claim.branch, base: claim.base }
+            in: { adopted: adopted, branch: claim.branch, base: claim.base }
           - id: handedOver
             use: issue.handOffAdopted
-            in: { issue: trigger.issue, adopted: adopted, branch: claim.branch }
+            in: { issue: trigger.issue, adopted: adoptedCi.adopted, branch: adoptedCi.branch }
           - end: done
             summary: handedOver
   - id: worktree
@@ -73,10 +73,15 @@ steps:
       pushed: push.pushed
   - id: ci
     use: ci.waitAndFix
-    in: { pr: opened.number, worktree: worktree, branch: claim.branch, base: claim.base }
+    in:
+      pr: opened
+      outcome: agent.outcome
+      worktree: worktree
+      branch: claim.branch
+      base: claim.base
   - id: done
     use: issue.handOff
-    in: { issue: trigger.issue, pr: opened, outcome: agent.outcome }
+    in: { issue: trigger.issue, pr: ci.pr, outcome: ci.outcome }
   - end: done
     summary: done
 `;
@@ -160,10 +165,10 @@ steps:
 export const IMPLEMENT_READY_DOCUMENT = IMPLEMENT_DOCUMENT.replace(
   `  - id: done
     use: issue.handOff
-    in: { issue: trigger.issue, pr: opened, outcome: agent.outcome }`,
+    in: { issue: trigger.issue, pr: ci.pr, outcome: ci.outcome }`,
   `  - id: done
     use: pr.readyForPerson
-    in: { pr: opened.number }
+    in: { pr: ci.pr.number }
     with: { message: "Opened: a person takes it from here." }`,
 );
 
@@ -304,14 +309,16 @@ steps:
       base: trigger.base
       review: asked
       session: author
+      summary: addressed.summary
+      pushed: pushed.pushed
   - id: again
     use: review.askAgain
     in:
       pr: trigger.pr
-      review: asked
+      review: ci.review
       reviewer: trigger.reviewer
-      summary: addressed.summary
-      pushed: pushed.pushed
+      summary: ci.summary
+      pushed: ci.pushed
   - end: done
     summary: again
 `;
@@ -360,9 +367,10 @@ steps:
       branch: trigger.branch
       base: trigger.base
       session: resolved.session
+      pushed: pushed.pushed
   - id: again
     use: conflict.askApproverAgain
-    in: { pr: trigger.pr, base: trigger.base, pushed: pushed.pushed }
+    in: { pr: trigger.pr, base: trigger.base, pushed: ci.pushed }
   - end: done
     summary: again
 `;
@@ -525,7 +533,7 @@ steps:
           in: { issue: trigger.issue, round: round, draft: drafted.draft }
         - id: answer
           use: plan.awaitAnswer
-          in: { round: round }
+          in: { round: round, plan: proposed.plan }
           with: { within: 14 days }
           on:
             approved:
@@ -533,10 +541,10 @@ steps:
               steps:
                 - id: created
                   use: plan.create
-                  in: { issue: trigger.issue, plan: proposed.plan, approved: approval.approved }
+                  in: { issue: trigger.issue, plan: approval.plan, approved: approval.approved }
                 - id: epic
                   use: plan.becomeEpic
-                  in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                  in: { issue: trigger.issue, plan: approval.plan, created: created.created }
                 - id: cleaned
                   use: plan.doneDrafting
                   in: { issue: trigger.issue }
@@ -679,7 +687,7 @@ steps:
             - id: ci
               use: ci.waitAndFix
               in:
-                pr: published.pr.number
+                pr: published.pr
                 worktree: worktree
                 branch: claim.branch
                 base: published.base

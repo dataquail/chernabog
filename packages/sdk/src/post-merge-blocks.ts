@@ -23,7 +23,6 @@ import {
   GitHub,
   type Json,
   NeedsHuman,
-  type PhaseData,
   type PhaseRecord,
   Repo,
   reportAs,
@@ -142,28 +141,6 @@ const parkedSince = (found: PhaseRecord, sha: string) =>
     ),
     (watch) => DateTime.make(watch.since),
   );
-
-// How far a run has watched a merge, by the pull request's record: finished,
-// by watched, or parked, by awaiting-merge-ci, at a document's node (its data
-// says where to resume) or a recipe's.
-type Watch = "finished" | "parked" | "parked-to-resume";
-
-const recordedWatch = (all: ReadonlyMap<string, PhaseRecord>, pr: number) =>
-  Option.flatMap(recordOf(all, pullRequestItem(pr)), (found): Option.Option<Watch> => {
-    if (found.phase === WATCHED) {
-      return Option.some("finished");
-    }
-
-    if (found.phase !== AWAITING) {
-      return Option.none();
-    }
-
-    if (Option.exists(found.data, (data) => "resume" in data)) {
-      return Option.some("parked-to-resume");
-    }
-
-    return Option.some("parked");
-  });
 
 // On a follow-up issue: the merge commit whose red CI it is for.
 const followUpMarker = marker(
@@ -406,7 +383,7 @@ const shortOf = (sha: CommitSha) => sha.slice(0, 7);
 // ciTimeout setting is a person's to look at; both count from when the watch
 // began, across the runs that take it up. A first reading still pending
 // parks, given somewhere to (`parking`, from when the watch began); with
-// nowhere, as at a document's node it can't resume at, it reads CI once a
+// nowhere, as at a document's node a run can't take the watch up at, it reads CI once a
 // minute, durably.
 const awaitMergeCi = <E, R>(
   merge: Merge,
@@ -680,9 +657,140 @@ const fileFollowUp = (merged: Merged, body: string, fixed: Option.Option<IssueNu
     Schema.Finite,
   ).pipe(Effect.map(IssueNumber));
 
+// Watches the merge commit's push CI (awaitMergeCi), parking where a run
+// can take the watch up, with the merge commit and when the watch began.
+const watchMerge = (merge: Merge) =>
+  Effect.gen(function* () {
+    const limits = yield* watchLimits;
+
+    const ci = yield* awaitMergeCi(merge, limits, (since) =>
+      Resume.parking({ sha: merge.sha, since }),
+    );
+
+    return watched(merge, limits, ci);
+  });
+
+// The merge a work item names, as merged.awaitCi takes it.
+const mergeOf = (item: WorkItem) =>
+  Schema.decodeUnknownEffect(MergedItem)(item.data).pipe(
+    Effect.mapError((issue) => new StepFailed({ step: "item", message: issue.message })),
+    Effect.map((merged): Merge => ({
+      pr: PullRequestNumber(merged.pullRequest),
+      sha: CommitSha(merged.mergeSha),
+      base: BaseBranch(merged.baseRef),
+    })),
+  );
+
 // Step names, which more than one block may use: an implement flow's CI is
 // ci-<round>-<poll>, and this watch's ci-<poll>.
 const CI_STEPS = "ci";
+
+// Pull requests this persona wrote that merged into the base branch in the
+// last day, among the 30 closed most lately, each as a work item, with how
+// far a run has watched it by its record: finished (watched), or parked
+// (awaiting-merge-ci), since when; none for one no run has watched.
+const recentMerges = Effect.gen(function* () {
+  const github = yield* GitHub;
+  const repo = yield* Repo;
+  const base = yield* Settings.base;
+  const me = yield* github.login;
+  const now = yield* DateTime.now;
+  const all = yield* records;
+
+  const merges: Array<{
+    readonly item: WorkItem;
+    readonly sha: string;
+    readonly watch: Option.Option<"finished" | { readonly since: DateTime.Utc }>;
+  }> = [];
+
+  const closed = yield* github
+    .request(
+      "GET",
+      `/repos/${repo.slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30`,
+      Option.none(),
+    )
+    .pipe(Effect.flatMap(decodeIn(ClosedPulls, "trigger")));
+
+  for (const pull of closed) {
+    if (
+      !sameLogin(pull.user.login, me) ||
+      pull.base.ref !== base ||
+      Option.isNone(pull.merge_commit_sha) ||
+      !Option.exists(pull.merged_at, (at) => isRecent(at, now))
+    ) {
+      continue;
+    }
+
+    const sha = pull.merge_commit_sha.value;
+    const recorded = recordOf(all, pullRequestItem(pull.number));
+
+    const watch = Option.flatMap(
+      recorded,
+      (found): Option.Option<"finished" | { readonly since: DateTime.Utc }> => {
+        if (found.phase === WATCHED) {
+          return Option.some("finished");
+        }
+
+        return Option.map(parkedSince(found, sha), (since) => ({ since }));
+      },
+    );
+
+    const issue = closedIssue(
+      Option.getOrElse(pull.body, () => ""),
+      pull.head.ref,
+    );
+
+    merges.push({
+      sha,
+      watch,
+      item: {
+        key: `merged-${pull.number}`,
+        title: pull.title,
+        url: pull.html_url,
+        data: {
+          pullRequest: pull.number,
+          url: pull.html_url,
+          title: pull.title,
+          mergeSha: sha,
+          baseRef: pull.base.ref,
+          ...Option.match(issue, {
+            onNone: () => ({}),
+            onSome: (number) => ({ issue: number }),
+          }),
+        },
+      },
+    });
+  }
+
+  return merges;
+});
+
+// The merges whose watch a run parked, as work a run may start, which takes
+// the watch up (merged.awaitCi): held, with why, while push CI on the merge
+// commit is still pending and the watch has time left.
+const parkedWatches = Effect.gen(function* () {
+  const items: Array<WorkItem> = [];
+  const limits = yield* limitsNow;
+
+  for (const merge of yield* recentMerges) {
+    const parked = Option.flatMap(merge.watch, (watch) =>
+      Option.liftPredicate(watch, (found) => found !== "finished"),
+    );
+
+    for (const { since } of Option.toArray(parked)) {
+      const held = yield* watchHeld(merge.sha, since, limits);
+
+      items.push(
+        Option.match(held, {
+          onNone: () => merge.item,
+          onSome: (why): WorkItem => ({ ...merge.item, held: why }),
+        }),
+      );
+    }
+  }
+
+  return items;
+});
 
 export const postMergeBlocks = {
   "merged.markWatched": defineBlock({
@@ -739,16 +847,7 @@ export const postMergeBlocks = {
     waits: true,
     stepNames: ["watch-limits", "watch-since", "watch-ended", "awaiting-merge-ci", CI_STEPS],
     inputs: { pr: "required", sha: "required", base: "required" },
-    run: (input: Merge) =>
-      Effect.gen(function* () {
-        const limits = yield* watchLimits;
-
-        const ci = yield* awaitMergeCi(input, limits, (since) =>
-          Resume.parking({ sha: input.sha, since }),
-        );
-
-        return watched(input, limits, ci);
-      }),
+    run: (input: Merge) => watchMerge(input),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {
       none: (ci: Watched) =>
@@ -762,28 +861,16 @@ export const postMergeBlocks = {
     // Its watched record again is written only over its own park; what puts
     // a merge's watch on record is merged.markWatched.
     records: [{ item: "pull-request", phase: AWAITING }],
-    // A parked watch may start again once push CI on its merge commit
+    // A parked watch is offered again once push CI on its merge commit
     // settled, or none started within noCiGrace, or ciTimeout passed, all
-    // counted from when the watch began; held, with why, until then.
-    parks: (data: PhaseData, item: WorkItem) =>
-      Effect.gen(function* () {
-        const parked = Option.flatMap(Schema.decodeUnknownOption(ParkedWatch)(data), (watch) =>
-          Option.map(DateTime.make(watch.since), (since) => ({ sha: watch.sha, since })),
-        );
-
-        if (Option.isNone(parked)) {
-          return Option.none<WorkItem>();
-        }
-
-        const held = yield* watchHeld(parked.value.sha, parked.value.since, yield* limitsNow);
-
-        return Option.some(
-          Option.match(held, {
-            onNone: () => item,
-            onSome: (why): WorkItem => ({ ...item, held: why }),
-          }),
-        );
-      }).pipe(reportAs("trigger")),
+    // counted from when the watch began; held, with why, until then. The run
+    // that takes it up starts here, reads CI once, and records watched again.
+    parks: {
+      site: AWAITING,
+      offers: () => parkedWatches,
+      takeUp: (item: WorkItem) => Effect.flatMap(mergeOf(item), watchMerge),
+      polls: true,
+    },
     contributes: {
       settings: { ...Settings.Ci.fields, ...Own.fields },
       // Push CI on the default branch settles a parked watch, whose record
@@ -964,67 +1051,9 @@ export const postMergeSources = {
     "pr.mergedRecently",
     "merged",
     () => ({
-      trigger: Effect.gen(function* () {
-        const github = yield* GitHub;
-        const repo = yield* Repo;
-        const base = yield* Settings.base;
-        const me = yield* github.login;
-        const now = yield* DateTime.now;
-        const all = yield* records;
-        const items: Array<WorkItem> = [];
-
-        const closed = yield* github
-          .request(
-            "GET",
-            `/repos/${repo.slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30`,
-            Option.none(),
-          )
-          .pipe(Effect.flatMap(decodeIn(ClosedPulls, "trigger")));
-
-        for (const pull of closed) {
-          if (
-            !sameLogin(pull.user.login, me) ||
-            pull.base.ref !== base ||
-            Option.isNone(pull.merge_commit_sha) ||
-            !Option.exists(pull.merged_at, (at) => isRecent(at, now))
-          ) {
-            continue;
-          }
-
-          // A finished watch isn't watched again, and a parked one is the
-          // document's parked items' (Resume.parked) to offer. One the recipe
-          // parked, which says nowhere to resume, is watched again from the top.
-          const recorded = recordedWatch(all, pull.number);
-
-          if (Option.exists(recorded, (watch) => watch !== "parked")) {
-            continue;
-          }
-
-          const issue = closedIssue(
-            Option.getOrElse(pull.body, () => ""),
-            pull.head.ref,
-          );
-
-          items.push({
-            key: `merged-${pull.number}`,
-            title: pull.title,
-            url: pull.html_url,
-            data: {
-              pullRequest: pull.number,
-              url: pull.html_url,
-              title: pull.title,
-              mergeSha: pull.merge_commit_sha.value,
-              baseRef: pull.base.ref,
-              ...Option.match(issue, {
-                onNone: () => ({}),
-                onSome: (number) => ({ issue: number }),
-              }),
-            },
-          });
-        }
-
-        return items;
-      }).pipe(reportAs("trigger")),
+      trigger: Effect.map(recentMerges, (merges) =>
+        merges.filter((merge) => Option.isNone(merge.watch)).map((merge) => merge.item),
+      ).pipe(reportAs("trigger")),
       contributes: { settings: Settings.Base.fields, ownWork: true },
     }),
     {

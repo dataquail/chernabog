@@ -92,6 +92,15 @@ describe("a claim commit", () => {
       expect(Claims.holderOf("Merge branch main")).toEqual(Option.none());
     }),
   );
+
+  effect("records the base the run claimed the item on, when it names one, and reads it back", () =>
+    Effect.sync(() => {
+      const based = { ...OTHER, base: "auto/issue-9" };
+      expect(Claims.messageOf(based).split("\n")).toContain("Base: auto/issue-9");
+      expect(Claims.holderOf(Claims.messageOf(based))).toEqual(Option.some(based));
+      expect(Claims.messageOf(OTHER)).not.toContain("Base:");
+    }),
+  );
 });
 
 describe("claiming an issue", () => {
@@ -358,9 +367,12 @@ describe("the flows that push to a pull request", () => {
         adapter: "codex",
       }),
     );
-    fake.comment(
-      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-    );
+    fake.handedOff({
+      adapter: "claude",
+      sessionId: "implement-session",
+      issue: 3,
+      branch: "auto/issue-3",
+    });
     fake.git.pushes = 1;
 
     return fake;
