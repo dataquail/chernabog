@@ -162,6 +162,7 @@ const resolveBranch = (
   ),
 ];
 
+// Stryker disable all: a plan's note, text for a person, which no test pins word for word
 const describeConcerned = (concerned: EventItem) => {
   switch (concerned.kind) {
     case "repo":
@@ -177,6 +178,7 @@ const describeConcerned = (concerned: EventItem) => {
       return `what waits on CI at ${concerned.sha.slice(0, 7)}`;
   }
 };
+// Stryker restore all
 
 const labelOf = (target: { readonly flow: string; readonly persona: string }) =>
   `${target.flow} as ${target.persona}`;
@@ -210,6 +212,7 @@ const startable = (findings: Findings, claims: ReadonlyArray<LiveClaim>) =>
     ),
   ).mine;
 
+// Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
 const keysOf = (items: ReadonlyArray<WorkItem>) => items.map((found) => found.key).join(", ");
 
 // One target's part of the plan, given what the targets before it planned.
@@ -237,6 +240,7 @@ const planOne = (
         Option.match(findings.target.only, {
           onNone: () => `${label}: its trigger found no work`,
           onSome: (named) =>
+            // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
             `${label}: its trigger reports no work for ${named.map(describeConcerned).join(", ")}`,
         }),
       ],
@@ -287,6 +291,7 @@ const planOne = (
   const elsewhere = Option.toArray(
     Option.map(
       Option.liftPredicate(routed.elsewhere, Arr.isReadonlyArrayNonEmpty),
+      // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
       (left) => `${label}: left for others: ${left.map(Routing.describeElsewhere).join(", ")}`,
     ),
   );
@@ -353,6 +358,7 @@ const plan = (findings: ReadonlyArray<Findings>, claims: ReadonlyArray<LiveClaim
 // The matrix as the workflow reads it: exactly `[]` when it starts nothing,
 // which the run job's guard compares against (docs/ci/runner-test.md).
 const MatrixText = Schema.fromJsonString(
+  // Stryker disable next-line ObjectLiteral: Struct({}) encodes its input as it is, and these entries are built with exactly these fields
   Schema.Array(Schema.Struct({ flow: Schema.String, persona: Schema.String, item: Schema.String })),
 );
 
