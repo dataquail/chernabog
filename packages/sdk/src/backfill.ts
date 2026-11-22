@@ -102,6 +102,9 @@ export const OBSERVED: ReadonlyArray<Observed> = [
     to: Phases.PHASES.pullRequest.awaitingFixCi,
   },
   { by: WRITER, item: "issue", from: [SHARED_CI], to: Phases.PHASES.issue.awaitingAdoptedCi },
+  // A flow document's park from before #567 again, at its phase, with only
+  // its facts (documentPark).
+  { by: WRITER, item: "issue", from: "same", to: "any" },
   // An item labelled auto:needs-human is with a person, whatever it held.
   ...Phases.ITEM_KINDS.map((item): Observed => ({
     by: WRITER,
@@ -589,15 +592,24 @@ const siteOf = (item: string, data: { readonly [key: string]: Json }) => {
   );
 };
 
+// What a flow document's park recorded before a park was a phase boundary
+// (#567): where its run resumed, beside the facts, and the flow that parked.
+const ParkedBefore = Schema.Struct({ resume: Schema.Struct({ flow: Schema.String }) });
+
+// The record's data without where a document's run resumed (`resume`).
+const factsOf = (data: { readonly [key: string]: Json }) =>
+  Object.fromEntries(Object.entries(data).filter(([key]) => key !== "resume"));
+
 // A record parked on the phase two sites shared (SHARED_CI), as the write
 // that moves it onto its own site's phase, in the same round and with the
 // same data: a pull request's is address-review's wait on its fix
 // (awaiting-fix-ci), and an issue's that keeps the pull request it waits on
 // is implement's on an adopted one (awaiting-adopted-ci). An issue's that
 // keeps none is the wait on the pull request its run opened, whose phase it
-// is already. A document's park (its data's `resume`) resumes at the node it
-// names whatever its phase, so it stays, but for a pull request's, whose
-// site is one either way.
+// is already. A document's park from before #567 (its data's `resume`) on an
+// issue was its run's wait on the pull request it opened, which stays, and
+// documentPark writes it again with only its facts; a pull request's moves
+// without the `resume`, since its site is one either way.
 const movedPark = (item: string, found: PhaseRecord): Option.Option<Finding> =>
   Option.flatMap(Phases.roundOf(SHARED_CI, found.phase), (round) => {
     const data = Option.getOrElse(found.data, () => ({}));
@@ -606,15 +618,56 @@ const movedPark = (item: string, found: PhaseRecord): Option.Option<Finding> =>
       kind: "write",
       item,
       phase: Phases.inRound(site, round),
-      data,
+      data: factsOf(data),
       over: { phase: found.phase, version: found.version },
       why: `parked on ${found.phase}, a phase ${site}'s wait shared`,
     }));
   });
 
-// Every park on SHARED_CI among `all`, each moved onto its site's phase.
+// A flow document's park from before #567, whose data says where its run
+// resumed, again at its phase with only its facts, as a document parks now:
+// a run that takes it up goes by the phase. A merge hold names the flow that
+// holds it, which is the flow a document's pr.land offers it to. None for any
+// other record, or one movedPark moves.
+const documentPark = (item: string, found: PhaseRecord): Option.Option<Finding> => {
+  const data = Option.getOrElse(found.data, () => ({}));
+  const parked = Schema.decodeUnknownOption(ParkedBefore)(data);
+
+  if (Option.isNone(parked) || Option.isSome(movedPark(item, found))) {
+    return Option.none();
+  }
+
+  const held = Option.liftPredicate(
+    { flow: parked.value.resume.flow },
+    () => found.phase === Phases.PHASES.pullRequest.mergeHeld,
+  );
+
+  // An issue's on the phase two sites shared is the wait on the pull request
+  // its run opened, which the recipe's finds by the issue's branch: a pull
+  // request in its data would say adopted.
+  const opened = Option.isSome(Phases.roundOf(SHARED_CI, found.phase));
+
+  const facts = Object.fromEntries(
+    Object.entries(factsOf(data)).filter(([key]) => !opened || key !== "pullRequest"),
+  );
+
+  return Option.some({
+    kind: "write",
+    item,
+    phase: found.phase,
+    data: { ...facts, ...Option.getOrElse(held, () => ({})) },
+    over: { phase: found.phase, version: found.version },
+    why: `parked by a flow document on ${found.phase}, with where its run resumed, which the phase says now`,
+  });
+};
+
+// Every park on SHARED_CI among `all`, each moved onto its site's phase, and
+// every document's park from before #567 with only its facts.
 const movedParks = (all: ReadonlyMap<string, PhaseRecord>) =>
-  [...all].flatMap(([item, found]) => Option.toArray(movedPark(item, found)));
+  [...all].flatMap(([item, found]) => [
+    ...Option.toArray(movedPark(item, found)),
+    ...Option.toArray(documentPark(item, found)),
+  ]);
 
 // The item an issue labelled auto:needs-human is with a person as: its
 // epic's, for an epic, else its issue's.

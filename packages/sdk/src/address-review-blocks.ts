@@ -7,7 +7,6 @@
 import { NeedsHuman, NothingCommitted, reportAs, type WorkItem } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import {
   BaseBranch,
@@ -49,13 +48,42 @@ const committedNothing = <A, E, R>(effect: Effect.Effect<A, E | NothingCommitted
     ),
   );
 
+// What a run that took up the wait on a fix's CI tells the reviewer changed,
+// as the recipe's does: its own author's words went with the run that pushed.
+const RESUMED_SUMMARY =
+  "the commits pushed since that review. Their CI finished after the job that pushed them ended.";
+
+// Waits for CI on the fix pushed for review `round`, fixing red in the
+// author's session, from `firstRound` for a run that took the wait up.
+const waitForFix = (
+  pullRequest: number,
+  worktree: string,
+  target: Implement.CiBranch,
+  round: number,
+  firstRound: Option.Option<number>,
+) =>
+  Effect.gen(function* () {
+    return yield* committedNothing(
+      Implement.waitForCi(
+        pullRequest,
+        worktree,
+        target,
+        yield* Implement.documentCiWait(
+          PHASES.pullRequest.awaitingFixCi,
+          {},
+          { id: `review-${round}` },
+          firstRound,
+        ),
+      ),
+    );
+  });
+
 // The author's reasons for not addressing a review, from author.consider's decline.
 export type Dispute = { readonly reasons: string };
 
 export const addressReviewBlocks = {
   "review.changesAsked": defineBlock({
     name: "review.changesAsked",
-    again: true,
     about:
       "Reads the review that asks for changes on the pull request: its round, from the reviewer's marker, and what the reviewer said, for the author to weigh and answer.",
     inputKinds: {
@@ -88,7 +116,6 @@ export const addressReviewBlocks = {
 
   "author.session": defineBlock({
     name: "author.session",
-    again: true,
     about:
       "Finds the agent session that wrote the pull request's code, from the session marker the run that opened it left on it, to answer the review in. On a layer of an epic's stack it is that task's own session, not the epic run's. A pull request a person worked on with the agent reopens their session in front of them. With no marker, it is a fresh session.",
     inputKinds: { pr: "PullRequestNumber" },
@@ -116,7 +143,6 @@ export const addressReviewBlocks = {
 
   "author.worktree": defineBlock({
     name: "author.worktree",
-    again: true,
     about: "Makes or reuses the worktree on the pull request's branch, and pulls it up to date.",
     inputKinds: { branch: "BranchName: the pull request's, trigger.branch" },
     outputKinds: "WorktreePath",
@@ -190,14 +216,6 @@ export const addressReviewBlocks = {
 
   "author.address": defineBlock({
     name: "author.address",
-    keeps: Schema.toCodecJson(
-      Schema.Struct({
-        outcome: Implement.ImplementOutcome,
-        summary: Schema.String,
-        round: Schema.Finite,
-        committed: Committed,
-      }),
-    ),
     about:
       "Resumes the author's session to make the changes the review asks for, and commit them. It finishes done, or with questions for a person. Its prompt is .chernabog/prompts/address.md, or the SDK's own.",
     inputKinds: {
@@ -305,7 +323,6 @@ export const addressReviewBlocks = {
 
   "author.push": defineBlock({
     name: "author.push",
-    keeps: Schema.toCodecJson(Schema.Struct({ pushed: Pushed })),
     about:
       "Pushes the author's fix to the pull request's branch. A layer of a stack is checked against the layer below, so only its own commits count. Only a fix made in front of a person may touch humanOnlyPaths; on any other it goes to a person.",
     inputKinds: {
@@ -350,7 +367,7 @@ export const addressReviewBlocks = {
   "author.waitForCi": defineBlock({
     name: "author.waitForCi",
     about:
-      "Waits for CI on the pushed fix, resuming the author's session to fix red, up to ciRounds. Its steps carry the review's round.",
+      "Waits for CI on the pushed fix, resuming the author's session to fix red, up to ciRounds. Its steps carry the review's round. CI still pending records awaiting-fix-ci on the pull request, and the run ends at the park; a run that takes it up starts here, reading the review, the author's session and the worktree again, and says the commits pushed since the review changed, rather than what the author said. Its output, the review, what changed and that the fix was pushed, is what the steps after it read.",
     inputKinds: {
       pr: "PullRequestNumber",
       worktree: "WorktreePath: from author.worktree",
@@ -358,8 +375,14 @@ export const addressReviewBlocks = {
       base: "Option<BaseBranch>: the pull request's, trigger.base",
       review: "the review, from review.changesAsked",
       session: "the author's session, from author.session",
+      summary: "what changed, from author.address",
+      pushed: "Pushed: from author.push",
     },
-    outputKinds: "nothing",
+    outputKinds: {
+      review: "the review, for review.askAgain",
+      summary: "what changed, for review.askAgain",
+      pushed: "Pushed: proof for review.askAgain",
+    },
     outcomeKinds: {},
     before: ["review.askAgain"],
     inputs: {
@@ -369,6 +392,8 @@ export const addressReviewBlocks = {
       base: "required",
       review: "required",
       session: "required",
+      summary: "required",
+      pushed: "required",
     },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -377,19 +402,16 @@ export const addressReviewBlocks = {
       readonly base: Option.Option<BaseBranch>;
       readonly review: ChangesAsked;
       readonly session: AuthorSession;
+      readonly summary: string;
+      readonly pushed: Pushed;
     }) =>
-      Effect.gen(function* () {
-        return yield* committedNothing(
-          Implement.waitForCi(
-            input.pr,
-            input.worktree,
-            { ...input.session, branch: input.branch, ...onBase(input.base) },
-            yield* Implement.documentCiWait(PHASES.pullRequest.awaitingFixCi, input.pr, {
-              id: `review-${input.review.round}`,
-            }),
-          ),
-        );
-      }),
+      waitForFix(
+        input.pr,
+        input.worktree,
+        { ...input.session, branch: input.branch, ...onBase(input.base) },
+        input.review.round,
+        Option.none(),
+      ).pipe(Effect.as({ review: input.review, summary: input.summary, pushed: input.pushed })),
     failures: {
       CiTimedOut: "person",
       NeedsHuman: "person",
@@ -400,7 +422,49 @@ export const addressReviewBlocks = {
     outcomes: {},
     mustRoute: [],
     records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingFixCi }],
-    parks: Implement.documentCiResumes,
+    // As the address-review recipe takes it up (Review.fixesAwaitingCi).
+    parks: {
+      site: PHASES.pullRequest.awaitingFixCi,
+      offers: () => Review.fixesAwaitingCi,
+      takeUp: (item: WorkItem) =>
+        Effect.gen(function* () {
+          const address = yield* Review.addressItemOf(item);
+          const resumed = Review.resumingCi(address);
+          const review = yield* Review.changesAsked(address);
+          const round = review.round ?? 1;
+          const author = yield* Review.authorSession(address.pullRequest);
+
+          const session = {
+            sessionId: Option.some(author.sessionId),
+            adapter: Option.some(author.adapter),
+            withPerson: author.withPerson === true,
+          };
+
+          const worktree = yield* Review.prepareAuthorWorktree(address.headRef);
+
+          yield* waitForFix(
+            address.pullRequest,
+            worktree,
+            {
+              ...session,
+              branch: address.headRef,
+              ...Option.match(Option.fromUndefinedOr(address.baseRef), {
+                onNone: () => ({}),
+                onSome: (base) => ({ base }),
+              }),
+            },
+            round,
+            Option.map(resumed, (found) => found.round),
+          );
+
+          return {
+            review: { review, round },
+            summary: RESUMED_SUMMARY,
+            pushed: new Pushed({}),
+          };
+        }),
+      polls: true,
+    },
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
