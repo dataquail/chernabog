@@ -93,16 +93,28 @@ describe("the implement recipe's CI-wait source", () => {
     }),
   );
 
-  effect("an issue a trusted person hands back is taken up again", () =>
+  // A hand-back records handed-back {from}, never the phase the item left
+  // (ADR 21, decision 1; #602): the CI wait it went to the person from isn't
+  // resumed, and the person's auto:eligible queues it as new work.
+  effect("an issue a trusted person hands back is taken up again, from its record", () =>
     Effect.gen(function* () {
       const fake = parkedInCi();
       handedOver(fake, ISSUE_ITEM, ISSUE);
       expect(yield* resumes(fake)).toEqual([]);
 
       unlabelledBy(fake, ISSUE, PERSON);
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
 
-      expect((yield* resumes(fake)).map((found) => found.key)).toEqual([ISSUE_ITEM]);
-      expect(fake.phases()[ISSUE_ITEM]).toBe(Phases.awaitingCi(1));
+      const found = yield* flowTriggered(fake, implement).pipe(Effect.orDie);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe("handed-back");
+      expect(
+        found.map((work) => [
+          work.key,
+          Option.isSome(Implement.resumingCi(work)),
+          Option.fromUndefinedOr(work.held),
+        ]),
+      ).toEqual([[ISSUE_ITEM, false, Option.none()]]);
     }),
   );
 
