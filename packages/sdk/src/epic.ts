@@ -126,6 +126,23 @@ const withPersons = (issues: ReadonlyArray<LinkedIssue>) =>
     return found;
   });
 
+// Each of `issues` whose agent asked questions and waits for the answers, by
+// its record (asked-questions), not auto:needs-clarification, its projection.
+const asking = (issues: ReadonlyArray<LinkedIssue>) =>
+  Effect.gen(function* () {
+    const found = new Set<number>();
+
+    for (const issue of issues) {
+      const record = yield* Phases.current(Phases.issueItem(issue.number));
+
+      if (Option.exists(record, (one) => one.phase === Phases.PHASES.issue.askedQuestions)) {
+        found.add(issue.number);
+      }
+    }
+
+    return found;
+  });
+
 // The tasks an epic run started, whose claim took their queue label off, so
 // they no longer read as auto: a task stacks on one as on an auto task.
 export type TasksOptions = { readonly started?: ReadonlyArray<number> };
@@ -353,13 +370,10 @@ export const describeLayer = (layer: Layer) => {
 };
 
 // What a sub-issue the run doesn't implement waits on: answers to its
-// questions, a person (its record is with-person), or a person with an agent.
-const personReason = (
-  labels: ReadonlyArray<string>,
-  names: Settings.LabelNames,
-  withPerson: boolean,
-) => {
-  if (labels.includes(names.needsClarification)) {
+// questions (its record is asked-questions), a person (with-person), or a
+// person with an agent.
+const personReason = (askedQuestions: boolean, withPerson: boolean) => {
+  if (askedQuestions) {
     return "waits for answers to its questions";
   }
 
@@ -408,7 +422,6 @@ export const fingerprint = (epic: number) =>
 export const progressOf = (epic: number) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
     const run = yield* Run;
     const all = yield* github.subIssues(epic);
     const started: Array<number> = [];
@@ -425,6 +438,7 @@ export const progressOf = (epic: number) =>
     }
 
     const found = yield* tasks(epic, { started });
+    const asked = yield* asking(all.filter((sub) => sub.state === "open"));
 
     const byNumber = new Map(
       [...found.tasks, ...Option.toArray(found.verify)].map((task) => [task.number, task]),
@@ -436,7 +450,7 @@ export const progressOf = (epic: number) =>
     const waiting = (issue: LinkedIssue, head: Pick<Layer, "number" | "title">) =>
       Option.map(Option.fromUndefinedOr(byNumber.get(issue.number)), (task): Layer => {
         if (task.kind !== "auto" && !started.includes(issue.number)) {
-          const reason = personReason(issue.labels, labelNames, task.kind === "human");
+          const reason = personReason(asked.has(issue.number), task.kind === "human");
 
           return { ...head, state: "person", reason };
         }

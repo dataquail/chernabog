@@ -283,6 +283,33 @@ describe("an epic's task kinds", () => {
     }),
   );
 
+  effect("auto:needs-clarification added by hand, with no record, says no questions wait", () =>
+    Effect.gen(function* () {
+      const fake = task([DEFAULT_LABELS.needsClarification]);
+      fake.branchPulls.delete(Claims.branchFor(TASK));
+
+      const progress = yield* progressIn(fake);
+
+      expect(progress.layers.map((layer) => [layer.state, layer.reason])).toEqual([
+        ["person", "for a person with an agent (`chernabog start`)"],
+      ]);
+    }),
+  );
+
+  effect("a task whose agent asked questions waits for answers, by its record", () =>
+    Effect.gen(function* () {
+      const fake = task([]);
+      fake.recordPhase(TASK_ITEM, "asked-questions");
+      fake.branchPulls.delete(Claims.branchFor(TASK));
+
+      const progress = yield* progressIn(fake);
+
+      expect(progress.layers.map((layer) => [layer.state, layer.reason])).toEqual([
+        ["person", "waits for answers to its questions"],
+      ]);
+    }),
+  );
+
   effect("the epic's progress says a person's task needs a person, by its record", () =>
     Effect.gen(function* () {
       const fake = task([]);
