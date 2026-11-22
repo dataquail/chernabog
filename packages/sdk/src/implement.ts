@@ -1979,7 +1979,8 @@ const parkedPull = (number: number, waits: Phases.Rounded, record: PhaseRecord) 
 // One issue whose record says a CI job parked its run on CI, as a work item
 // that resumes the wait, when its pull request is still open and no person
 // has it: the one the record keeps, for an adopted one, or else the one on
-// the issue's branch.
+// the issue's branch. The record, parked on CI, is not with-person, so no
+// person has the issue; auto:needs-human, its projection, isn't read.
 const awaitingCiItem = (
   number: number,
   waits: ResumingCi["phase"],
@@ -1988,17 +1989,13 @@ const awaitingCiItem = (
 ) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labelNames = yield* Settings.labels;
 
     const issue = yield* github.issue(number).pipe(
       Effect.asSome,
       Effect.catchTag("NotFound", () => Effect.succeedNone),
     );
 
-    const open = Option.filter(
-      issue,
-      (found) => found.state !== "closed" && !found.labels.includes(labelNames.needsHuman),
-    );
+    const open = Option.filter(issue, (found) => found.state !== "closed");
 
     if (Option.isNone(open)) {
       return Option.none<WorkItem>();
@@ -2038,10 +2035,11 @@ const awaitingCiItem = (
 // adopted, in any round), as work items that resume that wait: held while the
 // checks are pending, and free to start once they're green or red, when a
 // finished CI run (Events.ciCompleted) or the sweep plans them. One closed,
-// one a person has (auto:needs-human), or one whose pull request is no longer
-// open is left alone. Each is routed by its assignees. awaitingCiOn gives
-// those parked on the waits named, as a document's block that parks on one
-// offers them (Block.parks); awaitingCi, those on either.
+// one a person has (its record is with-person, not awaitingCi), or one whose
+// pull request is no longer open is left alone. Each is routed by its
+// assignees. awaitingCiOn gives those parked on the waits named, as a
+// document's block that parks on one offers them (Block.parks); awaitingCi,
+// those on either.
 export const awaitingCiOn = (...on: ReadonlyArray<ResumingCi["phase"]>) =>
   Effect.gen(function* () {
     const items: Array<WorkItem> = [];

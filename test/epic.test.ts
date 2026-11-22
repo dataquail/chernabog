@@ -6,6 +6,8 @@ import {
   DEFAULT_LABELS,
   Epic,
   type LinkedIssue,
+  Phases,
+  Plan,
   planNodeMarker,
   type PullRequest,
 } from "@chernabog/sdk";
@@ -50,6 +52,15 @@ const made = (fake: Fake, number: number, options: Made = {}) => {
     state: options.state ?? "open",
   });
   fake.setLabels(number, [...LABELS_OF[kind]]);
+
+  // A person's task is recorded with-person when the plan makes it; its
+  // label is that record's projection.
+  if (kind === "human") {
+    fake.recordPhase(Phases.issueItem(number), "with-person", {
+      data: Phases.withPersonData(Plan.PERSONS_TASK, Option.none()),
+    });
+  }
+
   fake.graph.blockedBy.set(number, [...(options.blockedBy ?? [])]);
 
   if (options.inEpic ?? true) {
