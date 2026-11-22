@@ -960,7 +960,7 @@ export const sourceDescriptions = {
   },
   "pr.conflicting": {
     about:
-      "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those labelled auto:needs-human or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
+      "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those a person has (recorded with-person) or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
     with: {},
   },
   "plan.queued": {
@@ -975,17 +975,17 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about:
-      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written. One with no record, which a person opened, is a first review.",
+      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written. One with no record, which a person opened, is a first review, as is one a person handed back from any phase but review-asked-again or changes-asked. One recorded with-person is left with the person.",
     with: {},
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those a person has (recorded with-person) or owned by another run. A person's review asking for changes on the head moves the record there first, and so does one on a pull request a person handed back from changes-asked; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4.",
     with: {},
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked, draft or ready-for-person whose record says it had reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record is a first review's (review.requested).",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those a person has (recorded with-person). A request of one recorded changes-asked or approved, or handed back from review-asked-again or changes-asked, or review-asked, draft or ready-for-person whose record says it had reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record is a first review's (review.requested).",
     with: {},
   },
   "review.waitingElsewhere": {

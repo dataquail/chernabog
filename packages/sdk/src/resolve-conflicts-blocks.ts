@@ -507,8 +507,8 @@ const decodeIn =
 
 export const resolveConflictsSources = {
   // Open pull requests this persona wrote that conflict with their base. A
-  // person has one labelled auto:needs-human, and a run of another flow one it
-  // owns; both are left alone. The key carries the head, so a conflict that
+  // person has one whose record is with-person, and a run of another flow one
+  // it owns; both are left alone. The key carries the head, so a conflict that
   // comes back after a later push is new work.
   "pr.conflicting": defineSource(
     "pr.conflicting",
@@ -517,11 +517,14 @@ export const resolveConflictsSources = {
       trigger: Effect.gen(function* () {
         const github = yield* GitHub;
         const repo = yield* Repo;
-        const labelNames = yield* Settings.labels;
+        const all = yield* Phases.records;
         const items: Array<WorkItem> = [];
 
         for (const pull of yield* Review.authoredByMe) {
-          if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
+          if (
+            Phases.isWithPerson(Phases.recordOf(all, Phases.pullRequestItem(pull.number))) ||
+            (yield* Review.ownedByARun(pull))
+          ) {
             continue;
           }
 

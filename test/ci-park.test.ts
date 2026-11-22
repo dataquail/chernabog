@@ -493,6 +493,8 @@ describe("address-review in a CI job", () => {
       // Only once: changes asked on a head that has moved is not another item to address.
       expect(yield* flowTriggered(fake, addressReview).pipe(Effect.orDie)).toHaveLength(1);
 
+      // With a person by its record (ADR 21, decision 1), the label its projection.
+      fake.recordPhase(`pr-${PULL}`, "with-person");
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
       expect(yield* resumes(fake)).toEqual([]);
     }),

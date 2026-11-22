@@ -866,6 +866,21 @@ export const handToPerson = (item: string, why: string) =>
     }
   });
 
+const HandedBackData = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
+
+// The phase a handed-back record says the item went to the person from; none
+// for any other record, or one that came from no phase. Nothing else of that
+// phase carries over (ADR 21, decision 4): a flow that takes the item up
+// again reads what it needs from GitHub.
+export const handedBackFrom = (found: PhaseRecord): Option.Option<string> =>
+  Option.flatMap(
+    Option.filter(found.data, () => found.phase === PHASES.issue.handedBack),
+    (data) =>
+      Option.flatMap(Schema.decodeUnknownOption(HandedBackData)(data), (said) =>
+        Option.fromNullishOr(said.from),
+      ),
+  );
+
 // Who records that a person handed an item back (handedBack).
 export const HANDED_BACK_BY = "observer:handed-back";
 
