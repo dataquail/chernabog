@@ -263,6 +263,27 @@ export const makeFake = (
   };
 
   const submitted: Array<SubmittedReview> = [];
+
+  // What each login did here, in order, as whoever `people.me` was then: for
+  // a test that plays several personas on one fake in turn. The reviews it
+  // submitted, with how many of their comments are on a line; the comments it
+  // posted, and on what; each push, with the head it left; the reviews it asked for; the
+  // merges it made; the labels it added; and each agent session it ran.
+  const acts = {
+    reviews: new Array<{
+      readonly author: string;
+      readonly state: string;
+      readonly commitSha: string;
+      readonly lineComments: number;
+    }>(),
+    comments: new Array<{ readonly author: string; readonly on: number; readonly body: string }>(),
+    pushes: new Array<{ readonly by: string; readonly head: string }>(),
+    reviewRequests: new Array<{ readonly by: string; readonly reviewers: ReadonlyArray<string> }>(),
+    merges: new Array<{ readonly by: string; readonly pullRequest: number }>(),
+    labelled: new Array<{ readonly by: string; readonly number: number; readonly label: string }>(),
+    sessions: new Array<{ readonly persona: string; readonly sessionId: string }>(),
+  };
+
   // The files each commit's tree holds, by its sha, as far as a test says:
   // a commit it says nothing of holds none.
   const trees = new Map<string, ReadonlyArray<TreeFile>>();
@@ -610,6 +631,8 @@ export const makeFake = (
     )) {
       based.targets.push(opening.base);
       git.opened = opening.head === `auto/issue-${ISSUE}`;
+      // Opened by whoever this run acts as, as GitHub records it.
+      authored.author = people.me;
       authored.draft = opening.draft;
       pullText.body = opening.body;
     }
@@ -784,7 +807,9 @@ export const makeFake = (
     Layer.succeed(Repo, Repo.of({ ...settings, ...overrides })),
     Layer.mock(GitHub)({
       queuedIssuesLabelled: (label) =>
-        Effect.succeed([issue()].filter((queued) => queued.labels.includes(label))),
+        Effect.sync(() =>
+          [issue()].filter((queued) => queued.state === "open" && queued.labels.includes(label)),
+        ),
       issue: (number) =>
         Effect.sync(() =>
           Option.getOrElse(
@@ -935,6 +960,7 @@ export const makeFake = (
           }
 
           git.opened = true;
+          authored.author = people.me;
 
           return pull();
         }),
@@ -945,6 +971,7 @@ export const makeFake = (
       reviews: () => Effect.sync(() => [...submitted]),
       requestReviewers: (_, logins) =>
         Effect.sync(() => {
+          acts.reviewRequests.push({ by: people.me, reviewers: [...logins] });
           people.requested = [
             ...people.requested.filter((login) => !logins.includes(login)),
             ...logins,
@@ -1010,6 +1037,17 @@ export const makeFake = (
                   ),
                 )) {
                   graph.made.set(closes.number, { ...closes, state: "closed" });
+                }
+              }
+
+              acts.merges.push({ by: people.me, pullRequest });
+
+              // The one pull request merges too, and closes the issue it was opened for.
+              if (pullRequest === PULL) {
+                states.pull = "merged";
+
+                if (authored.headRef === `auto/issue-${ISSUE}`) {
+                  states.issue = "closed";
                 }
               }
 
@@ -1158,14 +1196,21 @@ export const makeFake = (
         }),
       comments: () => Effect.sync(() => [...comments]),
       reviewComments: () => Effect.succeed([]),
-      comment: (_, body) =>
+      comment: (on, body) =>
         Effect.sync(() => {
           comment(body);
+          acts.comments.push({ author: people.me, on, body });
         }),
       // As on GitHub, a review drops its author from the requested reviewers.
       review: (_, review) =>
         Effect.sync(() => {
           reviews.push(review.body);
+          acts.reviews.push({
+            author: people.me,
+            state: STATE_OF[review.event ?? "COMMENT"],
+            commitSha: review.commitSha,
+            lineComments: review.comments.length,
+          });
           submitted.push({
             author: people.me,
             state: STATE_OF[review.event ?? "COMMENT"],
@@ -1176,6 +1221,7 @@ export const makeFake = (
       // Each change GitHub lists in the item's events, as this persona's.
       addLabel: (number, label) =>
         Effect.sync(() => {
+          acts.labelled.push({ by: people.me, number, label });
           labels.set(number, [...labelsOf(number).filter((name) => name !== label), label]);
           labelEvent(number, "labeled", label);
         }),
@@ -1245,6 +1291,8 @@ export const makeFake = (
             git.head = `fix${git.pushes}0000000`;
           }
 
+          acts.pushes.push({ by: people.me, head: git.head });
+
           // A push starts CI on the new head, as a test that sets it says.
           for (const started of Option.toArray(merge.afterPush)) {
             merge.ci = started;
@@ -1270,6 +1318,7 @@ export const makeFake = (
           steps.push(yield* CurrentActivity);
           adapters.push(request.adapter);
           requests.push(request);
+          acts.sessions.push({ persona: people.me, sessionId: request.sessionId });
 
           for (const happens of agent.during.splice(0)) {
             happens();
@@ -1337,6 +1386,7 @@ export const makeFake = (
     comment,
     people,
     submitted,
+    acts,
     trees,
     phases,
     records,
