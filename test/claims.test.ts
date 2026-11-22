@@ -92,6 +92,15 @@ describe("a claim commit", () => {
       expect(Claims.holderOf("Merge branch main")).toEqual(Option.none());
     }),
   );
+
+  effect("records the base the run claimed the item on, when it names one, and reads it back", () =>
+    Effect.sync(() => {
+      const based = { ...OTHER, base: "auto/issue-9" };
+      expect(Claims.messageOf(based).split("\n")).toContain("Base: auto/issue-9");
+      expect(Claims.holderOf(Claims.messageOf(based))).toEqual(Option.some(based));
+      expect(Claims.messageOf(OTHER)).not.toContain("Base:");
+    }),
+  );
 });
 
 describe("claiming an issue", () => {
