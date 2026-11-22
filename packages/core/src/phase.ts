@@ -13,10 +13,12 @@ import { printJson } from "./json.ts";
 // such as `review-asked` or `changes-asked`, at most 64 characters. No
 // spaces, newlines, slashes or dots, which a commit trailer, a ref or a URL
 // would each read as something else.
+// Stryker disable StringLiteral: a brand's name types the value; at run time it only names it in a parse error
 export const Phase = Schema.String.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 ).pipe(Schema.brand("Phase"));
+// Stryker restore StringLiteral
 
 export type Phase = typeof Phase.Type;
 
@@ -27,10 +29,12 @@ export const isPhase = Schema.is(Phase);
 // after a crash knows its own write when it reads it back. Letters, digits
 // and `.`, `_`, `:`, `@`, `/`, `+`, `-`, at most 128 characters, starting with
 // a letter or digit: a run id, a login, `observer:review.changesRequested`.
+// Stryker disable StringLiteral: a brand's name types the value; at run time it only names it in a parse error
 export const PhaseWriter = Schema.String.check(
   Schema.isMaxLength(128),
   Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:@/+-]*$/),
 ).pipe(Schema.brand("PhaseWriter"));
+// Stryker restore StringLiteral
 
 export type PhaseWriter = typeof PhaseWriter.Type;
 
@@ -54,6 +58,7 @@ const fitsARecord = (data: { readonly [key: string]: Schema.Json }) => {
 // compares it: an advance is a compare-and-set on the phase alone.
 export const PhaseData = Schema.Record(Schema.String, Schema.Json).pipe(
   Schema.check(Schema.makeFilter(fitsARecord)),
+  // Stryker disable next-line StringLiteral: a brand's name types the value; at run time it only names it in a parse error
   Schema.brand("PhaseData"),
 );
 
