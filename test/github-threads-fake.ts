@@ -5,11 +5,16 @@
 // (docs/run-progress/storage-test.md). Commits hold files, which the
 // adapter writes as blobs and trees through the API, or as createCommitOnBranch's
 // additions, and reads by GraphQL's object(expression) and the blobs API. It
-// answers githubTestLayer's handler.
+// checks what it is sent as GitHub would: the repo a query names, a commit's
+// tree and parents, a blob's encoding and a tree entry's mode and type. It
+// gives refs a page at a time, and a test can let another writer in before an
+// advance or a ref, or answer any request itself. It answers githubTestLayer's
+// handler.
 
 import { createHash } from "node:crypto";
 
 import { type Json } from "@chernabog/core";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -40,9 +45,17 @@ export type ThreadsFakeState = {
   refuse: boolean;
   // Runs once, just before the next advance is compared and set: another writer's move.
   beforeNextAdvance: Option.Option<() => void>;
+  // Runs once, just before the next ref is created: another writer's first phase.
+  beforeNextRef: Option.Option<() => void>;
+  // Answers a request in the fake's place when it gives an answer: a failure,
+  // or a response GitHub wouldn't send. It sees the request's body.
+  respond: (method: string, path: string, body: RequestBody) => Option.Option<Answer>;
   // Every request, as "<method> <path>", and a GraphQL one by what it asks.
   readonly requests: Array<string>;
 };
+
+// An answer to a request: its status and its body.
+export type Answer = { readonly status: number; readonly body: Json };
 
 const Body = Schema.Struct({
   query: Schema.optionalKey(Schema.String),
@@ -53,13 +66,32 @@ const Body = Schema.Struct({
   content: Schema.optionalKey(Schema.String),
   encoding: Schema.optionalKey(Schema.String),
   tree: Schema.optionalKey(Schema.Json),
+  parents: Schema.optionalKey(Schema.Array(Schema.Json)),
 });
 
+export type RequestBody = typeof Body.Type;
+
 // A tree the API makes: each entry a path and the blob it holds.
-const TreeEntries = Schema.Array(Schema.Struct({ path: Schema.String, sha: Schema.String }));
+const TreeEntries = Schema.Array(
+  Schema.Struct({
+    path: Schema.String,
+    mode: Schema.String,
+    type: Schema.String,
+    sha: Schema.String,
+  }),
+);
+
+// The modes a tree entry may have, and the encodings a blob may be sent in.
+const MODES = new Set(["100644", "100755", "040000", "160000", "120000"]);
+const ENCODINGS = new Set(["utf-8", "base64"]);
+
+// How many refs GitHub gives a page, as the adapter asks, and the cursor
+// after one: how many refs it has given.
+const PAGE = 100;
+const decodeCursor = Schema.decodeUnknownOption(Schema.FiniteFromString);
 
 const AdvanceInput = Schema.Struct({
-  branch: Schema.Struct({ branchName: Schema.String }),
+  branch: Schema.Struct({ repositoryNameWithOwner: Schema.String, branchName: Schema.String }),
   expectedHeadOid: Schema.String,
   message: Schema.Struct({ headline: Schema.String, body: Schema.optionalKey(Schema.String) }),
   fileChanges: Schema.optionalKey(
@@ -72,9 +104,21 @@ const AdvanceInput = Schema.Struct({
 });
 
 // GitHub's JSON null, for a field it leaves empty.
-const NULL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.Json))(Option.none());
+export const NULL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.Json))(Option.none());
 
-const answer = (body: Json, status = 200) => Option.some({ status, body });
+const answer = (body: Json, status = 200): Option.Option<Answer> => Option.some({ status, body });
+
+// A GraphQL query of a repo GitHub has no such repo as.
+const noSuchRepo = (owner: Json, name: Json) =>
+  answer({
+    data: { repository: NULL },
+    errors: [
+      {
+        type: "NOT_FOUND",
+        message: `Could not resolve to a Repository with the name '${String(owner)}/${String(name)}'.`,
+      },
+    ],
+  });
 
 export const makeThreadsFake = (slug: string) => {
   const commits = new Map<string, Commit>();
@@ -89,6 +133,8 @@ export const makeThreadsFake = (slug: string) => {
     lostRaceAs: "STALE_DATA",
     refuse: false,
     beforeNextAdvance: Option.none(),
+    beforeNextRef: Option.none(),
+    respond: () => Option.none(),
     requests: [],
   };
 
@@ -149,11 +195,25 @@ export const makeThreadsFake = (slug: string) => {
     return oid;
   };
 
+  const [owner = "", name = ""] = slug.split("/");
+
   const graphql = (query: string, variables: Readonly<Record<string, Json>>) => {
     if (query.includes("createCommitOnBranch")) {
       state.requests.push("graphql createCommitOnBranch");
       const input = Schema.decodeUnknownSync(AdvanceInput)(variables.input);
       const ref = `refs/heads/${input.branch.branchName}`;
+
+      if (input.branch.repositoryNameWithOwner !== slug) {
+        return answer({
+          data: { createCommitOnBranch: NULL },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              message: `Could not resolve to a Repository with the name '${input.branch.repositoryNameWithOwner}'.`,
+            },
+          ],
+        });
+      }
 
       const hook = state.beforeNextAdvance;
       state.beforeNextAdvance = Option.none();
@@ -202,6 +262,13 @@ export const makeThreadsFake = (slug: string) => {
       });
     }
 
+    // Every read names the repo by owner and name.
+    if (variables.owner !== owner || variables.name !== name) {
+      state.requests.push("graphql of another repo");
+
+      return noSuchRepo(variables.owner ?? NULL, variables.name ?? NULL);
+    }
+
     if (query.includes("object(expression")) {
       const expression = String(variables.expression);
       state.requests.push(`graphql object ${expression}`);
@@ -227,16 +294,28 @@ export const makeThreadsFake = (slug: string) => {
       state.requests.push("graphql refs");
       const prefix = String(variables.prefix);
 
-      const nodes = refs
+      // A page's cursor is where the next one starts.
+      const start = Option.getOrElse(decodeCursor(variables.after), () => 0);
+
+      const all = refs
         .entries()
-        .filter(([name]) => name.startsWith(prefix))
-        .map(([name, oid]) => ({ name: name.slice(prefix.length), target: target(oid) }))
+        .filter(([ref]) => ref.startsWith(prefix))
+        .map(([ref, oid]) => ({ name: ref.slice(prefix.length), target: target(oid) }))
         .toArray();
+
+      const nodes = all.slice(start, start + PAGE);
+      const end = start + nodes.length;
 
       return answer({
         data: {
           repository: {
-            refs: { nodes, pageInfo: { hasNextPage: false, endCursor: NULL } },
+            refs: {
+              nodes,
+              pageInfo: {
+                hasNextPage: end < all.length,
+                endCursor: Arr.match(nodes, { onEmpty: () => NULL, onNonEmpty: () => `${end}` }),
+              },
+            },
           },
         },
       });
@@ -264,6 +343,10 @@ export const makeThreadsFake = (slug: string) => {
   // and a tree of blobs by path.
   const objects = (method: string, path: string, body: typeof Body.Type) => {
     if (method === "POST" && path === `${repo}/git/blobs`) {
+      if (!ENCODINGS.has(body.encoding ?? "utf-8")) {
+        return answer({ message: "Invalid encoding" }, 422);
+      }
+
       const sha = blobOf(Buffer.from(body.content ?? "", "base64"));
 
       return answer({ sha }, 201);
@@ -282,6 +365,10 @@ export const makeThreadsFake = (slug: string) => {
     if (method === "POST" && path === `${repo}/git/trees`) {
       const entries = Schema.decodeUnknownSync(TreeEntries)(body.tree);
 
+      if (entries.some((entry) => !MODES.has(entry.mode) || entry.type !== "blob")) {
+        return answer({ message: "Invalid tree info" }, 422);
+      }
+
       const files: Files = new Map(
         entries.map((entry) => [entry.path, blobs.get(entry.sha) ?? new Uint8Array()]),
       );
@@ -296,34 +383,39 @@ export const makeThreadsFake = (slug: string) => {
     return Option.none();
   };
 
-  const handler = (method: string, path: string, raw: Option.Option<Json>) => {
-    const body = Schema.decodeUnknownSync(Body)(Option.getOrElse(raw, () => ({})));
-
-    if (method === "POST" && path === "/graphql") {
-      return graphql(body.query ?? "", body.variables ?? {});
-    }
-
-    state.requests.push(`${method} ${path}`);
-
-    const object = objects(method, path, body);
-
-    if (Option.isSome(object)) {
-      return object;
-    }
-
+  // The commits and refs API: a commit of a tree GitHub has, and a ref to one.
+  const history = (method: string, path: string, body: typeof Body.Type) => {
     if (method === "POST" && path === `${repo}/git/commits`) {
-      const tree = Option.getOrElse(
+      // A commit's tree and parents must be objects GitHub has.
+      const files = Option.flatMap(
         Option.filter(Option.fromUndefinedOr(body.tree), Predicate.isString),
-        () => EMPTY_TREE,
+        (tree) => Option.fromUndefinedOr(trees.get(tree)),
       );
 
-      const sha = commit(body.message ?? "", trees.get(tree) ?? new Map());
+      const parents = body.parents ?? [];
+
+      if (Option.isNone(files)) {
+        return answer({ message: "Tree SHA does not exist" }, 422);
+      }
+
+      if (!parents.every((parent) => Predicate.isString(parent) && commits.has(parent))) {
+        return answer({ message: "Parent SHA does not exist or is not a commit object" }, 422);
+      }
+
+      const sha = commit(body.message ?? "", files.value);
 
       return answer({ sha, committer: { date: target(sha).committedDate } }, 201);
     }
 
     if (method === "POST" && path === `${repo}/git/refs`) {
       const ref = body.ref ?? "";
+
+      const hook = state.beforeNextRef;
+      state.beforeNextRef = Option.none();
+
+      if (Option.isSome(hook)) {
+        hook.value();
+      }
 
       if (state.refuse) {
         return answer(
@@ -345,6 +437,31 @@ export const makeThreadsFake = (slug: string) => {
     }
 
     return Option.none();
+  };
+
+  const handler = (method: string, path: string, raw: Option.Option<Json>) => {
+    const body = Schema.decodeUnknownSync(Body)(Option.getOrElse(raw, () => ({})));
+    const replaced = state.respond(method, path, body);
+
+    if (Option.isSome(replaced)) {
+      state.requests.push(`${method} ${path} (answered by the test)`);
+
+      return replaced;
+    }
+
+    if (method === "POST" && path === "/graphql") {
+      return graphql(body.query ?? "", body.variables ?? {});
+    }
+
+    state.requests.push(`${method} ${path}`);
+
+    const object = objects(method, path, body);
+
+    if (Option.isSome(object)) {
+      return object;
+    }
+
+    return history(method, path, body);
   };
 
   return { handler, state, advanceAs, refs, filesOf, everyFile };

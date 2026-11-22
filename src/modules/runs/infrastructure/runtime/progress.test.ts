@@ -1,9 +1,12 @@
 import {
   isSetupError,
+  type Json,
   Phase,
   PhaseData,
   PhaseMoved,
   PhaseWriter,
+  printJson,
+  type Progress,
   ProgressUnwritable,
   UNREADABLE_PHASE,
   UNREADABLE_WRITER,
@@ -21,7 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
-import { makeThreadsFake } from "../../../../../test/github-threads-fake.ts";
+import { type Answer, makeThreadsFake, NULL } from "../../../../../test/github-threads-fake.ts";
 import { progressContract } from "../../../../../test/progress-contract.ts";
 import { githubTestLayer } from "../../../../platform/github-api.ts";
 import {
@@ -69,6 +72,12 @@ const BYTES_HASH = "06eb7d6a69ee19e5fbdf749018d3d2abfa04bcbd1365db312eb86dc71693
 
 const isPhaseMoved = Schema.is(PhaseMoved);
 const isProgressUnwritable = Schema.is(ProgressUnwritable);
+
+// A record's phase and writer.
+const what = (record: { readonly phase: Phase; readonly by: PhaseWriter }) => [
+  record.phase,
+  record.by,
+];
 
 const movedTo = <A, E>(exit: Exit.Exit<A, E>) =>
   Option.map(Option.filter(Exit.findErrorOption(exit), isPhaseMoved), (error) => error.found);
@@ -176,6 +185,24 @@ describe("a thread's commit message", () => {
     expect(
       Option.map(
         parseRecord("abc123", `${message.headline}\n\n${message.body}\n`, AT),
+        (record) => record.blobs,
+      ),
+    ).toEqual(Option.some([PLAN_HASH, BYTES_HASH]));
+  });
+
+  test("a trailer is the first line of its key that has a value, without the space around it", () => {
+    expect(
+      Option.map(parseRecord("abc", "Phase: \nPhase: review-asked\nBy: data-quail", AT), what),
+    ).toEqual(Option.some([ASKED, RUN_B]));
+    expect(
+      Option.map(parseRecord("abc", "Phase: review-asked \r\nBy: data-quail\r\n", AT), what),
+    ).toEqual(Option.some([ASKED, RUN_B]));
+  });
+
+  test("a Blobs trailer's hashes may be set apart by more than one space", () => {
+    expect(
+      Option.map(
+        parseRecord("abc", `Phase: a\nBy: x\nBlobs:  ${PLAN_HASH}   ${BYTES_HASH} `, AT),
         (record) => record.blobs,
       ),
     ).toEqual(Option.some([PLAN_HASH, BYTES_HASH]));
@@ -475,6 +502,7 @@ describe("the protected-branch adapter on GitHub", () => {
         "Phase: a\nBy: not a writer",
         "Phase: a\nFrom: B C\nBy: x",
         "Phase: a\nBy: x\nData: not json",
+        "Phase: a\nBy: x\nBlobs: not-a-hash",
       ];
 
       messages.forEach((message, index) => fake.advanceAs(`${THREADS}item-${index}`, message));
@@ -492,6 +520,7 @@ describe("the protected-branch adapter on GitHub", () => {
           "its By trailer isn't a writer",
           "its From trailer isn't a phase",
           "its Data trailer isn't a JSON object a record can hold",
+          "its Blobs trailer isn't blob hashes",
         ].map(Option.some),
       );
     }),
@@ -537,4 +566,464 @@ describe("the protected-branch adapter on GitHub", () => {
       expect(movedTo(exit)).toEqual(Option.some(Option.some(phase(UNREADABLE_PHASE))));
     }),
   );
+});
+
+// The error an advance or a read failed with, by its tag: none for a success
+// or a defect.
+const failedWith = <A, E extends { readonly _tag: string }>(exit: Exit.Exit<A, E>) =>
+  Option.map(Exit.findErrorOption(exit), (error) => error._tag);
+
+// Whether an exit is the setup error a refusal is.
+const refused = <A, E>(exit: Exit.Exit<A, E>) => Option.map(defectOf(exit), isSetupError);
+
+// A record's message, as a hand-made commit or another writer's would hold it.
+const messageOf = (item: string, from: Option.Option<Phase>, to: Phase, by: PhaseWriter) => {
+  const message = recordMessage(item, {
+    from: Option.map(from, (at) => ({ phase: at, version: "unread" })),
+    to,
+    by,
+  });
+
+  return `${message.headline}\n\n${message.body}\n`;
+};
+
+// Answers the requests `answers` matches in GitHub's place.
+const answering =
+  (answers: (method: string, path: string, query: string) => Option.Option<Answer>) =>
+  (method: string, path: string, body: { readonly query?: string }) =>
+    answers(method, path, body.query ?? "");
+
+const DATE = "2026-11-17T12:00:00Z";
+
+// `answer`, for a request that `matches`.
+const answerIf = (matches: boolean, answer: Answer) =>
+  Option.filter(Option.some(answer), () => matches);
+
+describe("the protected-branch adapter's requests", () => {
+  effect("a write that lands is the last request its advance sends", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+      expect(fake.state.requests).toEqual([
+        "graphql ref",
+        `POST /repos/${SLUG}/git/commits`,
+        `POST /repos/${SLUG}/git/refs`,
+      ]);
+
+      fake.state.requests.length = 0;
+      yield* progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B });
+
+      expect(fake.state.requests).toEqual(["graphql ref", "graphql createCommitOnBranch"]);
+    }),
+  );
+
+  effect("a retry that finds its own write sends no write", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+      const first = { from: Option.none(), to: ASKED, by: RUN_A };
+      const asked = yield* progress.advance("pr-73", first);
+
+      fake.state.requests.length = 0;
+
+      expect(yield* progress.advance("pr-73", first)).toEqual(asked);
+      expect(fake.state.requests).toEqual(["graphql ref"]);
+
+      const later = { from: Option.some(asked), to: CHANGES, by: RUN_B };
+      const changes = yield* progress.advance("pr-73", later);
+
+      fake.state.requests.length = 0;
+
+      expect(yield* progress.advance("pr-73", later)).toEqual(changes);
+      expect(fake.state.requests).toEqual(["graphql ref"]);
+    }),
+  );
+
+  // The two writers interleave: one has made its root commit when the other
+  // creates the branch, so the first's ref is the one GitHub turns away.
+  effect("a first phase whose ref another writer created first is a lost race", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      fake.state.beforeNextRef = Option.some(() => {
+        fake.advanceAs(`${THREADS}pr-73`, messageOf("pr-73", Option.none(), CHANGES, RUN_B));
+      });
+
+      const exit = yield* Effect.exit(
+        progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A }),
+      );
+
+      expect(movedTo(exit)).toEqual(Option.some(Option.some(CHANGES)));
+      expect(Option.map(yield* progress.read("pr-73"), what)).toEqual(
+        Option.some([CHANGES, RUN_B]),
+      );
+    }),
+  );
+
+  effect("a first phase whose ref its own earlier attempt created is that attempt's record", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+      const landed: Array<string> = [];
+
+      fake.state.beforeNextRef = Option.some(() => {
+        landed.push(
+          fake.advanceAs(`${THREADS}pr-73`, messageOf("pr-73", Option.none(), ASKED, RUN_A)),
+        );
+      });
+
+      const record = yield* progress.advance("pr-73", {
+        from: Option.none(),
+        to: ASKED,
+        by: RUN_A,
+      });
+
+      expect([record.version]).toEqual(landed);
+    }),
+  );
+
+  effect("readAll reads every page of threads, each once, and skips a branch below an item's", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const items = Arr.makeBy(150, (index) => `pr-${index}`);
+
+      for (const item of items) {
+        fake.advanceAs(`${THREADS}${item}`, messageOf(item, Option.none(), ASKED, RUN_A));
+      }
+
+      fake.advanceAs(`${THREADS}pr-3/old`, messageOf("pr-3", Option.none(), CHANGES, RUN_B));
+      const progress = yield* adapterOver(fake);
+
+      const all = yield* progress.readAll;
+
+      expect(Arr.sort([...all.keys()], Order.String)).toEqual(Arr.sort(items, Order.String));
+      expect(fake.state.requests.filter((request) => request === "graphql refs").length).toBe(2);
+    }),
+  );
+});
+
+describe("the protected-branch adapter's errors", () => {
+  for (const [object, path] of [
+    ["a blob", `/repos/${SLUG}/git/blobs`],
+    ["a tree", `/repos/${SLUG}/git/trees`],
+    ["a commit", `/repos/${SLUG}/git/commits`],
+  ] as const) {
+    for (const status of [403, 404]) {
+      effect(`HTTP ${status} creating ${object} is a setup error`, () =>
+        Effect.gen(function* () {
+          const fake = makeThreadsFake(SLUG);
+          const progress = yield* adapterOver(fake);
+
+          fake.state.respond = answering((method, at) =>
+            answerIf(method === "POST" && at === path, {
+              status,
+              body: { message: "Resource not accessible by integration" },
+            }),
+          );
+
+          const exit = yield* Effect.exit(
+            progress.advance("pr-73", {
+              from: Option.none(),
+              to: ASKED,
+              by: RUN_A,
+              blobs: ["the plan"],
+            }),
+          );
+
+          expect(refused(exit)).toEqual(Option.some(true));
+        }),
+      );
+    }
+  }
+
+  const creatingRef = (status: number, body: Json) =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      fake.state.respond = answering((method, path) =>
+        answerIf(method === "POST" && path === `/repos/${SLUG}/git/refs`, { status, body }),
+      );
+
+      return yield* Effect.exit(
+        progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A }),
+      );
+    });
+
+  effect("HTTP 403 creating a thread's ref is a setup error", () =>
+    Effect.map(creatingRef(403, { message: "Resource not accessible by integration" }), (exit) => {
+      expect(refused(exit)).toEqual(Option.some(true));
+    }),
+  );
+
+  // Only GitHub's refusal is a setup error: a 422 for another reason, or a
+  // server's error, whatever it says, is a write that failed.
+  for (const [status, body] of [
+    [422, { message: "Object does not exist" }],
+    [500, { message: "Server error while evaluating repository rules" }],
+    [502, NULL],
+    [422, { message: 422 }],
+  ] as const) {
+    effect(
+      `HTTP ${status} creating a thread's ref, saying ${printJson(body)}, is a ProgressError`,
+      () =>
+        Effect.map(creatingRef(status, body), (exit) => {
+          expect(failedWith(exit)).toEqual(Option.some("ProgressError"));
+        }),
+    );
+  }
+
+  const advancingAnswered = (body: Json) =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+      fake.state.respond = answering((_, path, query) =>
+        answerIf(path === "/graphql" && query.includes("createCommitOnBranch"), {
+          status: 200,
+          body,
+        }),
+      );
+
+      return yield* Effect.exit(
+        progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B }),
+      );
+    });
+
+  // On a branch that hasn't moved, only FORBIDDEN is a ruleset's refusal.
+  for (const errors of [
+    [{ type: "INTERNAL", message: "Something went wrong while executing your query." }],
+    [{ message: "Something went wrong while executing your query." }],
+    [],
+  ]) {
+    effect(
+      `an advance answered with ${printJson(errors)} on an unmoved branch is a ProgressError`,
+      () =>
+        Effect.map(advancingAnswered({ data: { createCommitOnBranch: NULL }, errors }), (exit) => {
+          expect(failedWith(exit)).toEqual(Option.some("ProgressError"));
+        }),
+    );
+  }
+
+  effect("a GitHub call that fails is a ProgressError", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      fake.state.respond = answering((method, path) =>
+        answerIf(method === "POST" && path === "/graphql", {
+          status: 502,
+          body: { message: "Bad Gateway" },
+        }),
+      );
+
+      expect(failedWith(yield* Effect.exit(progress.read("pr-73")))).toEqual(
+        Option.some("ProgressError"),
+      );
+      expect(failedWith(yield* Effect.exit(progress.readAll))).toEqual(
+        Option.some("ProgressError"),
+      );
+    }),
+  );
+
+  effect("a branch whose tip GitHub gives no date is a ProgressError", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      fake.state.respond = answering((_, path, query) =>
+        answerIf(path === "/graphql" && query.includes("ref(qualifiedName"), {
+          status: 200,
+          body: {
+            data: {
+              repository: {
+                ref: {
+                  target: {
+                    oid: "1".repeat(40),
+                    message: messageOf("pr-73", Option.none(), ASKED, RUN_A),
+                  },
+                },
+              },
+            },
+          },
+        }),
+      );
+
+      expect(failedWith(yield* Effect.exit(progress.read("pr-73")))).toEqual(
+        Option.some("ProgressError"),
+      );
+    }),
+  );
+
+  effect("a record that names a blob its commit doesn't hold is a ProgressError", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+
+      fake.advanceAs(
+        `${THREADS}pr-73`,
+        `chernabog: pr-73 review-asked\n\nPhase: review-asked\nBy: x\nBlobs: ${PLAN_HASH}\n`,
+      );
+
+      const progress = yield* adapterOver(fake);
+
+      expect(failedWith(yield* Effect.exit(progress.blob("pr-73", PLAN_HASH)))).toEqual(
+        Option.some("ProgressError"),
+      );
+    }),
+  );
+});
+
+// A response GitHub wouldn't send, to each request the adapter reads, is a
+// ProgressError: never a defect, and never a record made of what is missing.
+describe("the protected-branch adapter on a malformed response", () => {
+  const TIP = { oid: "1".repeat(40), message: "Phase: review-asked\nBy: x", committedDate: DATE };
+
+  const graphqlAnswer = (asking: string, body: Json) => (_: string, path: string, query: string) =>
+    answerIf(path === "/graphql" && query.includes(asking), { status: 200, body });
+
+  const restAnswer =
+    (route: string, status: number, body: Json) => (method: string, path: string) =>
+      answerIf(`${method} ${path}`.startsWith(route), { status, body });
+
+  const reading = (progress: Progress["Service"]) => progress.read("pr-73");
+  const readingAll = (progress: Progress["Service"]) => progress.readAll;
+
+  const firstPhase = (progress: Progress["Service"]) =>
+    progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A, blobs: ["the plan"] });
+
+  const laterPhase = (progress: Progress["Service"]) =>
+    Effect.flatMap(firstPhase(progress), (asked) =>
+      progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B }),
+    );
+
+  const readingBlob = (progress: Progress["Service"]) =>
+    Effect.flatMap(firstPhase(progress), () => progress.blob("pr-73", PLAN_HASH));
+
+  const pageOf = (nodes: Json) => ({
+    data: {
+      repository: { refs: { nodes, pageInfo: { hasNextPage: false, endCursor: NULL } } },
+    },
+  });
+
+  const cases: ReadonlyArray<
+    readonly [
+      string,
+      (method: string, path: string, query: string) => Option.Option<Answer>,
+      (progress: Progress["Service"]) => Effect.Effect<unknown, { readonly _tag: string }>,
+    ]
+  > = [
+    [
+      "a branch's tip without an oid",
+      graphqlAnswer("ref(qualifiedName", {
+        data: { repository: { ref: { target: { message: TIP.message, committedDate: DATE } } } },
+      }),
+      reading,
+    ],
+    [
+      "a ref without its target",
+      graphqlAnswer("ref(qualifiedName", { data: { repository: { ref: {} } } }),
+      reading,
+    ],
+    ["refs without a repository", graphqlAnswer("refs(refPrefix", { data: {} }), readingAll],
+    [
+      "a repository without its refs",
+      graphqlAnswer("refs(refPrefix", { data: { repository: {} } }),
+      readingAll,
+    ],
+    [
+      "refs without their nodes",
+      graphqlAnswer("refs(refPrefix", {
+        data: { repository: { refs: { pageInfo: { hasNextPage: false, endCursor: NULL } } } },
+      }),
+      readingAll,
+    ],
+    [
+      "a ref without its name",
+      graphqlAnswer("refs(refPrefix", pageOf([{ target: TIP }])),
+      readingAll,
+    ],
+    [
+      "a page without hasNextPage",
+      graphqlAnswer("refs(refPrefix", {
+        data: { repository: { refs: { nodes: [], pageInfo: { endCursor: NULL } } } },
+      }),
+      readingAll,
+    ],
+    [
+      "an advance's commit without an oid",
+      graphqlAnswer("createCommitOnBranch", {
+        data: { createCommitOnBranch: { commit: { committedDate: DATE } } },
+      }),
+      laterPhase,
+    ],
+    [
+      "an advance's error without a message",
+      graphqlAnswer("createCommitOnBranch", {
+        data: { createCommitOnBranch: NULL },
+        errors: [{ type: "FORBIDDEN" }],
+      }),
+      laterPhase,
+    ],
+    [
+      "a made blob without its sha",
+      restAnswer(`POST /repos/${SLUG}/git/blobs`, 201, { url: "somewhere" }),
+      firstPhase,
+    ],
+    [
+      "a made commit without its sha",
+      restAnswer(`POST /repos/${SLUG}/git/commits`, 201, { committer: { date: DATE } }),
+      firstPhase,
+    ],
+    [
+      "a made commit whose date isn't a string",
+      restAnswer(`POST /repos/${SLUG}/git/commits`, 201, {
+        sha: "2".repeat(40),
+        committer: { date: 1_700_000_000_000 },
+      }),
+      firstPhase,
+    ],
+    [
+      "a blob's object without its oid",
+      // And the blobs API answers, whichever blob is asked for.
+      (method, path, query) =>
+        Option.orElse(
+          graphqlAnswer("object(expression", { data: { repository: { object: {} } } })(
+            method,
+            path,
+            query,
+          ),
+          () =>
+            restAnswer(`GET /repos/${SLUG}/git/blobs/`, 200, { content: "", encoding: "base64" })(
+              method,
+              path,
+            ),
+        ),
+      readingBlob,
+    ],
+    [
+      "a blob without its content",
+      restAnswer(`GET /repos/${SLUG}/git/blobs/`, 200, { encoding: "base64" }),
+      readingBlob,
+    ],
+  ];
+
+  for (const [said, answers, doing] of cases) {
+    effect(`${said} is a ProgressError`, () =>
+      Effect.gen(function* () {
+        const fake = makeThreadsFake(SLUG);
+        const progress = yield* adapterOver(fake);
+
+        fake.state.respond = answering(answers);
+
+        expect(failedWith(yield* Effect.exit(doing(progress)))).toEqual(
+          Option.some("ProgressError"),
+        );
+      }),
+    );
+  }
 });

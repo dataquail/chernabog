@@ -366,6 +366,7 @@ const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Da
   return Option.match(kept, {
     onNone: () => data,
     onSome: (review) =>
+      // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
       Option.some<Data>({ ...Option.getOrElse(data, (): Data => ({})), [REVIEW]: review }),
   });
 };
@@ -470,12 +471,14 @@ export type Anomaly = {
 // (ledger-check.ts, checking): why a record is an anomaly, if it is, and the
 // anomalies its reads found, by item. None outside one, as in a run, which
 // reads its own item's record as it is.
+// Stryker disable StringLiteral: a reference's key only has to be unique, and no other uses "" (survives a 120 s timeoutMS)
 export const Checking = Context.Reference<
   Option.Option<{
     readonly check: (item: string, record: PhaseRecord) => Option.Option<Anomaly>;
     readonly noted: Map<string, Anomaly>;
   }>
 >("@chernabog/sdk/Phases/Checking", { defaultValue: () => Option.none() });
+// Stryker restore StringLiteral
 
 // `found`, the record of `item`, unless the check finds it an anomaly: then
 // none, as if the item had no record, and the anomaly noted for the trigger
@@ -669,6 +672,7 @@ export const reconcile = (
         to: asPhase(to),
         by: asWriter(by),
         ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
+          // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
           onNone: () => ({}),
           onSome: (carried) => ({ data: asData(carried) }),
         }),
@@ -759,6 +763,7 @@ export const itemOfWork = (subject: string, work: WorkItem): Option.Option<strin
 // The item a document's run records a team's own phase on (progress.advance):
 // its work item's, as its subject sees it, which Blocks.assemble provides.
 // None outside a document's run.
+// Stryker disable next-line StringLiteral: a reference's key only has to be unique, and no other uses "" (survives a 120 s timeoutMS)
 export const RecordedOn = Context.Reference<Option.Option<string>>("@chernabog/sdk/RecordedOn", {
   defaultValue: () => Option.none(),
 });
@@ -866,6 +871,21 @@ export const handToPerson = (item: string, why: string) =>
     }
   });
 
+const HandedBackData = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
+
+// The phase a handed-back record says the item went to the person from; none
+// for any other record, or one that came from no phase. Nothing else of that
+// phase carries over (ADR 21, decision 4): a flow that takes the item up
+// again reads what it needs from GitHub.
+export const handedBackFrom = (found: PhaseRecord): Option.Option<string> =>
+  Option.flatMap(
+    Option.filter(found.data, () => found.phase === PHASES.issue.handedBack),
+    (data) =>
+      Option.flatMap(Schema.decodeUnknownOption(HandedBackData)(data), (said) =>
+        Option.fromNullishOr(said.from),
+      ),
+  );
+
 // Who records that a person handed an item back (handedBack).
 export const HANDED_BACK_BY = "observer:handed-back";
 
@@ -874,13 +894,17 @@ export const HANDED_BACK_BY = "observer:handed-back";
 const TRUSTED_PERMISSIONS = ["admin", "maintain", "write"];
 
 const LabelEvents = Schema.Array(
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({
     event: Schema.String,
+    // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
     label: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
+    // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
     actor: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   }),
 );
 
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 const Permission = Schema.Struct({ permission: Schema.String });
 
 // GitHub lists an item's events oldest first, a page at a time.
@@ -908,10 +932,12 @@ const removedBy = (number: number, label: string) =>
             Option.none(),
           ),
         ),
+        // Stryker disable next-line ArrowFunction,ArrayDeclaration: only a malformed page of events fails to decode
         () => [],
       );
 
       for (const found of listed) {
+        // Stryker disable next-line OptionalChaining: GitHub's unlabeled events always carry their label
         if (found.event === "unlabeled" && found.label?.name === label) {
           last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
         }
@@ -1002,6 +1028,7 @@ export const handedBack = Effect.gen(function* () {
     }).pipe(
       Effect.catchTag("GitHubError", (failed) =>
         Effect.logWarning(
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           `${item}: can't tell whether a person handed it back: ${failed.message}`,
         ).pipe(Effect.as(false)),
       ),
@@ -1015,6 +1042,7 @@ export const handedBack = Effect.gen(function* () {
   return found;
 });
 
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 const WithPersonLeft = Schema.Struct({
   from: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });

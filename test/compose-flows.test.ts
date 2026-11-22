@@ -606,9 +606,9 @@ describe("a document's sources find what its recipe's trigger does", () => {
   );
 
   // Asked again after its review, one item per request, unless a person has it.
-  for (const [title, labels, items] of [
-    ["re-review, on a pull request that asks again", [], 1],
-    ["re-review, on one a person has", [DEFAULT_LABELS.needsHuman], 0],
+  for (const [title, withPerson, items] of [
+    ["re-review, on a pull request that asks again", false, 1],
+    ["re-review, on one a person has", true, 0],
   ] as const) {
     effect(title, () =>
       Effect.gen(function* () {
@@ -621,7 +621,12 @@ describe("a document's sources find what its recipe's trigger does", () => {
           });
           // As review.round recorded it: the request to review again moves it on.
           fake.recordPhase(`pr-${PULL}`, "changes-asked");
-          fake.setLabels(PULL, [...labels]);
+
+          // With a person by its record (ADR 21, decision 1), the label its projection.
+          if (withPerson) {
+            fake.recordPhase(`pr-${PULL}`, "with-person");
+            fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+          }
 
           return fake;
         };
@@ -640,6 +645,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
     [
       "address-review, on one a person has",
       (fake: Fake) => {
+        fake.recordPhase(`pr-${PULL}`, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
       },
       0,
@@ -795,6 +801,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
     [
       "resolve-conflicts, on one a person has",
       (fake: Fake) => {
+        fake.recordPhase(`pr-${PULL}`, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
       },
       0,

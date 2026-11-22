@@ -1,11 +1,13 @@
-// The transition catalogue, park and reconcile. Park's only tests are the
-// engine runs below that wait in real time, so mutants get a long timeout
-// until park has a fast test of its own.
+// The transition catalogue, park and reconcile. Only fast tests: park's own
+// are phases.test.ts's, in Effect's in-memory workflow engine, so the engine
+// runs that wait in real time stay out, and mutants keep the default timeout.
 import { mutationConfig } from "./base.mjs";
 
 export default mutationConfig("phases", {
   mutate: ["packages/sdk/src/phases.ts"],
   testFiles: [
+    "test/phases.test.ts",
+    "test/park-sites.test.ts",
     "test/ledger.test.ts",
     "test/phases-record.test.ts",
     "test/review-phases.test.ts",
@@ -16,14 +18,6 @@ export default mutationConfig("phases", {
     "test/reservations.test.ts",
     "test/recipes.test.ts",
     "test/reviewer-pool.test.ts",
-    // Park.
-    "test/ci-park.test.ts",
-    "test/document-park-ci.test.ts",
-    "test/document-park-wait.test.ts",
-    "test/adopted-ci.test.ts",
-    "test/resolve-conflicts-ci.test.ts",
-    "test/plan-ci.test.ts",
-    "test/adopt.test.ts",
+    "test/with-person.test.ts",
   ],
-  timeoutMS: 120000,
 });

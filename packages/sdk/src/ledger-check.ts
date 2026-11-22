@@ -133,6 +133,7 @@ const observedTransition = (
   });
 
   return Option.some(
+    // Stryker disable next-line ArrowFunction: text for a person, which no test pins word for word
     `${record.by} records only ${listed(transitions)}, not ${Option.getOrElse(record.from, () => NO_RECORD)} -> ${record.phase}`,
   );
 };
@@ -141,7 +142,11 @@ const observedTransition = (
 export const anomalyOf = (item: string, record: PhaseRecord, why: string): Anomaly => ({
   item,
   phase: record.phase,
-  ...Option.match(record.from, { onNone: () => ({}), onSome: (from) => ({ from }) }),
+  ...Option.match(record.from, {
+    // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
+    onNone: () => ({}),
+    onSome: (from) => ({ from }),
+  }),
   by: record.by,
   version: record.version,
   why,
@@ -186,6 +191,7 @@ export const check =
 // The record an anomaly names, as a person reads it: its version, its
 // transition and its writer.
 export const recordNamed = (anomaly: Anomaly) =>
+  // Stryker disable next-line MethodExpression: text for a person, which no test pins word for word
   `record ${anomaly.version.slice(0, 7)} (${anomaly.from ?? NO_RECORD} -> ${anomaly.phase}, by ${anomaly.by})`;
 
 // Whether an anomaly's record is one its adapter couldn't read, which holds
@@ -195,6 +201,7 @@ export const isUnreadable = (anomaly: Anomaly) => anomaly.by === UNREADABLE_WRIT
 // Why a source holds an item: the record it won't act on, and what a person can do.
 export const heldFor = (anomaly: Anomaly) => {
   if (isUnreadable(anomaly)) {
+    // Stryker disable next-line MethodExpression: text for a person, which no test pins word for word
     return `${anomaly.item}'s record ${anomaly.version.slice(0, 7)} is an anomaly: ${anomaly.why}. Record its phase again as a persona: acknowledging it can't, since it holds no phase`;
   }
 

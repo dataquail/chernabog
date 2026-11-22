@@ -95,53 +95,50 @@ const decodedAs =
       }),
     );
 
-export const progressAnomalies = (options: AnomaliesOptions) =>
-  Effect.gen(function* () {
-    const { repo } = yield* openRepo(options.machine, options.enrolled, options.fromCheckout);
-    const ledger = yield* loadRepoLedger(repo.settings.configDir);
+// What the check found, and with `acknowledge`, what acknowledging did.
+export type Surveyed = Pick<AnomaliesResult, "anomalies" | "acknowledged" | "moved">;
 
+// The repo's SDK's Ledger, as `surveyAnomalies` uses it, needing `R` of the
+// persona it runs as.
+export type LedgerOf<R> = {
+  readonly survey: Effect.Effect<ReadonlyArray<unknown>, { readonly message: string }, R>;
+  readonly acknowledge: (
+    anomalies: ReadonlyArray<unknown>,
+  ) => Effect.Effect<ReadonlyArray<unknown>, { readonly message: string }, R>;
+};
+
+// The records the repo's ledger lists, and those of `acknowledge` it records
+// again or leaves for having moved. None: an SDK from before the ledger.
+export const surveyAnomalies = <R>(
+  repo: string,
+  ledger: Option.Option<LedgerOf<R>>,
+  acknowledge: ReadonlyArray<Seen>,
+) =>
+  Effect.gen(function* () {
     if (Option.isNone(ledger)) {
       return yield* new ConfigError({
-        message: `${repo.settings.name}'s @chernabog/sdk is from before sources checked the records they read; chernabog recipes upgrade moves it on`,
+        message: `${repo}'s @chernabog/sdk is from before sources checked the records they read; chernabog recipes upgrade moves it on`,
       });
     }
 
-    const servicesFor = servicesFrom(yield* buildPersonaContexts(repo, options.machine));
-
-    const context = yield* yield* Effect.fromOption(servicesFor(defaultPersona(repo))).pipe(
-      Effect.orDie,
-    );
-
     const anomalies = yield* ledger.value.survey.pipe(
-      Effect.provideContext(context),
       decodedAs(Schema.Array(Anomaly), "anomalies"),
     );
 
-    const result: AnomaliesResult = {
-      repo: repo.settings.name,
-      personas: repo.settings.personas,
-      anomalies,
-      acknowledged: [],
-      moved: [],
-    };
+    const surveyed: Surveyed = { anomalies, acknowledged: [], moved: [] };
 
-    if (options.acknowledge.length === 0) {
-      return result;
+    if (acknowledge.length === 0) {
+      return surveyed;
     }
 
     // Only a record still listed at the version the person saw; the advance
     // compares and sets on that version, so one that changes before the
     // write is left too.
-    const still = anomalies.filter((anomaly) =>
-      options.acknowledge.some((seen) => isSeen(seen)(anomaly)),
-    );
+    const still = anomalies.filter((anomaly) => acknowledge.some((seen) => isSeen(seen)(anomaly)));
 
     const outcomes = yield* ledger.value
       .acknowledge(still)
-      .pipe(
-        Effect.provideContext(context),
-        decodedAs(Schema.Array(Acknowledged), "what it acknowledged"),
-      );
+      .pipe(decodedAs(Schema.Array(Acknowledged), "what it acknowledged"));
 
     const landed = (seen: Seen) =>
       outcomes.some(
@@ -151,8 +148,29 @@ export const progressAnomalies = (options: AnomaliesOptions) =>
       );
 
     return {
-      ...result,
-      acknowledged: options.acknowledge.filter(landed),
-      moved: options.acknowledge.filter((seen) => !landed(seen)),
-    };
+      ...surveyed,
+      acknowledged: acknowledge.filter(landed),
+      moved: acknowledge.filter((seen) => !landed(seen)),
+    } satisfies Surveyed;
+  });
+
+export const progressAnomalies = (options: AnomaliesOptions) =>
+  Effect.gen(function* () {
+    const { repo } = yield* openRepo(options.machine, options.enrolled, options.fromCheckout);
+    const ledger = yield* loadRepoLedger(repo.settings.configDir);
+    const servicesFor = servicesFrom(yield* buildPersonaContexts(repo, options.machine));
+
+    const context = yield* yield* Effect.fromOption(servicesFor(defaultPersona(repo))).pipe(
+      Effect.orDie,
+    );
+
+    const surveyed = yield* surveyAnomalies(repo.settings.name, ledger, options.acknowledge).pipe(
+      Effect.provideContext(context),
+    );
+
+    return {
+      repo: repo.settings.name,
+      personas: repo.settings.personas,
+      ...surveyed,
+    } satisfies AnomaliesResult;
   });
