@@ -812,7 +812,7 @@ export const documentMergeResumes = (
 
     if (
       Option.isNone(pull) ||
-      (yield* Phases.withPersonNow(Phases.pullRequestItem(pull.value.number)))
+      (yield* Phases.withPerson(Phases.pullRequestItem(pull.value.number)))
     ) {
       return Option.none<WorkItem>();
     }

@@ -253,7 +253,7 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
     if (
       Option.isNone(pull) ||
       pull.value.state !== "open" ||
-      (yield* Phases.withPersonNow(Phases.pullRequestItem(pull.value.number)))
+      (yield* Phases.withPerson(Phases.pullRequestItem(pull.value.number)))
     ) {
       return Option.none<WorkItem>();
     }
