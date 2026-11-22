@@ -91,10 +91,16 @@ describe("a pull request that changes a behavior spec", () => {
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
 
     // Handed to a person, saying which spec, and not reviewed.
-    await waitFor(() => pull.labels.includes(NEEDS_HUMAN), "the hand-off to a person", 45_000);
-    expect(
-      sandbox.github.commentsOn(number).some((comment) => comment.body.includes(`\`${FEATURE}\``)),
-    ).toBe(true);
+    // The hand-off labels the pull request before it comments, so wait for both.
+    await waitFor(
+      () =>
+        pull.labels.includes(NEEDS_HUMAN) &&
+        sandbox.github
+          .commentsOn(number)
+          .some((comment) => comment.body.includes(`\`${FEATURE}\``)),
+      "the hand-off to a person, saying which spec",
+      45_000,
+    );
     expect(sandbox.github.reviewsOf(number)).toEqual([]);
 
     // Taking the label off without a person's approval doesn't stick.
