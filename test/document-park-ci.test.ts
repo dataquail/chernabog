@@ -342,9 +342,12 @@ describe("the address-review document in a CI job", () => {
         adapter: "codex",
       }),
     );
-    fake.comment(
-      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-    );
+    fake.handedOff({
+      adapter: "claude",
+      sessionId: "implement-session",
+      issue: 3,
+      branch: "auto/issue-3",
+    });
     // The implement run's push.
     fake.git.pushes = 1;
 

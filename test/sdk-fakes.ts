@@ -296,6 +296,23 @@ export const makeFake = (
     );
   };
 
+  // What an implement run's hand-off records of the session that wrote the
+  // pull request: the issue's handed-off record, naming it (ADR 21, decision 7).
+  const handedOff = (
+    session: {
+      readonly adapter: string;
+      readonly sessionId: string;
+      readonly issue: number;
+      readonly branch: string;
+      readonly withPerson?: boolean;
+    },
+    pullRequest = PULL,
+  ) => {
+    recordPhase(`issue-${session.issue}`, "handed-off", {
+      data: { pullRequest, author: { ...session } },
+    });
+  };
+
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
   // The activity each agent call came from, as the Agent service sees it.
@@ -1178,6 +1195,7 @@ export const makeFake = (
     phases,
     records,
     recordPhase,
+    handedOff,
     graph,
     branchPulls,
     closed,

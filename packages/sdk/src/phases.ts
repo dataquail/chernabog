@@ -23,6 +23,7 @@ import {
   Progress,
   ProgressError,
   Run,
+  SessionMarker,
   type WorkItem,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -31,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -548,6 +550,66 @@ export const recordAwaitingReview = (pullRequest: number, to: Phase) =>
       onSome: (data) => record(pullRequestItem(pullRequest), to, data),
     });
   });
+
+// What an issue's handed-off record carries (ADR 21, decision 7): the pull
+// request its progress goes on as, and the agent session that wrote it, which
+// address-review resumes (Review.findAuthorSession). The issue's record stays
+// at handed-off while the pull request's moves through review, so the session
+// outlives every phase of the pull request's. author is left out for a
+// session that doesn't fit a record, which a later run finds as none.
+const HandedOff = Schema.Struct({ pullRequest: Schema.Finite, author: SessionMarker });
+
+// The data of an issue's handed-off record for `pullRequest`, written by `session`.
+export const handedOffData = (
+  pullRequest: number,
+  session: Option.Option<SessionMarker>,
+): { readonly [key: string]: Json } => {
+  const bare = { pullRequest };
+
+  return Option.getOrElse(
+    Option.filter(
+      Option.map(session, (author) => ({ pullRequest, author: { ...author } })),
+      isPhaseData,
+    ),
+    () => bare,
+  );
+};
+
+// Records the issue handed off as `pullRequest`, with the session that wrote
+// it. Again even when the issue is at handed-off already, from an earlier
+// pull request: the data is this hand-off's. A replay keeps its own record.
+export const recordHandedOff = (
+  issue: number,
+  pullRequest: number,
+  session: Option.Option<SessionMarker>,
+) =>
+  record(issueItem(issue), PHASES.issue.handedOff, handedOffData(pullRequest, session), {
+    again: true,
+  });
+
+// Records by when they were written, oldest first.
+const byWhen = Order.mapInput(DateTime.Order, (found: { readonly at: DateTime.Utc }) => found.at);
+
+// The session a record among `all` says wrote `pullRequest`: the newest
+// handed-off record naming it, by when it was written. None when no record
+// does, such as for a pull request no run handed off.
+export const authorOf = (all: ReadonlyMap<string, PhaseRecord>, pullRequest: number) => {
+  const naming = Array.from(all.values()).flatMap((found) => {
+    const data = Option.flatMap(
+      Option.filter(found.data, () => found.phase === PHASES.issue.handedOff),
+      Schema.decodeUnknownOption(HandedOff),
+    );
+
+    return Option.toArray(
+      Option.map(
+        Option.filter(data, (handed) => handed.pullRequest === pullRequest),
+        (handed) => ({ at: found.at, author: handed.author }),
+      ),
+    );
+  });
+
+  return Option.map(Arr.last(Arr.sort(naming, byWhen)), (found) => found.author);
+};
 
 // A work item's key for the record an item holds: the item, its phase and
 // the record's version shortened as a head SHA is, `pr-7-changes-asked-1a2b3c4`.

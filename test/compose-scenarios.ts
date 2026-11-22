@@ -17,7 +17,6 @@ import {
   PullRequest,
   PushRejected,
   reviewMarker,
-  sessionMarker,
   type Settings,
   Skip,
   type WorkItem,
@@ -843,9 +842,7 @@ export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
     );
 
     for (const marker of Option.toArray(session)) {
-      fake.comment(
-        `Implemented for #${ISSUE}. ${sessionMarker.write({ ...marker, issue: ISSUE, branch: `auto/issue-${ISSUE}` })}`,
-      );
+      fake.handedOff({ ...marker, issue: ISSUE, branch: `auto/issue-${ISSUE}` });
     }
 
     // The implement run's push; the fix moves the head.
@@ -1065,9 +1062,7 @@ export const ADDRESS_REVIEW_LAYER_SCENARIOS = scenarios((scenario) => {
     () => {
       const fake = repoFake(["approve"]);
       fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
-      fake.comment(
-        `Implemented for #${ISSUE}. ${sessionMarker.write({ ...EPIC_TASK_SESSION, issue: ISSUE, branch: `auto/issue-${ISSUE}` })}`,
-      );
+      fake.handedOff({ ...EPIC_TASK_SESSION, issue: ISSUE, branch: `auto/issue-${ISSUE}` });
       fake.git.pushes = 1;
       fake.stack.base = "auto/issue-2";
       fake.stack.below = [".github/workflows/ci.yml"];

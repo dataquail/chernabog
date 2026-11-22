@@ -10,15 +10,18 @@ import {
   claimMarker,
   Claims,
   GitHub,
+  isPhaseData,
   type Json,
   latestMarker,
   Phase as CorePhase,
   PhaseData,
+  type PhaseRecord,
   PhaseWriter,
   planMarker,
   Progress,
   type PullRequest,
   Repo,
+  sessionMarker,
   type SubmittedReview,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -58,6 +61,14 @@ export const OBSERVED: ReadonlyArray<Observed> = [
     to,
   })),
   { by: WRITER, item: "epic", from: [Phases.NO_RECORD], to: Phases.PHASES.epic.waiting },
+  // S1 and S2: the author's session, from an in-flight pull request's marker,
+  // onto its issue's handed-off record, which it rewrites to keep it.
+  {
+    by: WRITER,
+    item: "issue",
+    from: [Phases.NO_RECORD, Phases.PHASES.issue.handedOff],
+    to: Phases.PHASES.issue.handedOff,
+  },
 ];
 
 // How long an adopted draft's wait lasts in a backfilled awaiting-ready
@@ -68,14 +79,17 @@ export const READY_WITHIN = Duration.days(14);
 
 // What backfill found for one open item with no record: a phase to write,
 // with its data, if any, and the facts it read; or a person to decide, with
-// why. Plain JSON, as the binary reads it from the repo's SDK
-// (loadRepoBackfill) and hands it back to `apply`.
+// why. `replaces`: the version of the record it rewrites, at the same phase,
+// to keep what a marker held beside it (S1); none for an item with no record.
+// Plain JSON, as the binary reads it from the repo's SDK (loadRepoBackfill)
+// and hands it back to `apply`.
 export type Finding =
   | {
       readonly kind: "write";
       readonly item: string;
       readonly phase: Phases.Phase;
       readonly data?: { readonly [key: string]: Json };
+      readonly replaces?: string;
       readonly why: string;
     }
   | { readonly kind: "person"; readonly item: string; readonly why: string };
@@ -357,6 +371,68 @@ const epicFinding = (number: number, logins: ReadonlyArray<string>) =>
     );
   });
 
+// S1 and S2: the author's session an implement run from before the ledger
+// kept it left on an open pull request, as a persona's session marker, onto
+// the issue it names: its handed-off record, rewritten from the version read
+// to keep the session beside the data it has (S1), or a handed-off record for
+// an issue with none (S2). None for a pull request with no such marker, an
+// issue whose record keeps a session for it already, or one at another phase,
+// which a run has moved on since.
+const sessionFinding = (
+  pull: PullRequest,
+  all: ReadonlyMap<string, PhaseRecord>,
+  logins: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const marker = Option.filter(
+      latestMarker(
+        sessionMarker.read,
+        (yield* (yield* GitHub).comments(pull.number))
+          .filter((found) => isOneOf(logins, found.author))
+          .map((found) => found.body),
+      ),
+      (found) => found.issue > 0,
+    );
+
+    if (Option.isNone(marker)) {
+      return Option.none<Finding>();
+    }
+
+    const session = marker.value;
+    const item = Phases.issueItem(session.issue);
+    const why = `#${pull.number}'s session marker names #${session.issue}`;
+    const found = Phases.recordOf(all, item);
+    const handedOff = Phases.handedOffData(pull.number, Option.some(session));
+
+    if (Option.isNone(found)) {
+      return Option.some(write(item, Phases.PHASES.issue.handedOff, why, handedOff));
+    }
+
+    if (
+      found.value.phase !== Phases.PHASES.issue.handedOff ||
+      Option.isSome(Phases.authorOf(new Map([[item, found.value]]), pull.number))
+    ) {
+      return Option.none<Finding>();
+    }
+
+    const data = { ...Option.getOrElse(found.value.data, () => ({})), ...handedOff };
+
+    if (!isPhaseData(data)) {
+      return Option.some(
+        person(item, `${why}, but the session doesn't fit beside its record's data`),
+      );
+    }
+
+    return Option.some<Finding>({
+      kind: "write",
+      item,
+      phase: Phases.PHASES.issue.handedOff,
+      data,
+      replaces: found.value.version,
+      why,
+    });
+  });
+
 // Every open item that holds no record and needs one, each with the phase
 // to write or why a person must decide, read as the repo's personas, by its
 // committed config (Repo.personas). An item with a record is left out: it is
@@ -369,6 +445,10 @@ export const survey = Effect.gen(function* () {
   const unrecorded = (item: string) => Option.isNone(Phases.recordOf(all, item));
 
   for (const pull of yield* github.openPullRequests) {
+    for (const found of Option.toArray(yield* sessionFinding(pull, all, logins))) {
+      findings.push(found);
+    }
+
     if (!unrecorded(Phases.pullRequestItem(pull.number))) {
       continue;
     }
@@ -419,9 +499,9 @@ export type Written = {
   readonly written: boolean;
 };
 
-// Writes each finding's phase, advancing from no record, so an item a run
-// recorded since the survey keeps the run's record (PhaseMoved), as
-// Phases.reconcile leaves it.
+// Writes each finding's phase, advancing from no record, or from the record
+// it replaces, so an item a run recorded since the survey keeps the run's
+// record (PhaseMoved), as Phases.reconcile leaves it.
 export const apply = (findings: ReadonlyArray<Finding>) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
@@ -432,9 +512,16 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         continue;
       }
 
-      // From no record, the version the survey read: an item a run recorded
-      // since is a lost race, and keeps the run's record.
-      const base = { from: Option.none(), to: asPhase(finding.phase), by: asWriter(WRITER) };
+      // From the version the survey read, no record for most: an item a run
+      // recorded since is a lost race, and keeps the run's record.
+      const to = asPhase(finding.phase);
+
+      const from = Option.map(Option.fromUndefinedOr(finding.replaces), (version) => ({
+        phase: to,
+        version,
+      }));
+
+      const base = { from, to, by: asWriter(WRITER) };
 
       const transition = Option.match(Option.fromUndefinedOr(finding.data), {
         onNone: () => base,

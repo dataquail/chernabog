@@ -9,8 +9,8 @@ import {
   defineFlow,
   Implement,
   type Json,
+  Phases,
   Review,
-  sessionMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
@@ -125,12 +125,10 @@ describe("an issue an open pull request already closes", () => {
         expect(fake.people.requested).toEqual(["data-quail"]);
         expect(fake.labelsOf(ISSUE)).toEqual([]);
 
-        // address-review finds a session marker naming the adopted branch.
-        const session = fake.comments.flatMap((comment) =>
-          Option.toArray(sessionMarker.read(comment.body)),
-        );
+        // address-review finds the session in the issue's record, naming the adopted branch.
+        const session = Phases.authorOf(fake.records(), PULL);
 
-        expect(session.map((marker) => marker.branch)).toEqual([BRANCH]);
+        expect(Option.map(session, (marker) => marker.branch)).toEqual(Option.some(BRANCH));
       }),
   );
 

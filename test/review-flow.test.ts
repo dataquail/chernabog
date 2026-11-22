@@ -543,11 +543,14 @@ describe("address-review", () => {
     }),
   );
 
-  // The implement run's session marker, and its push.
+  // The implement run's session, in the issue's record, and its push.
   const implemented = (fake: Fake) => {
-    fake.comment(
-      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-    );
+    fake.handedOff({
+      adapter: "claude",
+      sessionId: "implement-session",
+      issue: 3,
+      branch: "auto/issue-3",
+    });
     fake.git.pushes = 1;
   };
 
@@ -594,9 +597,12 @@ describe("address-review", () => {
     () =>
       Effect.gen(function* () {
         const fake = changesAsked();
-        fake.comment(
-          'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-        );
+        fake.handedOff({
+          adapter: "claude",
+          sessionId: "implement-session",
+          issue: 3,
+          branch: "auto/issue-3",
+        });
         // The fix moves the head; the fake's first push is the implement run's.
         fake.git.pushes = 1;
         const finished = yield* runToEnd(addressing, fake, addressWork);
@@ -639,9 +645,12 @@ describe("address-review", () => {
     () =>
       Effect.gen(function* () {
         const fake = changesAsked();
-        fake.comment(
-          'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
-        );
+        fake.handedOff({
+          adapter: "claude",
+          sessionId: "implement-session",
+          issue: 3,
+          branch: "auto/issue-3",
+        });
         fake.git.pushes = 1;
         fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
         const finished = yield* runToEnd(addressing, fake, addressWork);

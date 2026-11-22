@@ -20,7 +20,7 @@ import {
   Repo,
   reportAs,
   Run,
-  sessionMarker,
+  type SessionMarker,
   Skip,
   StepFailed,
   Subjects,
@@ -109,7 +109,7 @@ const cancelHint = (holder: Option.Option<Claims.Holder>) =>
 // comments as claim does, holding the same markers. It takes the issue out of
 // the unattended queues. An issue another run holds is left to it. The branch
 // starts from `base`, as Implement.claim's does, and a run that resumes keeps
-// the base its claim marker records.
+// the base its claim ref records.
 export const claim = (issue: number, options: BaseOptions = {}) =>
   activity(
     "claim",
@@ -121,7 +121,8 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       const item = Claims.issue(issue);
       const base = yield* landedBase(yield* baseOf(options));
       const baseSha = yield* baseHead(base);
-      const claimed = yield* Claims.acquire(item, { withPerson: true });
+      const before = yield* latestClaim(issue);
+      const claimed = yield* Claims.acquire(item, { withPerson: true, base });
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -130,10 +131,11 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       }
 
       if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
-        const latest = yield* latestClaim(issue);
+        // This run claimed it before, as its claim ref says: the base it recorded.
+        const mine = Option.filter(before, (found) => found.runId === run.runId);
 
-        if (Option.isSome(latest) && latest.value.runId === run.runId) {
-          return { branch, base: yield* claimedBase(latest.value) };
+        if (Option.isSome(mine)) {
+          return { branch, base: yield* claimedBase(mine.value) };
         }
       } else {
         yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
@@ -281,7 +283,7 @@ export const openPullRequest = (issue: number, finished: Finished, options: Base
   );
 
 // Hands the green pull request to review, as Implement.handOff does: the
-// session marker, so answering a review reopens the person's session, a
+// session in the issue's record, so answering a review reopens the person's session, a
 // comment on the issue, and a review asked of one reviewer from the pool.
 export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Finished) =>
   activity(
@@ -290,7 +292,7 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
       const github = yield* GitHub;
       const repo = yield* Repo;
 
-      const session = {
+      const session: SessionMarker = {
         adapter: repo.agent,
         sessionId: yield* sessionIdOf(issue),
         issue,
@@ -300,10 +302,10 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
 
       yield* github.comment(
         pullRequest.number,
-        `Worked on by a person with ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`,
+        `Worked on by a person with ${repo.agent} for #${issue}.`,
       );
       yield* dropInProgress(issue);
-      yield* recordHandOff(issue, pullRequest.number, {});
+      yield* recordHandOff(issue, pullRequest.number, { session });
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${finished.summary}`,

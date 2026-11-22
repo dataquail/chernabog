@@ -13,6 +13,7 @@ import {
   Issue,
   NeedsHuman,
   ownerMarker,
+  Phases,
   PullRequest,
   Review,
   reviewMarker,
@@ -910,11 +911,10 @@ describe("Implement.handOff", () => {
       expect(fake.labelsOf(PULL)).toEqual([]);
       expect(fake.people.requested).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toEqual([]);
+      // The session address-review resumes is in the issue's record, naming the pull request.
       expect(
-        fake.comments
-          .map((comment) => comment.body)
-          .some((body) => body.includes("chernabog-session")),
-      ).toBe(true);
+        Phases.authorOf(fake.records(), PULL).pipe(Option.map((found) => found.issue)),
+      ).toEqual(Option.some(ISSUE));
     }),
   );
 });
