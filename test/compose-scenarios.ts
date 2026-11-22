@@ -13,6 +13,7 @@ import {
   type Flow,
   type Json,
   type LinkedIssue,
+  Phases,
   Plan,
   PullRequest,
   PushRejected,
@@ -2071,9 +2072,19 @@ export const EPIC_SCENARIOS = scenarios((define) => {
     }
   };
 
+  // A trusted person took auto:needs-human off `item`, which
+  // observer:handed-back records over its with-person record
+  // (Phases.reconcileHandedBack).
+  const recordHandedBack = (fake: Fake, name: string) => {
+    if (fake.phases()[name] === Phases.PHASES.issue.withPerson) {
+      fake.recordPhase(name, Phases.PHASES.issue.handedBack, { by: Phases.HANDED_BACK_BY });
+    }
+  };
+
   // A person hands the task back with auto:eligible.
   const handBack = (fake: Fake, number: number) => {
     fake.setLabels(number, [DEFAULT_LABELS.eligible]);
+    recordHandedBack(fake, Phases.issueItem(number));
   };
 
   // Whether the run took any step whose name has this in it.
@@ -2247,6 +2258,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
             pull.number,
             fake.labelsOf(pull.number).filter((label) => label !== DEFAULT_LABELS.needsHuman),
           );
+          recordHandedBack(fake, Phases.pullRequestItem(pull.number));
           fake.branchPulls.set(branch, { ...pull, headSha: "person1100" });
         }
       },
