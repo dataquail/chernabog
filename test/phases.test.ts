@@ -308,31 +308,44 @@ describe("Phases.reconcile", () => {
 });
 
 describe("the waits for CI", () => {
+  const CI = P.issue.awaitingCi;
+  const CONFLICT_CI = P.pullRequest.awaitingConflictCi;
+
   test("a round's phase reads back as its round, however many digits it has", () => {
-    expect(Phases.awaitingCi(1)).toBe("awaiting-ci");
-    expect(Phases.awaitingCi(12)).toBe("awaiting-ci-12");
-    expect(Phases.ciRoundOf("awaiting-ci")).toEqual(Option.some(1));
-    expect(Phases.ciRoundOf("awaiting-ci-12")).toEqual(Option.some(12));
-    expect(Phases.conflictCi(1)).toBe("awaiting-conflict-ci");
-    expect(Phases.conflictCi(12)).toBe("awaiting-conflict-ci-12");
-    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci")).toEqual(Option.some(1));
-    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-12")).toEqual(Option.some(12));
+    expect(Phases.inRound(CI, 1)).toBe("awaiting-ci");
+    expect(Phases.inRound(CI, 12)).toBe("awaiting-ci-12");
+    expect(Phases.roundOf(CI, "awaiting-ci")).toEqual(Option.some(1));
+    expect(Phases.roundOf(CI, "awaiting-ci-12")).toEqual(Option.some(12));
+    expect(Phases.inRound(CONFLICT_CI, 1)).toBe("awaiting-conflict-ci");
+    expect(Phases.inRound(CONFLICT_CI, 12)).toBe("awaiting-conflict-ci-12");
+    expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci")).toEqual(Option.some(1));
+    expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci-12")).toEqual(Option.some(12));
+    expect(Phases.roundedOf("awaiting-conflict-ci-12")).toEqual(
+      Option.some({ phase: CONFLICT_CI, round: 12 }),
+    );
+  });
+
+  test("a round of one site's wait is no round of another's", () => {
+    expect(Phases.roundOf(CI, "awaiting-conflict-ci-2")).toEqual(Option.none());
+    expect(Phases.roundOf(CONFLICT_CI, "awaiting-ci-2")).toEqual(Option.none());
   });
 
   test("a team's own phase that only ends in one is no wait for CI", () => {
-    expect(Phases.ciRoundOf("not-awaiting-ci")).toEqual(Option.none());
-    expect(Phases.ciRoundOf("not-awaiting-ci-2")).toEqual(Option.none());
+    expect(Phases.roundOf(CI, "not-awaiting-ci")).toEqual(Option.none());
+    expect(Phases.roundOf(CI, "not-awaiting-ci-2")).toEqual(Option.none());
+    expect(Phases.roundedOf("not-awaiting-ci-2")).toEqual(Option.none());
     expect(Phases.declaredAs("not-awaiting-ci")).toBe("not-awaiting-ci");
-    expect(Phases.conflictCiRoundOf("not-awaiting-conflict-ci")).toEqual(Option.none());
-    expect(Phases.conflictCiRoundOf("not-awaiting-conflict-ci-2")).toEqual(Option.none());
+    expect(Phases.roundOf(CONFLICT_CI, "not-awaiting-conflict-ci")).toEqual(Option.none());
+    expect(Phases.roundOf(CONFLICT_CI, "not-awaiting-conflict-ci-2")).toEqual(Option.none());
     expect(Phases.declaredAs("not-awaiting-conflict-ci")).toBe("not-awaiting-conflict-ci");
   });
 
   test("a phase that only starts as one is no wait for CI", () => {
-    expect(Phases.ciRoundOf("awaiting-ci-2x")).toEqual(Option.none());
-    expect(Phases.ciRoundOf("awaiting-ci-x")).toEqual(Option.none());
-    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-2x")).toEqual(Option.none());
-    expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-x")).toEqual(Option.none());
+    expect(Phases.roundOf(CI, "awaiting-ci-2x")).toEqual(Option.none());
+    expect(Phases.roundOf(CI, "awaiting-ci-x")).toEqual(Option.none());
+    expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci-2x")).toEqual(Option.none());
+    expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci-x")).toEqual(Option.none());
+    expect(Phases.roundedOf("awaiting-ci-2x")).toEqual(Option.none());
   });
 
   test("a later round of a wait for CI is declared as its first", () => {

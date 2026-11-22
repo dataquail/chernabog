@@ -216,7 +216,11 @@ describe("a CI job waiting on its pull request's CI", () => {
     expect(fixed.code).toBe(0);
     expect(fixed.output).toContain("parked");
     expect(sandbox.claudeCalls().length).toBeGreaterThan(calls);
-    expect(phasesOf(`pr-${pull.number}`)).toEqual(["review-asked", "changes-asked", "awaiting-ci"]);
+    expect(phasesOf(`pr-${pull.number}`)).toEqual([
+      "review-asked",
+      "changes-asked",
+      "awaiting-fix-ci",
+    ]);
     expect(sandbox.github.pull(pull.number).reviewers).toEqual([]);
   }, 180_000);
 
@@ -232,7 +236,7 @@ describe("a CI job waiting on its pull request's CI", () => {
 
     expect(green.matrix).toHaveLength(1);
     expect(green.matrix[0]?.flow).toBe("address-review");
-    expect(green.matrix[0]?.item).toStartWith(`pr-${pull.number}-awaiting-ci-`);
+    expect(green.matrix[0]?.item).toStartWith(`pr-${pull.number}-awaiting-fix-ci-`);
 
     const calls = sandbox.claudeCalls().length;
     const resumed = await run(green.matrix[0] ?? { flow: "", persona: "", item: "" });
