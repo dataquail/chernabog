@@ -210,8 +210,17 @@ describe("a pull request that changes a feature file", () => {
       // While a person has it, no review flow takes it up.
       expect(yield* keys(fake, review)).toEqual([]);
 
-      // An agent, or anyone, removes the label: the next run puts it back.
+      // A person takes the label off, handing it back without approving it:
+      // the next run puts it back.
       fake.setLabels(PULL, []);
+      fake.timeline.events.set(PULL, [
+        {
+          event: "unlabeled",
+          label: { name: DEFAULT_LABELS.needsHuman },
+          actor: { login: "zach" },
+        },
+      ]);
+      fake.timeline.permissions.set("zach", "write");
       expect(yield* keys(fake, review)).toEqual([`pr-${PULL}`]);
 
       const again = yield* runToEnd(reviewing, fake, firstReview);
