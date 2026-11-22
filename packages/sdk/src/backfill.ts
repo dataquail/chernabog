@@ -4,13 +4,16 @@
 // sources' no-record paths can go (audit S6, S7). Where GitHub's facts don't
 // settle a phase, it writes nothing and lists the item for a person. It also
 // copies the review a pull request's review marker names into its record,
-// which the merge gate and the review flows read since #564.
+// which the merge gate and the review flows read since #564, and the plan a
+// spec's plan marker kept into its proposed record, as the blob Plan.posted
+// reads since #563.
 //
 // The table it goes by is in docs/run-progress/audit.md, "Backfill".
 
 import {
   claimMarker,
   Claims,
+  type Comment,
   GitHub,
   type Json,
   latestMarker,
@@ -36,6 +39,7 @@ import { statusMarker } from "./epic.ts";
 import { ADOPTED_LABEL, AWAITING_READY_LABEL } from "./implement.ts";
 import type { Observed } from "./ledger-check.ts";
 import * as Phases from "./phases.ts";
+import { planBlob } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { holdKeysOf, ships } from "./pull-request.ts";
 import { isAgentBranch } from "./review.ts";
@@ -64,6 +68,13 @@ export const OBSERVED: ReadonlyArray<Observed> = [
     from: [Phases.NO_RECORD],
     to,
   })),
+  // A spec's proposed record again, with the plan its marker kept (#563).
+  {
+    by: WRITER,
+    item: "issue",
+    from: [Phases.PHASES.issue.proposed],
+    to: Phases.PHASES.issue.proposed,
+  },
   { by: WRITER, item: "epic", from: [Phases.NO_RECORD], to: Phases.PHASES.epic.waiting },
   // An item labelled auto:needs-human is with a person, whatever it held.
   ...Phases.ITEM_KINDS.map((item): Observed => ({
@@ -90,6 +101,8 @@ export type Finding =
       readonly item: string;
       readonly phase: Phases.Phase;
       readonly data?: { readonly [key: string]: Json };
+      // Content written with the record, which its data names by hash.
+      readonly blobs?: ReadonlyArray<string>;
       readonly why: string;
       // The record it moves on from, by version; left out: from no record.
       readonly over?: { readonly phase: string; readonly version: string };
@@ -336,6 +349,45 @@ const pullRequestFinding = (pull: PullRequest, reviews: ReadonlyArray<SubmittedR
     );
   });
 
+// A plan a comment's marker names: its round, its comment's id, and its
+// tasks, when the marker kept them, as plan.propose wrote it before records
+// kept plans (#563). This is the one place the SDK reads a plan marker, once,
+// to carry the plan into the spec's record.
+type MarkedPlan = {
+  readonly round: number;
+  readonly comment: number;
+  readonly plan: Option.Option<ReadonlyArray<Json>>;
+};
+
+const markedPlans = (comments: ReadonlyArray<Comment>): ReadonlyArray<MarkedPlan> =>
+  comments.flatMap((found) =>
+    Option.toArray(
+      Option.map(planMarker.read(found.body), (marker) => ({
+        round: marker.round,
+        comment: found.id,
+        plan: Option.fromUndefinedOr(marker.plan),
+      })),
+    ),
+  );
+
+// `finding` with what a spec's proposed record keeps of the marked plan:
+// where a person's answer starts, after its comment, and the plan as a blob
+// its data names, when the marker kept it.
+type Write = Extract<Finding, { readonly kind: "write" }>;
+
+const withPlan = (finding: Write, marked: MarkedPlan): Write => {
+  const data = { ...finding.data, after: marked.comment };
+
+  return Option.match(marked.plan, {
+    onNone: () => ({ ...finding, data }),
+    onSome: (tasks) => {
+      const blob = planBlob(tasks);
+
+      return { ...finding, data: { ...data, plan: blob.hash }, blobs: [blob.text] };
+    },
+  });
+};
+
 // The phase of one open issue with no record (I1, I2); none for one whose
 // lack of a record is its phase, such as a queued one.
 const issueFinding = (number: number, labels: ReadonlyArray<string>) =>
@@ -355,7 +407,8 @@ const issueFinding = (number: number, labels: ReadonlyArray<string>) =>
       );
     }
 
-    const bodies = (yield* github.comments(number)).map((found) => found.body);
+    const comments = yield* github.comments(number);
+    const bodies = comments.map((found) => found.body);
 
     if (awaiting) {
       const draft = Option.flatMap(latestMarker(claimMarker.read, bodies), (marker) =>
@@ -380,20 +433,83 @@ const issueFinding = (number: number, labels: ReadonlyArray<string>) =>
       );
     }
 
-    const plan = latestMarker(planMarker.read, bodies);
+    const plan = Arr.last(markedPlans(comments));
 
     return Option.some(
       Option.match(plan, {
         onNone: () =>
           person(item, `labelled ${PLAN_LABELS.proposed}, but no plan was posted on it`),
         onSome: (posted) =>
-          write(
-            item,
-            Phases.PHASES.issue.proposed,
-            `round ${posted.round}'s plan waits on a person (${PLAN_LABELS.proposed})`,
-            { round: posted.round },
+          withPlan(
+            {
+              kind: "write",
+              item,
+              phase: Phases.PHASES.issue.proposed,
+              why: `round ${posted.round}'s plan waits on a person (${PLAN_LABELS.proposed})`,
+              data: { round: posted.round },
+            },
+            posted,
           ),
       }),
+    );
+  });
+
+const NamesPlan = Schema.Struct({ round: Schema.Finite, plan: Schema.String });
+
+const Round = Schema.Struct({ round: Schema.Finite });
+
+// I3: a spec whose proposed record names no plan, from before records
+// kept plans: its record again, from its version, with the plan its round's
+// marker kept carried in as a blob. None for a record that names one, or a
+// spec closed, or whose marker kept none.
+const planFinding = (item: string, found: PhaseRecord) =>
+  Effect.gen(function* () {
+    const number = Option.map(Option.fromNullOr(/^issue-(\d+)$/.exec(item)), (match) =>
+      Number(match[1]),
+    );
+
+    const round = Option.map(
+      Option.flatMap(found.data, Schema.decodeUnknownOption(Round)),
+      (data) => data.round,
+    );
+
+    if (
+      found.phase !== Phases.PHASES.issue.proposed ||
+      Option.isSome(Option.flatMap(found.data, Schema.decodeUnknownOption(NamesPlan))) ||
+      Option.isNone(number) ||
+      Option.isNone(round)
+    ) {
+      return Option.none<Finding>();
+    }
+
+    const github = yield* GitHub;
+
+    const open = yield* github.issue(number.value).pipe(
+      Effect.map((issue) => issue.state !== "closed"),
+      Effect.catchTag("NotFound", () => Effect.succeed(false)),
+    );
+
+    if (!open) {
+      return Option.none<Finding>();
+    }
+
+    const marked = Arr.findLast(
+      markedPlans(yield* github.comments(number.value)),
+      (posted) => posted.round === round.value && Option.isSome(posted.plan),
+    );
+
+    return Option.map(marked, (posted): Finding =>
+      withPlan(
+        {
+          kind: "write",
+          item,
+          phase: Phases.PHASES.issue.proposed,
+          why: `carries round ${posted.round}'s plan from its comment into its record`,
+          data: { ...Option.getOrUndefined(found.data) },
+          over: { phase: found.phase, version: found.version },
+        },
+        posted,
+      ),
     );
   });
 
@@ -506,12 +622,23 @@ const surveyPullRequest = (
     return Option.some(withReview(yield* pullRequestFinding(pull, reviews), review));
   });
 
+// I3 for every spec's record, but those with a person.
+const planFindings = (all: ReadonlyMap<string, PhaseRecord>, withPerson: ReadonlySet<string>) =>
+  Effect.map(
+    Effect.forEach(
+      [...all].filter(([item]) => !withPerson.has(item)),
+      ([item, found]) => planFinding(item, found),
+    ),
+    (found) => found.flatMap((finding) => Option.toArray(finding)),
+  );
+
 // Every open item that holds no record and needs one, each with the phase
 // to write or why a person must decide, read as the repo's personas, by its
 // committed config (Repo.personas), and every one labelled auto:needs-human
 // whose record isn't with-person. Any other item with a record is left out:
 // it is backfilled already, or a run recorded it; but for a pull request's
-// record that keeps no review its marker names (surveyPullRequest).
+// record that keeps no review its marker names (surveyPullRequest), and a
+// spec's proposed record that names no plan its marker kept (planFinding).
 export const survey = Effect.gen(function* () {
   const github = yield* GitHub;
   const logins = (yield* Repo).personas;
@@ -546,6 +673,10 @@ export const survey = Effect.gen(function* () {
         findings.push(found);
       }
     }
+  }
+
+  for (const carried of yield* planFindings(all, withPerson)) {
+    findings.push(carried);
   }
 
   for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
@@ -618,6 +749,7 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         from,
         to: asPhase(finding.phase),
         by: asWriter(WRITER),
+        blobs: finding.blobs ?? [],
       };
 
       const transition = Option.match(Option.fromUndefinedOr(finding.data), {

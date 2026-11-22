@@ -1,10 +1,10 @@
 // A plan waiting on a person's answer in a CI job (audit W2, ADR 0021
 // decision 4): the job ends at the park and its journal goes with it, so the
-// wait lives in the spec's proposed record and the tasks in the plan's
-// marker. Once a person answers, or nobody does in time, Plan.answered offers
+// wait lives in the spec's proposed record, and the tasks in a blob it
+// names, never in the plan's comment, which is for people. Once a person answers, or nobody does in time, Plan.answered offers
 // the spec as work a run may start, and a new run takes it up from there.
 
-import { DEFAULT_LABELS, type Json, Plan, planMarker } from "@chernabog/sdk";
+import { DEFAULT_LABELS, type Json, Plan, planMarker, Progress } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -22,6 +22,7 @@ import {
   ISSUE,
   item,
   makeFake,
+  onFake,
   repo,
   runToEnd,
   runUntil,
@@ -45,16 +46,55 @@ const NODES = [task("api-schema", "auto"), task("api", "hybrid", ["api-schema"])
 const SUMMARY = "The schema first, then the API on it.";
 const PLAN: Json = { status: "plan", summary: SUMMARY, nodes: NODES };
 
+// The blob a spec's record keeps NODES in.
+const BLOB = Plan.planBlob(NODES);
+
 // What a CI job that posted round `round`'s plan and ended leaves behind: the
-// plan's comment, its marker keeping the tasks, and the spec's record, written `at`.
-const postedEarlier = (round: number, at: DateTime.Utc, comment?: string) => {
+// plan's comment, and the spec's record, written `at`, naming the blob that
+// keeps the tasks and the newest comment before the plan's; with `kept`
+// false, a record from before records kept plans.
+const postedEarlier = (round: number, at: DateTime.Utc, kept = true) => {
   const fake = makeFake("approve", { ciJob: true });
   fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Plan.LABELS.proposed]);
-  fake.comment(comment ?? Plan.planComment(round, SUMMARY, Schema.decodeSync(Plan.Plan)(NODES)));
-  fake.recordPhase(SPEC_ITEM, "proposed", { at, data: { round } });
+  fake.comment(Plan.planComment(round, SUMMARY, Schema.decodeSync(Plan.Plan)(NODES)));
+
+  if (kept) {
+    fake.recordPhase(SPEC_ITEM, "proposed", {
+      at,
+      data: { round, plan: BLOB.hash, after: 0, since: DateTime.formatIso(at) },
+      blobs: [BLOB.text],
+    });
+  } else {
+    fake.recordPhase(SPEC_ITEM, "proposed", { at, data: { round } });
+  }
 
   return fake;
 };
+
+// The plan's comment, as its index among the fake's comments.
+const planCommentAt = (fake: Fake) =>
+  fake.comments.findIndex((comment) => comment.body.includes("## Proposed plan"));
+
+const deletePlanComment = (fake: Fake) => {
+  fake.comments.splice(planCommentAt(fake), 1);
+};
+
+// A person edits the plan's comment: other tasks, and a marker of the shape
+// that once kept them, which nothing reads.
+const OTHER = [task("something-else", "auto")];
+
+const editPlanComment = (fake: Fake) => {
+  const index = planCommentAt(fake);
+
+  for (const edited of Option.toArray(Arr.get(fake.comments, index))) {
+    fake.comments[index] = {
+      ...edited,
+      body: `## Proposed plan\n\nSomething else.\n\n${planMarker.write({ round: 1, plan: OTHER })}`,
+    };
+  }
+};
+
+const madeTitles = (fake: Fake) => [...fake.graph.made.values()].map((made) => made.title);
 
 // The tests that run the plan through the engine to its park take
 // milliseconds alone, but under the whole suite's load the engine's runner can
@@ -89,17 +129,39 @@ describe("a plan in a CI job", () => {
         expect(run.status).toBe("running");
         expect(fake.phases()[SPEC_ITEM]).toBe("proposed");
 
-        // The posted plan's marker keeps its tasks, for whichever run takes it up.
-        const kept = Arr.findFirst(fake.comments, (comment) =>
+        // The spec's record names the posted plan's blob, for whichever run
+        // takes it up; the comment's marker keeps only the round.
+        const record = fake.records().get(SPEC_ITEM);
+
+        const hash = Option.flatMap(Option.fromUndefinedOr(record), (found) =>
+          Option.flatMap(found.data, (data) => Option.fromUndefinedOr(data.plan)),
+        );
+
+        expect(Option.map(hash, (found) => record?.blobs.includes(String(found)))).toEqual(
+          Option.some(true),
+        );
+
+        const blob = yield* Effect.flatMap(
+          onFake(
+            fake,
+            Progress.use((progress) => progress.blob(SPEC_ITEM, String(Option.getOrThrow(hash)))),
+          ),
+          Effect.fromOption,
+        ).pipe(Effect.orDie);
+
+        const tasks = yield* Schema.decodeEffect(Schema.fromJsonString(Plan.Plan))(
+          new TextDecoder().decode(blob),
+        ).pipe(Effect.orDie);
+
+        expect(tasks.map((node) => node.key)).toEqual(["api-schema", "api", Plan.VERIFY]);
+
+        const marked = Arr.findFirst(fake.comments, (comment) =>
           Option.isSome(planMarker.read(comment.body)),
         );
 
-        expect(
-          Option.map(
-            Option.flatMap(kept, (comment) => planMarker.read(comment.body)),
-            (marker) => Option.isSome(Option.fromUndefinedOr(marker.plan)),
-          ),
-        ).toEqual(Option.some(true));
+        expect(Option.flatMap(marked, (comment) => planMarker.read(comment.body))).toEqual(
+          Option.some({ round: 1 }),
+        );
 
         // Nobody has answered yet: nothing to start.
         expect(yield* offered(fake)).toEqual([]);
@@ -180,18 +242,55 @@ describe("a plan in a CI job", () => {
     }),
   );
 
-  effect("an approved plan whose tasks no comment keeps goes to a person, making nothing", () =>
+  effect("an approved plan whose record keeps no tasks goes to a person, making nothing", () =>
     Effect.gen(function* () {
-      const fake = postedEarlier(1, yield* DateTime.now, planMarker.write({ round: 1 }));
+      const fake = postedEarlier(1, yield* DateTime.now, false);
       fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), Plan.LABELS.approved]);
 
       const finished = yield* runToEnd(planning, fake, yield* onlyOffered(fake));
 
       expect(finished.status).toBe("needs-human");
-      expect(summaryOf(finished)).toContain("isn't kept on the spec any more");
+      expect(summaryOf(finished)).toContain("the spec's record keeps no plan of round 1");
       expect(fake.graph.made.size).toBe(0);
     }),
   );
+
+  for (const [change, title] of [
+    [deletePlanComment, "deleting"],
+    [editPlanComment, "editing"],
+  ] as const) {
+    effect(`${title} the plan's comment doesn't change the issues an approved plan makes`, () =>
+      Effect.gen(function* () {
+        const fake = postedEarlier(1, yield* DateTime.now);
+        change(fake);
+        fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), Plan.LABELS.approved]);
+
+        const finished = yield* runToEnd(planning, fake, yield* onlyOffered(fake));
+
+        expect(finished.status).toBe("done");
+        expect(summaryOf(finished)).toBe(`#${ISSUE}: an epic of 2 sub-issues`);
+        expect(madeTitles(fake)).toEqual(["Do api-schema", "Do api"]);
+      }),
+    );
+
+    effect(`${title} the plan's comment doesn't hand the spec to a person`, () =>
+      Effect.gen(function* () {
+        const fake = postedEarlier(1, yield* DateTime.now);
+        change(fake);
+
+        // Nobody has answered yet: still nothing to start, and no timeout.
+        expect(yield* offered(fake)).toEqual([]);
+
+        // A person's comment since the plan still asks for changes.
+        fake.comment("Split the API in two.", "zach");
+        const asked = yield* onlyOffered(fake);
+        expect(Plan.resuming(asked)).toEqual(
+          Option.some({ round: 1, answer: "changes-requested" }),
+        );
+        expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
+    );
+  }
 
   effect("taking auto:plan-proposed off changes nothing", () =>
     Effect.gen(function* () {

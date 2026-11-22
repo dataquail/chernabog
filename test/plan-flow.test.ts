@@ -219,6 +219,52 @@ describe("plan", () => {
     }),
   );
 
+  effect(
+    "takes answers through three rounds with each plan's comment deleted, each round's plan in the record",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedFake();
+        const third = { ...PLAN, nodes: [task("pick-name", "human")] };
+        fake.plans.push(PLAN, { ...PLAN, nodes: [task("api-schema", "auto")] }, third);
+
+        // A person deletes the plan's comment, then asks for a change.
+        const deleteThenAsk =
+          (change: string): Answer =>
+          (answered) => {
+            const index = answered.comments.findIndex((comment) =>
+              comment.body.includes("## Proposed plan"),
+            );
+
+            answered.comments.splice(index, 1);
+            answered.comment(change, "zach");
+          };
+
+        const run = yield* planWith(fake, [
+          deleteThenAsk("Leave the API for later."),
+          deleteThenAsk("Only the name."),
+          approve,
+        ]);
+
+        expect(run.status).toBe("done");
+        expect(fake.steps).toEqual([
+          Option.some("draft-plan-1"),
+          Option.some("draft-plan-2"),
+          Option.some("draft-plan-3"),
+        ]);
+        // Each round's asked-for change is the one since that round's plan.
+        expect(fake.requests[2]?.resumePrompt).toEqual(
+          Option.some(expect.stringContaining("zach: Only the name.")),
+        );
+        expect(fake.requests[2]?.resumePrompt).toEqual(
+          Option.some(expect.not.stringContaining("Leave the API for later.")),
+        );
+        expect(madeIssues(fake).map((issue) => issue.key)).toEqual([
+          Option.some("pick-name"),
+          Option.some(Plan.VERIFY),
+        ]);
+      }),
+  );
+
   effect("sends a plan that fails its checks back to the agent with what is wrong", () =>
     Effect.gen(function* () {
       const fake = queuedFake();

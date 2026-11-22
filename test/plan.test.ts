@@ -5,6 +5,7 @@
 import { type Issue, Plan, planMarker } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const node = (
   key: string,
@@ -123,28 +124,28 @@ describe("the plan's comment", () => {
     expect(comment).toContain("<details><summary><code>api</code>");
     expect(comment).toContain("Blocked by `api-schema`.");
     expect(comment).toContain("`auto:plan-approved`");
-    // The marker keeps the round, and the tasks as posted for a run that takes the plan up later.
-    expect(Option.map(planMarker.read(comment), (marker) => marker.round)).toEqual(Option.some(2));
-    expect(
-      Option.map(planMarker.read(comment), (marker) =>
-        Option.fromUndefinedOr(marker.plan).pipe(Option.map((kept) => kept.length)),
-      ),
-    ).toEqual(Option.some(Option.some(2)));
+    // The marker keeps only the round: the plan is in the spec's record, not the comment.
+    expect(planMarker.read(comment)).toEqual(Option.some({ round: 2 }));
   });
 
-  test("keeps tasks whose text holds --> and {} --> in its marker, and reads them back the same", () => {
+  test("ends with its marker, whatever the tasks' text holds", () => {
     const nodes = [
       { ...node("arrow"), body: "Requests go client --> server <b>fast</b>." },
       { ...node("brace", ["arrow"]), body: "if (x) {} --> y" },
     ];
 
     const comment = Plan.planComment(1, "Arrows in prose.", nodes);
-    const marker = comment.slice(comment.indexOf("<!-- chernabog-plan"));
 
-    // Nothing in the tasks closes the HTML comment before the marker's own -->.
-    expect(marker.indexOf("-->")).toBe(marker.length - "-->".length);
-    expect(
-      Option.flatMap(planMarker.read(comment), (read) => Option.fromUndefinedOr(read.plan)),
-    ).toEqual(Option.some(nodes));
+    expect(comment.endsWith('<!-- chernabog-plan {"round":1} -->')).toBe(true);
+  });
+});
+
+describe("the plan's blob", () => {
+  test("is the tasks as JSON, named by the SHA-256 of that JSON", () => {
+    const encoded = [{ key: "a", title: "A", body: "", kind: "auto", blockedBy: [] }];
+    const blob = Plan.planBlob(encoded);
+
+    expect(Schema.decodeSync(Schema.fromJsonString(Schema.Json))(blob.text)).toEqual(encoded);
+    expect(blob.hash).toBe(new Bun.CryptoHasher("sha256").update(blob.text).digest("hex"));
   });
 });

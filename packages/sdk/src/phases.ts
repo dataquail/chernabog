@@ -319,14 +319,21 @@ const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Da
 // run wrote the one there: a wait that starts over, with a new `at` and data.
 // `always` writes a fresh record even when this run wrote the one there: a
 // wait a run may enter again after a signal woke it, whose data is this
-// round's, not the round it first parked in.
+// round's, not the round it first parked in. `blobs` is content too big for
+// `data`, written with the record and named in it by hash (Progress.blob).
 // Gives the record the item holds afterwards; record gives nothing, for an
 // activity that journals no result.
+export type RecordOptions = {
+  readonly again?: boolean;
+  readonly always?: boolean;
+  readonly blobs?: ReadonlyArray<Uint8Array | string>;
+};
+
 export const recording = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
@@ -352,9 +359,11 @@ export const recording = (
 
       // From the record just read, by version: one another writer moved
       // since is a lost race, which reads again.
+      const base = { from: current, to: phase, by, blobs: options.blobs ?? [] };
+
       const transition = Option.match(carried, {
-        onNone: () => ({ from: current, to: phase, by }),
-        onSome: (found) => ({ from: current, to: phase, by, data: found }),
+        onNone: () => base,
+        onSome: (found) => ({ ...base, data: found }),
       });
 
       const written = yield* progress.advance(item, transition).pipe(
@@ -378,7 +387,7 @@ export const record = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) => Effect.asVoid(recording(item, to, data, options));
 
 // A record a source won't act on (ADR 21, decision 5): the item's record,
@@ -463,7 +472,15 @@ export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>
 // the run that takes it up. `keeps` says whether the record already there is
 // this wait, which a run that took it up keeps as it is: by default, any
 // record at `phase`. `timeout` is how long the wait may last from `since`,
-// when it began, which every park's record keeps.
+// when it began, which every park's record keeps. `carries` reads, as the
+// record is written, what it carries on from the record there: data, and
+// blobs it names by hash (Progress.blob), which only the record that names
+// them reads, so a wait that keeps one writes it again.
+export type Carried = {
+  readonly data: { readonly [key: string]: Json };
+  readonly blobs: ReadonlyArray<Uint8Array | string>;
+};
+
 export type Parking = {
   readonly step: string;
   readonly item: string;
@@ -471,7 +488,10 @@ export type Parking = {
   readonly data: { readonly [key: string]: Json };
   readonly keeps?: (found: PhaseRecord) => boolean;
   readonly timeout?: Duration.Duration;
+  readonly carries?: Effect.Effect<Carried, ProgressError, Progress>;
 };
+
+const NOTHING_CARRIED: Effect.Effect<Carried> = Effect.succeed({ data: {}, blobs: [] });
 
 const Since = Schema.Struct({ since: Schema.String });
 
@@ -529,7 +549,14 @@ export const recordParking = (parking: Parking) =>
       // The item's record isn't this wait, so write it even over one this run
       // wrote: a run a signal woke parks again with its new round's data.
       const since = DateTime.formatIso(yield* DateTime.now);
-      yield* record(parking.item, parking.phase, { since, ...parking.data }, { always: true });
+      const carried = yield* parking.carries ?? NOTHING_CARRIED;
+
+      yield* record(
+        parking.item,
+        parking.phase,
+        { since, ...parking.data, ...carried.data },
+        { always: true, blobs: carried.blobs },
+      );
 
       return "parked" as const;
     }),
