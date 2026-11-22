@@ -631,14 +631,14 @@ export const PendingCi = Schema.Struct({
 export type PendingCi = typeof PendingCi.Type;
 
 // What a run keeps of the tasks it started, for the run that takes the epic
-// up after it parks: each task's attempts so far, the tasks read as something
-// other than ready since their attempt (handed back, so they may start
-// again), and those whose attempt ended with a person. A task left on its
-// pending CI is on the task's own record, not here.
+// up after it parks: each task's attempts so far, and the tasks read as
+// something other than ready since their attempt (handed back, so they may
+// start again). Whether a task is with a person is its own record's
+// (with-person, #560), not the epic's; a task left on its pending CI is on
+// its own record too.
 export const TaskKeep = Schema.Struct({
   attempts: Pairs,
   handedBack: Schema.Array(Schema.Finite),
-  withPerson: Schema.Array(Schema.Finite),
 });
 
 export type TaskKeep = typeof TaskKeep.Type;
@@ -668,13 +668,13 @@ export type PendingRefresh = typeof PendingRefresh.Type;
 
 // What a run keeps of carrying layers up and landing them, by pull request:
 // each layer's refresh attempt, the base head it last brought each up to,
-// the layers whose refresh went to a person, the layer below each was last
-// seen stacked on, and those brought up to date with that one's merge. A
-// refresh left on its pending CI is on its pull request's record, not here.
+// the layer below each was last seen stacked on, and those brought up to
+// date with that one's merge. Whether a layer is with a person is its pull
+// request's own record (with-person, #561), and a refresh left on its
+// pending CI is on that record too, not here.
 export const LayerKeep = Schema.Struct({
   attempts: Pairs,
   recorded: Schema.Array(Schema.Tuple([Schema.Finite, Schema.String])),
-  withPerson: Schema.Array(Schema.Finite),
   below: Pairs,
   caughtUp: Schema.Array(Schema.Finite),
 });
@@ -684,7 +684,6 @@ export type LayerKeep = typeof LayerKeep.Type;
 // What the epic's waiting record carries (ADR 0021, decision 4): the
 // fingerprint of the epic as the parked run last read it, which the trigger
 // compares, and what the run kept between rounds, the epic's own facts only.
-// `layers` is left out when keeping it would take the record past its 4 KB.
 export const Waiting = Schema.Struct({
   fingerprint: Schema.String,
   tasks: TaskKeep,
@@ -696,22 +695,10 @@ export type Waiting = typeof Waiting.Type;
 const encodeWaiting = Schema.encodeSync(Waiting);
 const decodeWaiting = Schema.decodeUnknownOption(Waiting);
 
-const NOTHING_KEPT: TaskKeep = { attempts: [], handedBack: [], withPerson: [] };
-
-// `waiting` as record data, as much of it as a record takes: without the
-// layers' upkeep, then with neither, when it is too big. What it leaves out
-// a new run starts afresh, as one with no record does.
-export const waitingData = (waiting: Waiting) => {
-  const { layers: _layers, ...tasksOnly } = waiting;
-  const least: Waiting = { fingerprint: waiting.fingerprint, tasks: NOTHING_KEPT };
-
-  return encodeWaiting(
-    Option.getOrElse(
-      Arr.findFirst([waiting, tasksOnly], (kept) => Phases.fitsAPark(encodeWaiting(kept))),
-      () => least,
-    ),
-  );
-};
+// `waiting` as record data, all of it: the epic's own facts are small, and
+// nothing is dropped to fit. Past a record's 4 KB, writing it fails, as any
+// record's does, rather than a new run starting afresh unseen.
+export const waitingData = (waiting: Waiting) => encodeWaiting(waiting);
 
 // Records that the run parks waiting for a layer to change, as the step
 // `epic-waiting-<round>`, then parks until one does or `after` passes. A

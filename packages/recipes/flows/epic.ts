@@ -528,7 +528,8 @@ const upkeepFrom = (kept: Option.Option<Epic.LayerKeep>): Upkeep =>
     onSome: (found) => ({
       attempts: new Map(found.attempts),
       recorded: new Map(found.recorded),
-      withPerson: new Set(found.withPerson),
+      // This run's own: the pull request's record says who has it.
+      withPerson: new Set(),
       below: new Map(found.below),
       caughtUp: new Set(found.caughtUp),
       ci: [],
@@ -536,11 +537,10 @@ const upkeepFrom = (kept: Option.Option<Epic.LayerKeep>): Upkeep =>
   });
 
 // The upkeep as the epic's waiting record keeps it: the refreshes left on
-// pending CI are on their pull requests' records.
+// pending CI, and who has a layer, are on their pull requests' records.
 const keptOf = (upkeep: Upkeep): Epic.LayerKeep => ({
   attempts: [...upkeep.attempts],
   recorded: [...upkeep.recorded],
-  withPerson: [...upkeep.withPerson],
   below: [...upkeep.below],
   caughtUp: [...upkeep.caughtUp],
 });
@@ -964,14 +964,16 @@ const workThrough = (
 ) =>
   Effect.gen(function* () {
     const kept = Option.match(resumed, {
-      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [] }),
       onSome: (parked) => parked.tasks,
     });
 
     const attempts = new Map(kept.attempts);
     const handedBack = new Set(kept.handedBack);
-    // Tasks whose attempt ended with a person.
-    const withPerson = new Set(kept.withPerson);
+    // Tasks whose attempt in this run ended with a person: a round reads each
+    // as handed back before the run parks, so the waiting record never keeps
+    // it; who has a task is its own record (with-person).
+    const withPerson = new Set<number>();
     // The sub-issues each task waited on, as the rounds read them.
     const waitedOn = new Map<number, Set<number>>();
 
@@ -1046,7 +1048,6 @@ const workThrough = (
         tasks: {
           attempts: [...attempts],
           handedBack: [...handedBack],
-          withPerson: [...withPerson],
         },
         layers: keptOf(upkeep),
       });

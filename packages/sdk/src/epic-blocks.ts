@@ -738,11 +738,10 @@ const waitingOf = (
   const kept: Epic.Waiting = {
     fingerprint: progress.fingerprint,
     tasks: Option.match(tasks, {
-      onNone: () => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onNone: () => ({ attempts: [], handedBack: [] }),
       onSome: (state) => ({
         attempts: [...state.attempts],
         handedBack: [...state.handedBack],
-        withPerson: [...state.withPerson],
       }),
     }),
   };
@@ -754,7 +753,6 @@ const waitingOf = (
       layers: {
         attempts: [...upkeep.attempts],
         recorded: [...upkeep.recorded],
-        withPerson: [...upkeep.withPerson],
         below: [...upkeep.below],
         caughtUp: [...upkeep.caughtUp],
       },
@@ -769,14 +767,15 @@ const waitingOf = (
 export const loopStates = {
   "epic.tasks": (item: WorkItem): TaskState => {
     const kept = Option.match(Epic.resuming(item), {
-      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [] }),
       onSome: (parked) => parked.tasks,
     });
 
     return {
       attempts: new Map(kept.attempts),
       handedBack: new Set(kept.handedBack),
-      withPerson: new Set(kept.withPerson),
+      // This run's own: a round reads it as handed back before the run parks.
+      withPerson: new Set(),
       waitedOn: new Map(),
     };
   },
@@ -797,7 +796,8 @@ export const loopStates = {
       onSome: (found) => ({
         attempts: new Map(found.attempts),
         recorded: new Map(found.recorded),
-        withPerson: new Set(found.withPerson),
+        // This run's own: the pull request's record says who has it.
+        withPerson: new Set(),
         below: new Map(found.below),
         caughtUp: new Set(found.caughtUp),
         ci: [],

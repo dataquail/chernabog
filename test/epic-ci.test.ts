@@ -283,7 +283,7 @@ describe("an epic parked in a CI job", () => {
 
       fake.recordPhase(EPIC_ITEM, "waiting", {
         at: yield* DateTime.now,
-        data: { fingerprint, tasks: { attempts: [], handedBack: [], withPerson: [] } },
+        data: { fingerprint, tasks: { attempts: [], handedBack: [] } },
       });
 
       fake.comments.length = 0;
@@ -298,7 +298,7 @@ describe("an epic parked in a CI job", () => {
 
       fake.recordPhase(EPIC_ITEM, "waiting", {
         at: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
-        data: { fingerprint, tasks: { attempts: [[10, 1]], handedBack: [], withPerson: [] } },
+        data: { fingerprint, tasks: { attempts: [[10, 1]], handedBack: [] } },
       });
 
       const due = yield* onlyOffered(fake);
@@ -316,7 +316,7 @@ describe("an epic parked in a CI job", () => {
 
       fake.recordPhase(EPIC_ITEM, "waiting", {
         at: yield* DateTime.now,
-        data: { fingerprint: "stale", tasks: { attempts: [], handedBack: [], withPerson: [] } },
+        data: { fingerprint: "stale", tasks: { attempts: [], handedBack: [] } },
       });
 
       for (const number of [10, 11, 12, 13]) {
@@ -661,7 +661,6 @@ describe("an epic with more pending task and layer CI than fit in 4 KB", () => {
           tasks: {
             attempts: TASKS.map((issue) => [issue, 1] as const),
             handedBack: [],
-            withPerson: [],
           },
         }),
       });
@@ -716,7 +715,7 @@ describe("an epic with more pending task and layer CI than fit in 4 KB", () => {
 
       fake.recordPhase(EPIC_ITEM, "waiting", {
         at: yield* DateTime.now,
-        data: { fingerprint, tasks: { attempts: [], handedBack: [], withPerson: [] } },
+        data: { fingerprint, tasks: { attempts: [], handedBack: [] } },
       });
 
       fake.merge.ci = { state: "green" };
@@ -770,48 +769,30 @@ describe("an epic with more pending task and layer CI than fit in 4 KB", () => {
 
 const decodeWaiting = Schema.decodeUnknownOption(Epic.Waiting);
 
-describe("the epic's waiting record, when what the run kept is too big for it", () => {
+describe("the epic's waiting record", () => {
   const attempts = Arr.makeBy(600, (index): readonly [number, number] => [1000 + index, 3]);
 
-  test("drops the layers' upkeep first, then the tasks'", () => {
-    const layers: Epic.LayerKeep = {
-      attempts,
-      recorded: [],
-      withPerson: [],
-      below: [],
-      caughtUp: [],
-    };
-
-    expect(
-      decodeWaiting(
-        Epic.waitingData({
-          fingerprint: "f",
-          tasks: { attempts: [[10, 1]], handedBack: [], withPerson: [] },
-          layers,
-        }),
-      ),
-    ).toEqual(
-      Option.some({
-        fingerprint: "f",
-        tasks: { attempts: [[10, 1]], handedBack: [], withPerson: [] },
-      }),
-    );
-
-    expect(
-      decodeWaiting(
-        Epic.waitingData({ fingerprint: "f", tasks: { attempts, handedBack: [], withPerson: [] } }),
-      ),
-    ).toEqual(
-      Option.some({ fingerprint: "f", tasks: { attempts: [], handedBack: [], withPerson: [] } }),
-    );
-  });
-
-  test("keeps everything when it fits", () => {
+  // Nothing is dropped to fit: what the run kept is all written, or the
+  // record's 4 KB check fails the write, never a smaller record unseen.
+  test("keeps all the run kept, a large epic's layers and tasks too", () => {
     const waiting: Epic.Waiting = {
       fingerprint: "f",
-      tasks: { attempts: [[10, 1]], handedBack: [], withPerson: [] },
+      tasks: { attempts: [[10, 1]], handedBack: [] },
+      layers: { attempts: Arr.take(attempts, 40), recorded: [], below: [], caughtUp: [] },
     };
 
     expect(decodeWaiting(Epic.waitingData(waiting))).toEqual(Option.some(waiting));
+  });
+
+  test("past a record's 4 KB, encodes all of it, for the record's own check to refuse", () => {
+    const waiting: Epic.Waiting = {
+      fingerprint: "f",
+      tasks: { attempts, handedBack: [] },
+      layers: { attempts, recorded: [], below: [], caughtUp: [] },
+    };
+
+    const data = Epic.waitingData(waiting);
+    expect(decodeWaiting(data)).toEqual(Option.some(waiting));
+    expect(Phases.fitsAPark(data)).toBe(false);
   });
 });

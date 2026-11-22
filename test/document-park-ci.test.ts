@@ -409,8 +409,8 @@ describe("the epic document", () => {
       issue: EPIC,
       resumeEpic: {
         fingerprint: "f",
-        tasks: { attempts: [[10, 1]], handedBack: [10], withPerson: [12] },
-        layers: { attempts: [[7, 2]], recorded: [], withPerson: [], below: [], caughtUp: [7] },
+        tasks: { attempts: [[10, 1]], handedBack: [10] },
+        layers: { attempts: [[7, 2]], recorded: [], below: [], caughtUp: [7] },
       },
     });
 
@@ -418,13 +418,36 @@ describe("the epic document", () => {
     expect([[...tasks.attempts], [...tasks.handedBack], [...tasks.withPerson]]).toEqual([
       [[10, 1]],
       [10],
-      [12],
+      [],
     ]);
 
     const upkeep = Blocks.loopStates["stack.upkeep"](resumed);
     expect([[...upkeep.attempts], [...upkeep.caughtUp]]).toEqual([[[7, 2]], [7]]);
 
     expect(Blocks.loopStates["epic.tasks"](fresh).attempts.size).toBe(0);
+  });
+
+  // Who has a task or a layer is its own record's (with-person), not the
+  // epic's: a waiting record from before that still lists one says nothing.
+  test("a stale with-person list in the epic's record holds no task or layer", () => {
+    const stale: WorkItem = item(`issue-${EPIC}`, {
+      issue: EPIC,
+      resumeEpic: {
+        fingerprint: "f",
+        tasks: { attempts: [[12, 1]], handedBack: [], withPerson: [12] },
+        layers: { attempts: [], recorded: [], withPerson: [7], below: [], caughtUp: [] },
+      },
+    });
+
+    expect([...Blocks.loopStates["epic.tasks"](stale).withPerson]).toEqual([]);
+    expect([...Blocks.loopStates["stack.upkeep"](stale).withPerson]).toEqual([]);
+    expect(Epic.resuming(stale)).toEqual(
+      Option.some({
+        fingerprint: "f",
+        tasks: { attempts: [[12, 1]], handedBack: [] },
+        layers: { attempts: [], recorded: [], below: [], caughtUp: [] },
+      }),
+    );
   });
 
   effect(
