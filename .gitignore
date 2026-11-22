@@ -7,3 +7,6 @@ dist/
 .astro/
 .chernabog/local.yaml
 coverage/
+# Mutation runs: their reports and incremental state, and the backups an in-place run restores from.
+reports/mutation/
+.stryker-tmp/

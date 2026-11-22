@@ -49,11 +49,13 @@ const fromPhase = (transition: PhaseTransition) =>
 const versionOf = (read: Option.Option<{ readonly version: string }>) =>
   Option.map(read, (found) => found.version);
 
-// The record is this transition, by this writer: a retry of a write that landed.
+// The record is this transition, by this writer: a retry of a write that
+// landed. A writer that read this very record isn't retrying it.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, fromPhase(transition));
+  Equal.equals(record.from, fromPhase(transition)) &&
+  !Option.exists(transition.from, (read) => read.version === record.version);
 
 // What advancing `item` by `transition` does to `store`, all in one step, `at`
 // the time it would be written.
@@ -174,14 +176,20 @@ export const progressStore = (options: StoreOptions = {}) => {
       Object.fromEntries([...store.records].map(([item, record]) => [item, record.phase])),
     // Moves `item` to `phase` from whatever it holds, as a writer before the
     // test would have: a state for the test to start from. Written `at` the
-    // epoch unless the test says when, which a TestClock also starts at.
+    // epoch unless the test says when, which a TestClock also starts at, with
+    // the blobs it gives.
     seed: (
       item: string,
       phase: Phase,
       by: PhaseWriter,
-      when: { readonly at?: DateTime.Utc; readonly data?: PhaseData } = {},
+      when: {
+        readonly at?: DateTime.Utc;
+        readonly data?: PhaseData;
+        readonly blobs?: ReadonlyArray<Uint8Array | string>;
+      } = {},
     ) => {
       const written = store.written + 1;
+      const blobs = named(when.blobs ?? []);
 
       const record: PhaseRecord = {
         phase,
@@ -190,10 +198,14 @@ export const progressStore = (options: StoreOptions = {}) => {
         version: `v${written}`,
         at: when.at ?? DateTime.makeUnsafe(0),
         data: Option.fromUndefinedOr(when.data),
-        blobs: [],
+        blobs: [...blobs.keys()],
       };
 
-      store = { ...store, records: new Map([...store.records, [item, record]]), written };
+      store = {
+        records: new Map([...store.records, [item, record]]),
+        blobs: new Map([...store.blobs, [record.version, blobs]]),
+        written,
+      };
     },
   };
 };

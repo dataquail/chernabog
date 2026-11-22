@@ -130,7 +130,8 @@ describe("the catalogue's phases", () => {
             "approved",
             "draft",
             "ready-for-person",
-            "awaiting-ci",
+            "awaiting-fix-ci",
+            "handed-back",
           ],
           to: "changes-asked",
         },
@@ -142,7 +143,14 @@ describe("the catalogue's phases", () => {
       reconciles: [
         {
           item: "pull-request",
-          from: ["review-asked", "changes-asked", "approved", "draft", "ready-for-person"],
+          from: [
+            "review-asked",
+            "changes-asked",
+            "approved",
+            "draft",
+            "ready-for-person",
+            "handed-back",
+          ],
           to: "review-asked-again",
         },
       ],
@@ -429,12 +437,20 @@ describe("one catalogue, for the compiler and the ledger", () => {
     );
   });
 
-  test("takes a phase two kinds share, and a later round's, on either", () => {
-    for (const item of ["issue", "pull-request"] as const) {
-      expect(Phases.misplacedOn(item, "awaiting-ci-3")).toEqual(Option.none());
-      expect(anomaly(item, "awaiting-ci")).toEqual(Option.none());
-    }
+  test("takes a wait for CI, and a later round's, on its own kind of item alone", () => {
+    expect(Phases.misplacedOn("issue", "awaiting-ci-3")).toEqual(Option.none());
+    expect(anomaly("issue", "awaiting-ci")).toEqual(Option.none());
+    expect(Phases.misplacedOn("issue", "awaiting-adopted-ci-2")).toEqual(Option.none());
+    expect(Phases.misplacedOn("pull-request", "awaiting-fix-ci-3")).toEqual(Option.none());
+    expect(anomaly("pull-request", "awaiting-fix-ci")).toEqual(Option.none());
 
+    // No two park sites share a phase, so none is two kinds' (#566).
+    expect(Phases.misplacedOn("pull-request", "awaiting-ci")).toEqual(
+      Option.some("awaiting-ci isn't a phase of a pull-request"),
+    );
+    expect(Phases.misplacedOn("issue", "awaiting-fix-ci-2")).toEqual(
+      Option.some("awaiting-fix-ci-2 isn't a phase of an issue"),
+    );
     expect(Phases.misplacedOn("epic", "awaiting-ci")).toEqual(
       Option.some("awaiting-ci isn't a phase of an epic"),
     );

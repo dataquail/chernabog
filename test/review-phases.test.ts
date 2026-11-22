@@ -273,9 +273,11 @@ describe("a fact no run was there to record moves the record on", () => {
       const fake = changesAskedOnHead(Option.some("changes-asked"));
       asReviewer(fake);
       fake.people.requested = ["data-quail"];
+      // With a person by its record (ADR 21, decision 1), the label its projection.
+      fake.recordPhase(ITEM, "with-person");
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
       expect(yield* keys(fake, reReview)).toEqual([]);
-      expect(fake.phases()).toEqual({ [ITEM]: "changes-asked" });
+      expect(fake.phases()).toEqual({ [ITEM]: "with-person" });
     }),
   );
 });

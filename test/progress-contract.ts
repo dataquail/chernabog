@@ -284,6 +284,27 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
       }),
     );
 
+    // A wait recorded again over this writer's own record of it, as a plan's
+    // wait over the plan its run proposed, is a new move: the writer read it.
+    effect("the same move again, from the record it read, writes a new record", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const again = yield* progress.advance(ITEM, after(asked, REVIEW_ASKED, RUN_A));
+
+        const thrice = yield* progress.advance(ITEM, {
+          ...after(again, REVIEW_ASKED, RUN_A),
+          data: DATA,
+          blobs: [PLAN],
+        });
+
+        expect(thrice.version).not.toBe(again.version);
+        expect(thrice.data).toEqual(Option.some(DATA));
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(thrice));
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+      }),
+    );
+
     effect("a retried first phase finds its own record and succeeds", () =>
       Effect.gen(function* () {
         const progress = yield* make;
@@ -305,6 +326,41 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         expect(Option.map(moved(exit), (error) => error.found)).toEqual(
           Option.some(Option.some(CHANGES_ASKED)),
         );
+      }),
+    );
+
+    // A writer's own record is the move it made: from the same read to another
+    // phase is a second move, which the item has already left behind.
+    effect(
+      "the same writer moving on again from the same read, to another phase, is a lost race",
+      () =>
+        Effect.gen(function* () {
+          const progress = yield* make;
+          const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+          const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+
+          const exit = yield* Effect.exit(
+            progress.advance(ITEM, after(asked, REVIEW_ASKED_AGAIN, RUN_A)),
+          );
+
+          expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+            Option.some([Option.some(REVIEW_ASKED), Option.some(CHANGES_ASKED)]),
+          );
+          expect(yield* progress.read(ITEM)).toEqual(Option.some(changes));
+        }),
+    );
+
+    effect("the same writer's second first phase, to another phase, is a lost race", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+
+        const exit = yield* Effect.exit(progress.advance(ITEM, first(CHANGES_ASKED, RUN_A)));
+
+        expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
+          Option.some([Option.none(), Option.some(REVIEW_ASKED)]),
+        );
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(asked));
       }),
     );
 

@@ -219,11 +219,13 @@ export const reReviewBlocks = {
 
 export const reReviewSources = {
   // Pull requests whose record says a review is asked again of this persona,
-  // one item per request, unless a person has them (auto:needs-human): asking
-  // again during a dispute doesn't restart the loop. Each item's key carries
-  // the record it reads, so each request is a run of its own. A request that
-  // finds the record at changes asked or approved, such as a person asking
-  // after a fix of their own, moves it on first (Review.requestedAgain).
+  // one item per request, unless a person has them (their record is
+  // with-person): asking again during a dispute doesn't restart the loop.
+  // Each item's key carries the record it reads, so each request is a run of
+  // its own. A request that finds the record at changes asked or approved,
+  // such as a person asking after a fix of their own, or handed back from
+  // review-asked-again or changes-asked, moves it on first
+  // (Review.requestedAgain).
   "review.requestedAgain": defineSource(
     "review.requestedAgain",
     "pull-request",
@@ -246,6 +248,8 @@ export const reReviewSources = {
             PHASES.pullRequest.approved,
             PHASES.pullRequest.draft,
             PHASES.pullRequest.readyForPerson,
+            // Handed back from review-asked-again or changes-asked.
+            PHASES.pullRequest.handedBack,
           ],
           to: PHASES.pullRequest.reviewAskedAgain,
         },

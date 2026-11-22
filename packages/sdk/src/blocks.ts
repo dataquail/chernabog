@@ -270,7 +270,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           // The worktree is made only for a fix.
           Implement.prepareWorktree(input.branch, onBase(input.base)),
           { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
-          yield* Implement.documentCiWait(input.pr),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingAdoptedCi, input.pr),
         );
       }),
     failures: {
@@ -281,12 +281,12 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
-    records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
+    records: [{ item: "issue", phase: PHASES.issue.awaitingAdoptedCi }],
     parks: Implement.documentCiResumes,
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
-      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingCi] }],
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingAdoptedCi] }],
     },
     outcomes: {},
     mustRoute: [],
@@ -597,7 +597,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           input.pr,
           input.worktree,
           target,
-          yield* Implement.documentCiWait(input.pr, inLane(input.lane)),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingCi, input.pr, inLane(input.lane)),
         );
       }),
     failures: {
@@ -907,8 +907,7 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
   ),
 
   // Pull requests that ask this persona for their first review, by their
-  // record (Review.requestedFirst), unless a person has them
-  // (auto:needs-human), routed by their assignees and reviewers.
+  // record (Review.requestedFirst), routed by their assignees and reviewers.
   // One whose record GitHub disagrees with is held, for status to show why.
   "review.requested": defineSource(
     "review.requested",
@@ -978,7 +977,7 @@ export const sourceDescriptions = {
   },
   "pr.conflicting": {
     about:
-      "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those labelled auto:needs-human or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
+      "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those a person has (recorded with-person) or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
     with: {},
   },
   "plan.queued": {
@@ -993,17 +992,17 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about:
-      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written, or it is labelled auto:needs-human. One with no record, which a person opened, is a first review.",
+      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written. One with no record, which a person opened, is a first review, as is one a person handed back from any phase but review-asked-again or changes-asked. One recorded with-person is left with the person.",
     with: {},
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those a person has (recorded with-person) or owned by another run. A person's review asking for changes on the head moves the record there first, and so does one on a pull request a person handed back from changes-asked; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4.",
     with: {},
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked, draft or ready-for-person whose record says it had reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record is a first review's (review.requested).",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those a person has (recorded with-person). A request of one recorded changes-asked or approved, or handed back from review-asked-again or changes-asked, or review-asked, draft or ready-for-person whose record says it had reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record is a first review's (review.requested).",
     with: {},
   },
   "review.waitingElsewhere": {
@@ -1137,15 +1136,13 @@ export const transitions: Ledger.Catalogue = {
     ...Review.OBSERVED,
     ...Backfill.OBSERVED,
     // A trusted person removed auto:needs-human (Phases.reconcileHandedBack):
-    // the item goes back to the phase it left, or to handed-back.
-    ...Phases.ITEM_KINDS.flatMap((item) =>
-      Phases.handedBackTo(item).map((to): Ledger.Observed => ({
-        by: Phases.HANDED_BACK_BY,
-        item,
-        from: [Phases.PHASES.issue.withPerson],
-        to,
-      })),
-    ),
+    // the item is handed-back, which sources act on.
+    ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
+      by: Phases.HANDED_BACK_BY,
+      item,
+      from: [Phases.PHASES.issue.withPerson],
+      to: Phases.PHASES.issue.handedBack,
+    })),
     ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
       by: Ledger.ACKNOWLEDGED,
       item,

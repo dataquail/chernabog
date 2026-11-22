@@ -756,16 +756,14 @@ type Held = {
 };
 
 // Every run holding a merge on an open pull request on the automated path
-// (ships), by its merge-held record (ADR 0021, decision 3). Not one labelled
-// needs-human: a run that gave the hold up handed it to a person
-// (handToPerson), and no flow takes it up again until they remove the label.
+// (ships), by its merge-held record (ADR 0021, decision 3). A run that gave
+// the hold up handed it to a person (handToPerson), whose with-person record
+// holds no merge, so no flow takes it up again until they hand it back.
 const heldMergesOnPulls = Effect.gen(function* () {
   const github = yield* GitHub;
   const labelNames = yield* Settings.labels;
 
-  const shipping = (yield* github.openPullRequests).filter(
-    (pull) => ships(pull, labelNames) && !pull.labels.includes(labelNames.needsHuman),
-  );
+  const shipping = (yield* github.openPullRequests).filter((pull) => ships(pull, labelNames));
 
   const all = yield* Phases.records;
 
@@ -850,13 +848,13 @@ export const documentMergeResumes = (
         Effect.asSome,
         Effect.catchTag("NotFound", () => Effect.succeedNone),
       ),
-      (found) =>
-        found.state === "open" &&
-        ships(found, labelNames) &&
-        !found.labels.includes(labelNames.needsHuman),
+      (found) => found.state === "open" && ships(found, labelNames),
     );
 
-    if (Option.isNone(pull)) {
+    if (
+      Option.isNone(pull) ||
+      (yield* Phases.withPerson(Phases.pullRequestItem(pull.value.number)))
+    ) {
       return Option.none<WorkItem>();
     }
 

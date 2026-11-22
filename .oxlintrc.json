@@ -33,6 +33,10 @@
     "node_modules/**",
     "website/**",
     "tools/oxlint/**",
+    // Stryker's configs and its ignorer plugin: plain JavaScript that Node loads, outside
+    // every tsconfig, so the type-aware rules can only read them as untyped.
+    "stryker/**",
+    "tools/stryker/**",
     "src/platform/effect-modules.ts"
   ],
   "rules": {

@@ -384,7 +384,9 @@ export const addressReviewBlocks = {
             input.pr,
             input.worktree,
             { ...input.session, branch: input.branch, ...onBase(input.base) },
-            yield* Implement.documentCiWait(input.pr, { id: `review-${input.review.round}` }),
+            yield* Implement.documentCiWait(PHASES.pullRequest.awaitingFixCi, input.pr, {
+              id: `review-${input.review.round}`,
+            }),
           ),
         );
       }),
@@ -397,12 +399,12 @@ export const addressReviewBlocks = {
     },
     outcomes: {},
     mustRoute: [],
-    records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingCi }],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingFixCi }],
     parks: Implement.documentCiResumes,
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
-      wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.awaitingCi] }],
+      wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.awaitingFixCi] }],
     },
   }),
 
@@ -454,9 +456,10 @@ export const addressReviewBlocks = {
 export const addressReviewSources = {
   // Pull requests this persona wrote whose record says changes asked, by a
   // review on the current head, so nothing was pushed since
-  // (Review.changesToAddress). A person has one labelled auto:needs-human, and
-  // a run of another flow one it owns; both are left alone. Each is routed by
-  // its assignees and reviewers.
+  // (Review.changesToAddress). A person has one whose record is with-person,
+  // and a run of another flow one it owns; both are left alone. One a person
+  // handed back from changes-asked answers the changes asked on its head.
+  // Each is routed by its assignees and reviewers.
   "review.changesRequested": defineSource(
     "review.changesRequested",
     "changes-asked",
@@ -478,7 +481,9 @@ export const addressReviewSources = {
             // A fix whose CI a CI job left pending, and its later rounds'
             // (Review.changesToAddress): a review asking for changes on its
             // head is new work.
-            PHASES.pullRequest.awaitingCi,
+            PHASES.pullRequest.awaitingFixCi,
+            // Handed back from changes-asked (Review.changesToAddress).
+            PHASES.pullRequest.handedBack,
           ],
           to: PHASES.pullRequest.changesAsked,
         },

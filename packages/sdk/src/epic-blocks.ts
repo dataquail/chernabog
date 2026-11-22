@@ -40,7 +40,7 @@ import {
 import * as Epic from "./epic.ts";
 import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
-import { NO_RECORD, PHASES } from "./phases.ts";
+import { NO_RECORD, PHASES, pullRequestItem, withPerson as isWithPerson } from "./phases.ts";
 import * as Plan from "./plan.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Routing from "./routing.ts";
@@ -165,8 +165,8 @@ const baseGone = (id: string, base: string) =>
 // What the run reads of a stacked layer before it carries the layers below up
 // to it, as the step `stack-base-<round>#<pull request>`: the branch it is
 // built on and that branch's head, none once it is gone, and whether a person
-// has the layer. The saved head is the layer's recorded base, so a replay
-// compares as the run first did.
+// has the layer, by its pull request's record. The saved head is the layer's
+// recorded base, so a replay compares as the run first did.
 const StackBase = Schema.Struct({
   base: Schema.String,
   baseSha: Schema.Option(Schema.String),
@@ -178,13 +178,12 @@ const readBase = (round: number, pullRequest: number) =>
     `stack-base-${round}#${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
       const pull = yield* github.pullRequest(pullRequest);
 
       return {
         base: pull.baseRef,
         baseSha: yield* github.branchSha(pull.baseRef),
-        withPerson: pull.labels.includes(labelNames.needsHuman),
+        withPerson: yield* isWithPerson(pullRequestItem(pullRequest)),
       };
     }).pipe(
       // A pull request gone under the run leaves nothing to bring up to date.
@@ -465,7 +464,7 @@ const carryUp = (round: number, progress: Epic.Progress, kept: Upkeep) =>
 
 // What the run reads of a layer before it lands it, as the step
 // `land-read-<round>#<pull request>`: the branch it is on, whether it ships,
-// whether a person has it, and where it lands: the branch the layer below
+// whether a person has it, by its record, and where it lands: the branch the layer below
 // merged into once that one has, the flow's integration base otherwise, and
 // that branch's head.
 const Landing = Schema.Struct({
@@ -492,7 +491,7 @@ const readLanding = (round: number, pullRequest: number, lower: Option.Option<nu
       return {
         base: pull.baseRef,
         ships: PullRequest.ships(pull, labelNames),
-        withPerson: pull.labels.includes(labelNames.needsHuman),
+        withPerson: yield* isWithPerson(pullRequestItem(pullRequest)),
         target,
         targetSha: yield* github.branchSha(target),
       };

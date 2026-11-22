@@ -248,6 +248,9 @@ export const makeFake = (
   ]);
 
   const comments: Array<Comment> = [];
+  // The last comment id given: ids only grow, as GitHub's do, so a comment a
+  // test deletes leaves its id unused.
+  let commentIds = 0;
   const reviews: Array<string> = [];
 
   // Who this run acts as, who the pull request asks to review it, and the reviews submitted on it.
@@ -297,6 +300,7 @@ export const makeFake = (
       readonly at?: DateTime.Utc;
       readonly data?: { readonly [key: string]: Json };
       readonly by?: string;
+      readonly blobs?: ReadonlyArray<string>;
     } = {},
   ) => {
     progress.seed(
@@ -312,6 +316,7 @@ export const makeFake = (
           onNone: () => ({}),
           onSome: (data) => ({ data: Schema.decodeSync(PhaseData)(data) }),
         }),
+        blobs: when.blobs ?? [],
       },
     );
   };
@@ -523,8 +528,10 @@ export const makeFake = (
   };
 
   const comment = (body: string, by = "chernabog-bot") => {
+    commentIds += 1;
+
     comments.push({
-      id: comments.length + 1,
+      id: commentIds,
       author: by,
       body,
       createdAt: "2026-10-20T00:00:00Z",

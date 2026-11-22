@@ -234,6 +234,8 @@ describe("re-review", () => {
         expect(yield* keys(fake, reReview)).toEqual([`pr-${PULL}-review-asked-again-v2`]);
         expect(yield* keys(fake, review)).toEqual([]);
 
+        // With a person by its record (ADR 21, decision 1), the label its projection.
+        fake.recordPhase(`pr-${PULL}`, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
         expect(yield* keys(fake, reReview)).toEqual([]);
       }),
@@ -538,8 +540,11 @@ describe("address-review", () => {
         expect(yield* startable(fake, addressReview)).toEqual([]);
         fake.git.head = HEAD;
 
+        // With a person by its record (ADR 21, decision 1), the label its projection.
+        fake.recordPhase(pullItem, "with-person");
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
         expect(yield* startable(fake, addressReview)).toEqual([]);
+        fake.recordPhase(pullItem, "changes-asked");
         fake.setLabels(PULL, []);
 
         fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });

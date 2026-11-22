@@ -116,8 +116,11 @@ describe("resolve-conflicts' trigger", () => {
   effect("leaves one a person has, one a run owns, and one another login wrote", () =>
     Effect.gen(function* () {
       const fake = conflicting();
+      // With a person by its record (ADR 21, decision 1), the label its projection.
+      fake.recordPhase(`pr-${PULL}`, "with-person");
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
       expect(yield* keys(fake)).toEqual([]);
+      fake.recordPhase(`pr-${PULL}`, "review-asked");
       fake.setLabels(PULL, []);
 
       fake.people.me = "zach";
