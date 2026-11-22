@@ -78,8 +78,19 @@ Feature: inherited
 
     expect(runnable(planned(source))).toEqual(["memory"]);
     expect(problemsOf(planned(source, "in-process"))[0]).toContain(
-      "names no known driver: @driver:memory (known: in-process, sandbox)",
+      "names no known driver: @driver:memory (known: in-process, sandbox, ci, live)",
     );
+  });
+
+  test("the ci and live drivers are known, though neither has an entry yet", () => {
+    const source = `Feature: later drivers
+  @driver:memory @driver:ci @driver:live
+  Scenario: everywhere
+    When someone files 1 issues
+`;
+
+    expect(problemsOf(planned(source))).toEqual([]);
+    expect(runnable(planned(source))).toEqual(["everywhere"]);
   });
 
   test("the describe block is the feature's name", () => {
@@ -173,7 +184,7 @@ describe("what can't run fails, naming the file and line", () => {
 `;
 
     expect(problemsOf(planned(source))).toEqual([
-      `${URI}:3: "half known" names no known driver: @driver:nonesuch (known: in-process, sandbox, memory)`,
+      `${URI}:3: "half known" names no known driver: @driver:nonesuch (known: in-process, sandbox, ci, live, memory)`,
     ]);
   });
 

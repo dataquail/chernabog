@@ -28,7 +28,7 @@ if (process.env.FAKE_AGENT_TOKEN_LOG) appendFileSync(process.env.FAKE_AGENT_TOKE
 if (process.env.FAKE_AGENT_SESSION_LOG) {
   const persona = /^token-(.+)$/.exec(process.env.GH_TOKEN ?? '')?.[1] ?? null;
   const revParse = (...names: Array<string>) => spawnSync('git', ['rev-parse', ...names, 'HEAD'], { cwd, encoding: 'utf8' }).stdout?.trim() ?? '';
-  appendFileSync(process.env.FAKE_AGENT_SESSION_LOG, `${JSON.stringify({ agent: 'codex', call: resuming ? 'resume' : 'start', session: thread, persona, branch: revParse('--abbrev-ref'), head: revParse(), cwd })}\n`);
+  appendFileSync(process.env.FAKE_AGENT_SESSION_LOG, `session ${JSON.stringify({ agent: 'codex', call: resuming ? 'resume' : 'start', session: thread, persona, branch: revParse('--abbrev-ref'), head: revParse(), cwd })}\n`);
 }
 console.log(JSON.stringify({ type: 'thread.started', thread_id: thread }));
 console.log(JSON.stringify({ type: 'turn.started' }));

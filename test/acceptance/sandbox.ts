@@ -93,7 +93,8 @@ export type MachineOptions = {
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
 
-// One call of a fake agent, as fakebin/claude and fakebin/codex log it.
+// One call of a fake agent, as fakebin/claude and fakebin/codex log it after
+// "session ".
 const AgentSessionLine = Schema.fromJsonString(
   Schema.Struct({
     agent: Schema.String,
@@ -107,7 +108,11 @@ const AgentSessionLine = Schema.fromJsonString(
   }),
 );
 
-export type AgentSession = typeof AgentSessionLine.Type;
+// Where an event is in the sandbox's one order of events (its event log):
+// what happened before it has a smaller one.
+export type Sequenced = { readonly sequence: number };
+
+export type AgentSession = typeof AgentSessionLine.Type & Sequenced;
 
 // A push the bare repo took: by the persona its token was for, if any, and
 // the ref it moved from one commit to another (all zeros for none).
@@ -116,17 +121,36 @@ export type Push = {
   readonly before: string;
   readonly after: string;
   readonly ref: string;
-};
+} & Sequenced;
 
-// The bare repo's post-receive hook: a line per ref a push moved, naming the
-// persona by fakebin/gh's token, and never the token itself.
+// The bare repo's post-receive hook: a "push" line in the event log per ref
+// a push moved, naming the persona by fakebin/gh's token, and never the token
+// itself. It runs once the refs have moved and before the push returns.
 const postReceive = (log: string) =>
   [
     "#!/bin/sh",
     'case "$GH_TOKEN" in token-*) by="${GH_TOKEN#token-}" ;; *) by="-" ;; esac',
-    `while read -r before after ref; do echo "$by $before $after $ref" >> '${log}'; done`,
+    `while read -r before after ref; do echo "push $by $before $after $ref" >> '${log}'; done`,
     "",
   ].join("\n");
+
+// The event log's lines, oldest first, each with its kind and the rest of
+// it, and where it is: its sequence. A line still being written, with no
+// newline yet, isn't one.
+const eventsIn = (file: string) => {
+  if (!existsSync(file)) {
+    return [];
+  }
+
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .slice(0, -1)
+    .map((line, sequence) => {
+      const space = line.indexOf(" ");
+
+      return { kind: line.slice(0, space), rest: line.slice(space + 1), sequence };
+    });
+};
 
 // `pid` is the CLI process's own, which names the telemetry file it writes.
 export type CliResult = { readonly code: number; readonly output: string; readonly pid: number };
@@ -310,10 +334,17 @@ export const openSandbox = (
   git(checkout, "add", ".");
   git(checkout, "commit", "-qm", "chore: set up chernabog");
   git(checkout, "push", "-q", "origin", "main");
+  // The one order of what happens from here on (#622): each event appends
+  // one line to this log as it happens, in one write to a file opened for
+  // appending, so the kernel puts every line after the ones written before
+  // it, whichever process wrote them. The bare repo logs each push as it
+  // takes it, a fake agent each call as it starts, and the fake GitHub each
+  // record as it makes it, before it answers. So an event that ended before
+  // another began is before it here; a line's place is its sequence.
+  const eventLog = join(root, "events.log");
   // Every push from here on, logged by the bare repo as it takes it: who
   // pushed, by the persona fakebin/gh's token is for, and what moved.
-  const pushLog = join(root, "pushes.log");
-  writeFileSync(join(bare, "hooks", "post-receive"), postReceive(pushLog), { mode: 0o755 });
+  writeFileSync(join(bare, "hooks", "post-receive"), postReceive(eventLog), { mode: 0o755 });
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, "config.yaml"), machineConfigText(root, checkout, machine));
   // The work account's login off macOS, where nothing asks fakebin/security for it.
@@ -322,7 +353,14 @@ export const openSandbox = (
     join(root, "claude", ".credentials.json"),
     JSON.stringify({ claudeAiOauth: { accessToken: "fake-token", expiresAt: 4102444800000 } }),
   );
-  const fakeGitHub = startFakeGitHub({ slug: SLUG, bare });
+
+  const fakeGitHub = startFakeGitHub({
+    slug: SLUG,
+    bare,
+    recorded: (what) => {
+      appendFileSync(eventLog, `github ${what}\n`);
+    },
+  });
 
   const github = {
     ...fakeGitHub,
@@ -335,7 +373,6 @@ export const openSandbox = (
   const ghLog = join(root, "gh.log");
   const agentTokenLog = join(root, "agent-tokens.log");
   const claudeLog = join(root, "claude.log");
-  const agentSessionLog = join(root, "agent-sessions.log");
   const disputingFile = join(root, "disputing");
 
   // Not GitHub Actions' own: on chernabog's CI it's "true", and ci run and
@@ -355,7 +392,7 @@ export const openSandbox = (
       .join(","),
     FAKE_GH_LOG: ghLog,
     FAKE_AGENT_TOKEN_LOG: agentTokenLog,
-    FAKE_AGENT_SESSION_LOG: agentSessionLog,
+    FAKE_AGENT_SESSION_LOG: eventLog,
     FAKE_CLAUDE_DISPUTING: disputingFile,
     FAKE_CODEX_LOG: join(root, "codex.log"),
     FAKE_OPENCODE_LOG: join(root, "opencode.log"),
@@ -455,18 +492,47 @@ export const openSandbox = (
 
   const agentTokens = () => callsIn(agentTokenLog);
 
+  // What the event log says now, from one read of it, so each part is up to
+  // the same point: every call of a fake agent and every push, oldest first,
+  // and each of the fake GitHub's records by what it said it recorded
+  // (fake-github.ts' Recorded), at its sequence.
+  const events = () => {
+    const logged = eventsIn(eventLog);
+
+    return {
+      agentSessions: logged
+        .filter((event) => event.kind === "session")
+        .map((event): AgentSession => ({
+          ...Schema.decodeSync(AgentSessionLine)(event.rest),
+          sequence: event.sequence,
+        })),
+      pushes: logged
+        .filter((event) => event.kind === "push")
+        .map((event): Push => {
+          const [by = "", before = "", after = "", ref = ""] = event.rest.split(" ");
+
+          return {
+            by: Option.liftPredicate(by, (login) => login !== "-"),
+            before,
+            after,
+            ref,
+            sequence: event.sequence,
+          };
+        }),
+      records: new Map(
+        logged
+          .filter((event) => event.kind === "github")
+          .map((event) => [event.rest, event.sequence] as const),
+      ),
+    };
+  };
+
   // Every call of a fake agent, oldest first: which agent, whether it started
   // or resumed its session, as which persona, and on which branch and commit.
-  const agentSessions = () =>
-    callsIn(agentSessionLog).map((line) => Schema.decodeSync(AgentSessionLine)(line));
+  const agentSessions = () => events().agentSessions;
 
   // Every push since the sandbox was set up, oldest first.
-  const pushes = () =>
-    callsIn(pushLog).map((line): Push => {
-      const [by = "", before = "", after = "", ref = ""] = line.split(" ");
-
-      return { by: Option.liftPredicate(by, (login) => login !== "-"), before, after, ref };
-    });
+  const pushes = () => events().pushes;
 
   // `login`'s agent declines what a review asks for from now on, rather than
   // addressing it.
@@ -549,6 +615,7 @@ export const openSandbox = (
     agentTokens,
     agentSessions,
     pushes,
+    events,
     disagreeAs,
     daemonReady,
     daemonStatus,

@@ -40,10 +40,9 @@ recorded here so an agent reads them while it works.
    themselves.
 
    The check hands the pull request to a person through
-   `PullRequest.handToPerson`, never by writing the label itself. Today that
-   labels and comments. Once #559 lands it records `with-person` (ADR 21,
-   decision 1), and the label is that record's projection, with no change to
-   the check.
+   `PullRequest.handToPerson`, never by writing the label itself. Since #559
+   landed (#595), that records `with-person` (ADR 21, decision 1), and the
+   label is that record's projection. The check didn't change.
 
    Only a person's approving review clears it: a trusted login that is not
    one of the repo's personas, approving a head whose feature files are
@@ -90,17 +89,32 @@ recorded here so an agent reads them while it works.
 
 - **Where the files live.** Feature files are `test/features/*.feature`.
 - **Driver tags.** A scenario names the drivers that run it with tags on
-  the Feature or the Scenario: `@driver:in-process`, `@driver:sandbox`, and
-  later `@driver:ci` and `@driver:live`. A Scenario's tags add to its
+  the Feature or the Scenario: `@driver:in-process`, `@driver:sandbox`,
+  `@driver:ci` and `@driver:live` (#622). A Scenario's tags add to its
   Feature's.
 - **Fail, don't skip.** A scenario with no driver tag, a driver tag that no
   driver answers, or a step with no definition fails the run. None of them
   is skipped, because a skipped spec looks like a passing one.
 - **One small entry file per driver.** Each feature has one `.test.ts` per
   driver that runs it. The in-process entry sits under `test/features/`,
-  beside the feature. The sandbox entry sits under `test/acceptance/`, so
-  `test/acceptance/timings.json` shards it like any other acceptance file,
-  and `bun run test:unit` leaves it out.
+  beside the feature. The sandbox and ci entries sit under
+  `test/acceptance/`, so `test/acceptance/timings.json` shards them like any
+  other acceptance file, and `bun run test:unit` leaves them out.
+- **A live entry that isn't configured.** Without the scratch repo it
+  needs, a live entry registers one visibly skipped test that names what to
+  set, as `progress-live.test.ts` does, and none of the feature's scenarios.
+  That is a whole driver that can't run on this machine, not a scenario
+  skipped where its driver runs, so "fail, don't skip" still holds. The
+  runner knows `ci` and `live` (its `DRIVERS`) before either has an entry,
+  so a spec can be tagged for them.
+- **One order of events.** Each history in the domain's world (reviews,
+  replies, pushes, review requests, hand-offs, agent sessions, merges)
+  gives each event a sequence, in the order things happened, the same way
+  on every driver. A step that says "again", "since" or "the fix" compares
+  sequences, never a world seen at an earlier step. In-process, the SDK
+  fake numbers its acts with one counter. On the sandbox, the fake GitHub,
+  the bare repo's push hook and the fake agents each append a line to one
+  event log as the event happens, and a line's place is its sequence.
 
 ## Rejected
 

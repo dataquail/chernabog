@@ -46,9 +46,11 @@ import { type Matched, matching, type Steps } from "./steps/registry.ts";
 export const FEATURES = "test/features";
 
 // The drivers a scenario's @driver tag may name, besides the one an entry
-// runs: in-process (#582) and sandbox (#583). ci and live join them if they
-// are built. A tag naming anything else fails, since nothing would run it.
-export const DRIVERS: ReadonlyArray<string> = ["in-process", "sandbox"];
+// runs: in-process (#582), sandbox (#583), ci and live (ADR 22, decision 7).
+// ci and live are known before either has an entry, so a spec can be tagged
+// for them; until it has one, nothing runs the scenario there. A tag naming
+// anything else fails, since nothing would run it.
+export const DRIVERS: ReadonlyArray<string> = ["in-process", "sandbox", "ci", "live"];
 
 const DRIVER_TAG = "@driver:";
 

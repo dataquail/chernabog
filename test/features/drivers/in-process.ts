@@ -131,7 +131,9 @@ const pullRequestSeen = (fake: Fake): PullRequestSeen => ({
 });
 
 // What can be seen on the fake: everything happens on its one issue and one
-// pull request, the pushes and agent sessions before it opened included.
+// pull request, the pushes and agent sessions before it opened included. The
+// histories are in the fake's one order of acts: each act's sequence is the
+// one the fake gave it as it was done.
 const worldOf = (machine: Machine, fake: Fake): World => ({
   issues: Arr.filter([{ number: ISSUE, labels: fake.labelsOf(ISSUE) }], () => machine.filed),
   pullRequests: Arr.filter([pullRequestSeen(fake)], () => fake.git.opened),
@@ -141,17 +143,28 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
     verdict: verdictOf(found.state),
     head: found.commitSha,
     lineComments: found.lineComments,
+    sequence: found.sequence,
   })),
   replies: fake.acts.comments
     .filter((found) => found.on === PULL && answersAReview(found.body))
-    .map((found) => ({ pullRequest: PULL, author: found.author, reasons: reasonsOf(found.body) })),
+    .map((found) => ({
+      pullRequest: PULL,
+      author: found.author,
+      reasons: reasonsOf(found.body),
+      sequence: found.sequence,
+    })),
   pushes: fake.acts.pushes.map((found) => ({ pullRequest: PULL, ...found })),
   reviewRequests: fake.acts.reviewRequests.flatMap((found) =>
-    found.reviewers.map((reviewer) => ({ pullRequest: PULL, reviewer, by: found.by })),
+    found.reviewers.map((reviewer) => ({
+      pullRequest: PULL,
+      reviewer,
+      by: found.by,
+      sequence: found.sequence,
+    })),
   ),
   handOffs: fake.acts.labelled
     .filter((found) => found.number === PULL && handsOff(found.label))
-    .map(() => ({ pullRequest: PULL })),
+    .map((found) => ({ pullRequest: PULL, sequence: found.sequence })),
   // The fake agent can't say whether it resumed: a session it ran before
   // under the same id is one the agent's adapter would resume.
   sessions: fake.acts.sessions.map((found, index) => ({
@@ -161,7 +174,9 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
     resumed: fake.acts.sessions
       .slice(0, index)
       .some((earlier) => earlier.sessionId === found.sessionId),
+    sequence: found.sequence,
   })),
+  merges: fake.acts.merges.map((found) => ({ ...found })),
 });
 
 // What a run needs of the scenario: its scope, which keeps each run's engine
@@ -336,7 +351,11 @@ const domainOver = (machine: Machine, context: Platform): Domain => ({
         ...fake.people.requested.filter((login) => !reviewers.includes(login)),
         ...reviewers,
       ];
-      fake.acts.reviewRequests.push({ by: A_PERSON, reviewers: [...reviewers] });
+      fake.acts.reviewRequests.push({
+        by: A_PERSON,
+        reviewers: [...reviewers],
+        sequence: fake.acts.next(),
+      });
     }),
   world: Effect.map(fakeOf(machine), (fake) => worldOf(machine, fake)),
   waitUntil: (description, find) =>
