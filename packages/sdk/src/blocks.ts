@@ -20,6 +20,8 @@ import {
   NeedsHuman,
   Repo,
   reportAs,
+  Skip,
+  StepFailed,
   type StillValid,
   type WorkflowServices,
   type WorkItem,
@@ -47,10 +49,10 @@ import {
   gather,
   inLane,
   IssueNumber,
-  Kept,
   type LaneId,
   laneSession,
   onBase,
+  type Parks,
   PullRequestNumber,
   pullRequestRef,
   Pushed,
@@ -115,6 +117,113 @@ const conflicts = (pullRequest: number) =>
     Schema.Boolean,
   );
 
+// A pull request a step opened or published, as the steps after it name it.
+type OpenedPullRequest = {
+  readonly number: PullRequestNumber;
+  readonly url: string;
+  readonly draft?: boolean;
+};
+
+// The wait for CI implement parked on `waits` that a run takes up from
+// `item` (Implement.awaitingCiOn), with the pull request's branch and base
+// as GitHub has them now: a step that fails for an item that takes up no
+// such wait, and one that skips for a pull request gone since.
+const resumedCi = (item: WorkItem, waits: Implement.ResumingCi["phase"]) =>
+  Effect.gen(function* () {
+    const waited = Option.filter(Implement.resumingCi(item), (found) => found.phase === waits);
+
+    if (Option.isNone(waited)) {
+      return yield* new StepFailed({
+        step: `resume-${waits}`,
+        message: `the work item takes up no wait on ${waits}`,
+      });
+    }
+
+    const pullRequest = waited.value.pullRequest;
+
+    const pull = yield* activity(
+      `resumed-pr-${pullRequest}`,
+      Effect.gen(function* () {
+        const found = yield* (yield* GitHub).pullRequest(pullRequest);
+
+        return { headRef: found.headRef, baseRef: found.baseRef };
+      }).pipe(
+        Effect.catchTag("NotFound", () =>
+          Effect.fail(new Skip({ reason: `#${pullRequest} is gone` })),
+        ),
+      ),
+      Schema.Struct({ headRef: Schema.String, baseRef: Schema.String }),
+    );
+
+    return {
+      ...waited.value,
+      branch: BranchName(pull.headRef),
+      base: Option.some(BaseBranch(pull.baseRef)),
+    };
+  });
+
+// The pull request a wait for CI implement parked on `waits` waits on, by the
+// item that takes it up.
+const ciPullRequest = (item: WorkItem, waits: Implement.ResumingCi["phase"]) =>
+  Option.map(
+    Option.filter(Implement.resumingCi(item), (found) => found.phase === waits),
+    (found) => PullRequestNumber(found.pullRequest),
+  );
+
+// Waits for CI on an adopted pull request, making a worktree only for a fix,
+// from `firstRound` for a run that took the wait up.
+const waitPreparing = (
+  pullRequest: number,
+  branch: BranchName,
+  base: Option.Option<BaseBranch>,
+  firstRound: Option.Option<number>,
+) =>
+  Effect.gen(function* () {
+    return yield* Implement.waitForCiMaking(
+      pullRequest,
+      // The worktree is made only for a fix.
+      Implement.prepareWorktree(branch, onBase(base)),
+      { ...Implement.thisRunsSession, branch, ...onBase(base) },
+      yield* Implement.documentCiWait(
+        PHASES.issue.awaitingAdoptedCi,
+        { pullRequest },
+        {},
+        firstRound,
+      ),
+    );
+  });
+
+type MergeMethod = "squash" | "merge" | "rebase";
+
+// Merges an approved pull request, for pr.land: only one on the automated
+// path, and only when that's safe. While CI on its base is red the merge
+// holds, parked on the pull request's record; one refused because it
+// conflicts with its base is left to resolve-conflicts.
+const land = (pr: PullRequestNumber, method: MergeMethod) =>
+  Effect.gen(function* () {
+    if (!(yield* PullRequest.shipping(pr))) {
+      return `#${pr} approved; a person merges`;
+    }
+
+    const waiting = yield* PullRequest.waitingOnLayer(pr);
+
+    if (Option.isSome(waiting)) {
+      return `#${pr} approved; ${waiting.value}`;
+    }
+
+    return yield* PullRequest.mergeHolding(pr, { method, data: { pullRequest: pr } }).pipe(
+      Effect.catchTag("MergeRefused", (refused) =>
+        Effect.gen(function* () {
+          if (yield* conflicts(pr)) {
+            return `#${pr} approved, but it conflicts with its base; resolve-conflicts takes it`;
+          }
+
+          return yield* PullRequest.handToPerson(pr, refused.message);
+        }),
+      ),
+    );
+  });
+
 // Step names more than one block uses.
 const CI_STEPS = "ci";
 const CLAIM_STEPS = "claim";
@@ -137,13 +246,6 @@ const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
 export const catalogue = elsewhere.and("blocks.ts", {
   "issue.claim": defineBlock({
     name: "issue.claim",
-    keeps: Schema.toCodecJson(
-      Schema.Struct({
-        branch: Kept.branch,
-        base: Schema.Option(Kept.base),
-        adopted: Schema.optional(Implement.Adopted),
-      }),
-    ),
     // Only these let its claim go: an issue's and a spec's scopes, and the
     // engine for an epic's tasks.
     suits: ["epic", "issue", "spec"],
@@ -252,27 +354,28 @@ export const catalogue = elsewhere.and("blocks.ts", {
   "ci.waitPreparing": defineBlock({
     name: "ci.waitPreparing",
     about:
-      "Waits for CI on a pull request with no worktree yet, making one only if CI needs a fix.",
-    inputKinds: { pr: "PullRequestNumber", branch: "BranchName", base: "Option<BaseBranch>" },
-    outputKinds: "nothing",
+      "Waits for CI on an adopted pull request with no worktree yet, making one only if CI needs a fix. CI still pending records awaiting-adopted-ci on the issue, with the pull request, and the run ends at the park; a run that takes it up starts here, on the pull request's branch and base as GitHub has them. Its output, the adopted pull request and its branch, is what the steps after it read.",
+    inputKinds: {
+      adopted: "the adopted pull request, from issue.claim's adopted",
+      branch: "BranchName",
+      base: "Option<BaseBranch>",
+    },
+    outputKinds: {
+      adopted: "the adopted pull request, for issue.handOffAdopted",
+      branch: "BranchName: its branch, for issue.handOffAdopted",
+    },
     outcomeKinds: {},
     before: ["issue.handOffAdopted"],
     stepNames: [CI_STEPS, WORKTREE_STEPS],
-    inputs: { pr: "required", branch: "required", base: "required" },
+    inputs: { adopted: "required", branch: "required", base: "required" },
     run: (input: {
-      readonly pr: PullRequestNumber;
+      readonly adopted: Implement.Adopted;
       readonly branch: BranchName;
       readonly base: Option.Option<BaseBranch>;
     }) =>
-      Effect.gen(function* () {
-        return yield* Implement.waitForCiMaking(
-          input.pr,
-          // The worktree is made only for a fix.
-          Implement.prepareWorktree(input.branch, onBase(input.base)),
-          { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
-          yield* Implement.documentCiWait(PHASES.issue.awaitingAdoptedCi, input.pr),
-        );
-      }),
+      waitPreparing(input.adopted.number, input.branch, input.base, Option.none()).pipe(
+        Effect.as({ adopted: input.adopted, branch: input.branch }),
+      ),
     failures: {
       CiTimedOut: "person",
       NeedsHuman: "person",
@@ -282,7 +385,27 @@ export const catalogue = elsewhere.and("blocks.ts", {
       StepFailed: "person",
     },
     records: [{ item: "issue", phase: PHASES.issue.awaitingAdoptedCi }],
-    parks: Implement.documentCiResumes,
+    parks: {
+      site: PHASES.issue.awaitingAdoptedCi,
+      offers: () => Implement.awaitingCiOn(PHASES.issue.awaitingAdoptedCi),
+      takeUp: (item: WorkItem) =>
+        Effect.gen(function* () {
+          const waited = yield* resumedCi(item, PHASES.issue.awaitingAdoptedCi);
+          yield* waitPreparing(
+            waited.pullRequest,
+            waited.branch,
+            waited.base,
+            Option.some(waited.round),
+          );
+
+          return {
+            adopted: { number: waited.pullRequest, url: waited.url, draft: false },
+            branch: waited.branch,
+          };
+        }),
+      pullRequest: (item: WorkItem) => ciPullRequest(item, PHASES.issue.awaitingAdoptedCi),
+      polls: true,
+    },
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
@@ -329,7 +452,6 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
-    again: true,
     about: "Makes a worktree on the branch.",
     inputKinds: { branch: "BranchName", base: "Option<BaseBranch>", lane: "LaneId" },
     outputKinds: "WorktreePath",
@@ -353,9 +475,6 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "agent.implement": defineBlock({
     name: "agent.implement",
-    keeps: Schema.toCodecJson(
-      Schema.Struct({ outcome: Implement.ImplementOutcome, committed: Committed }),
-    ),
     about:
       "Has the agent implement the issue in the worktree and commit. It finishes done, or with questions for a person.",
     inputKinds: {
@@ -480,9 +599,6 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "pr.open": defineBlock({
     name: "pr.open",
-    keeps: Schema.toCodecJson(
-      Schema.Struct({ number: Kept.pullRequest, url: Schema.String, draft: Schema.Boolean }),
-    ),
     fixed: ["draft"],
     about:
       "Opens the pull request for the pushed branch, ready for review, or with draft: true as a draft. It leaves the hand-off to do: issue.handOff, which asks nobody to review a draft and tells the issue a person marks it ready; pr.readyForPerson, which gives it to a person as the run's success; or pr.handToPerson and end: needs-human.",
@@ -532,27 +648,33 @@ export const catalogue = elsewhere.and("blocks.ts", {
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
     about:
-      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds. In an epic's task lane, CI still pending ends the lane instead (ci-left), and epic.settleCi takes the task up once CI settles.",
+      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds. CI still pending records awaiting-ci on the issue, and the run ends at the park; a run that takes it up starts here, fixing red in a worktree it makes again, and hands off with what CI passing says rather than the agent's outcome. Its output, the pull request and what to tell the issue, is what the steps after it read. In an epic's task lane, CI still pending ends the lane instead (ci-left), and epic.settleCi takes the task up once CI settles.",
     inputKinds: {
-      pr: "PullRequestNumber",
+      pr: "a pull request, from pr.open or stack.publish",
+      outcome: "what the agent said, for issue.handOff",
       worktree: "WorktreePath",
       branch: "BranchName",
       base: "Option<BaseBranch>",
       lane: "LaneId",
     },
-    outputKinds: "nothing",
+    outputKinds: {
+      pr: "the pull request, for issue.handOff",
+      outcome: "what to tell the issue, for issue.handOff",
+    },
     outcomeKinds: {},
     before: ["issue.handOff"],
     stepNames: [CI_STEPS],
     inputs: {
       pr: "required",
+      outcome: "optional",
       worktree: "required",
       branch: "required",
       base: "required",
       lane: "optional",
     },
     run: (input: {
-      readonly pr: PullRequestNumber;
+      readonly pr: OpenedPullRequest;
+      readonly outcome?: Implement.ImplementOutcome;
       readonly worktree: WorktreePath;
       readonly branch: BranchName;
       readonly base: Option.Option<BaseBranch>;
@@ -562,13 +684,14 @@ export const catalogue = elsewhere.and("blocks.ts", {
         const session = yield* laneSession(input.lane);
         const target = { ...session, branch: input.branch, ...onBase(input.base) };
         const epicLane = Option.all([yield* Epic.LaneCi, Option.fromUndefinedOr(input.lane)]);
+        const facts = { pr: input.pr, outcome: input.outcome ?? Implement.resumedOutcome };
 
         // An epic's task can't park on its own: CI still pending ends its
         // lane, and a later round takes the task up (epic.settleCi).
         if (Option.isSome(epicLane)) {
           const [slot, lane] = epicLane.value;
 
-          const left = yield* Implement.waitForCiLeaving(input.pr, input.worktree, target, {
+          const left = yield* Implement.waitForCiLeaving(input.pr.number, input.worktree, target, {
             id: lane,
           });
 
@@ -577,7 +700,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
               yield* Epic.leftOnCi(
                 {
                   issue: slot.issue,
-                  pullRequest: input.pr,
+                  pullRequest: input.pr.number,
                   lane,
                   branch: input.branch,
                   ...Option.match(input.base, {
@@ -590,15 +713,17 @@ export const catalogue = elsewhere.and("blocks.ts", {
             );
           }
 
-          return;
+          return facts;
         }
 
-        return yield* Implement.waitForCi(
-          input.pr,
+        yield* Implement.waitForCi(
+          input.pr.number,
           input.worktree,
           target,
-          yield* Implement.documentCiWait(PHASES.issue.awaitingCi, input.pr, inLane(input.lane)),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingCi, {}, inLane(input.lane)),
         );
+
+        return facts;
       }),
     failures: {
       CiTimedOut: "person",
@@ -609,7 +734,41 @@ export const catalogue = elsewhere.and("blocks.ts", {
       StepFailed: "person",
     },
     records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
-    parks: Implement.documentCiResumes,
+    parks: {
+      site: PHASES.issue.awaitingCi,
+      offers: () => Implement.awaitingCiOn(PHASES.issue.awaitingCi),
+      // As the implement recipe takes it up: the worktree is made again only
+      // for a fix, and the issue is told CI passed, not what the agent said.
+      takeUp: (item: WorkItem) =>
+        Effect.gen(function* () {
+          const waited = yield* resumedCi(item, PHASES.issue.awaitingCi);
+
+          const target = {
+            ...Implement.thisRunsSession,
+            branch: waited.branch,
+            ...onBase(waited.base),
+          };
+
+          yield* Implement.waitForCiMaking(
+            waited.pullRequest,
+            Implement.prepareWorktree(waited.branch, onBase(waited.base)),
+            target,
+            yield* Implement.documentCiWait(
+              PHASES.issue.awaitingCi,
+              {},
+              {},
+              Option.some(waited.round),
+            ),
+          );
+
+          return {
+            pr: { number: PullRequestNumber(waited.pullRequest), url: waited.url },
+            outcome: Implement.resumedOutcome,
+          };
+        }),
+      pullRequest: (item: WorkItem) => ciPullRequest(item, PHASES.issue.awaitingCi),
+      polls: true,
+    },
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
@@ -674,9 +833,6 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "review.round": defineBlock({
     name: "review.round",
-    keeps: Schema.toCodecJson(
-      Schema.Struct({ verdict: Schema.String, changesAsked: Schema.String }),
-    ),
     fixed: ["role"],
     // A single review gives its round; a loop's rounds take theirs from the loop.
     either: ["round"],
@@ -769,43 +925,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
     run: (input: {
       readonly pr: PullRequestNumber;
       readonly approved: Approved;
-      readonly method: "squash" | "merge" | "rebase";
-    }) =>
-      Effect.gen(function* () {
-        if (!(yield* PullRequest.shipping(input.pr))) {
-          return `#${input.pr} approved; a person merges`;
-        }
-
-        const waiting = yield* PullRequest.waitingOnLayer(input.pr);
-
-        if (Option.isSome(waiting)) {
-          return `#${input.pr} approved; ${waiting.value}`;
-        }
-
-        // While CI on the base branch is red, the merge holds rather than
-        // going to a person. At a node its document can resume at, it parks,
-        // and the hold's record keeps where to resume (Resume.parking): a run
-        // that takes it up holds from when the hold began.
-        const parking = yield* Resume.parking({ pullRequest: input.pr });
-
-        // Anywhere else, it polls the base, so the run isn't stranded.
-        const hold = Option.match(parking, {
-          onNone: () => ({ poll: true }),
-          onSome: (found) => ({ data: found.data }),
-        });
-
-        return yield* PullRequest.mergeHolding(input.pr, { method: input.method, ...hold }).pipe(
-          Effect.catchTag("MergeRefused", (refused) =>
-            Effect.gen(function* () {
-              if (yield* conflicts(input.pr)) {
-                return `#${input.pr} approved, but it conflicts with its base; resolve-conflicts takes it`;
-              }
-
-              return yield* PullRequest.handToPerson(input.pr, refused.message);
-            }),
-          ),
-        );
-      }),
+      readonly method: MergeMethod;
+    }) => land(input.pr, input.method),
     failures: {
       NeedsHuman: "told",
       NotFound: "skip",
@@ -814,7 +935,34 @@ export const catalogue = elsewhere.and("blocks.ts", {
       StepFailed: "fail",
     },
     records: [{ item: "pull-request", phase: PHASES.pullRequest.mergeHeld }],
-    parks: PullRequest.documentMergeResumes,
+    // A merge held while CI on the base is red parks on the pull request's
+    // record, with the flow and work item that hold it, and the run ends at
+    // the park. The document's run that takes it up starts here and lands
+    // the pull request its record names: it was approved before it held.
+    parks: {
+      site: PHASES.pullRequest.mergeHeld,
+      // The work item is review's and re-review's, as their sources give it.
+      offers: (flow: string) =>
+        PullRequest.heldMergesOf(flow, (pull) => ({
+          pullRequest: pull.number,
+          headRef: pull.headRef,
+          agentWritten: Review.isAgentBranch(pull.headRef),
+        })),
+      takeUp: (item: WorkItem, fixed: { readonly method?: MergeMethod }) =>
+        Effect.gen(function* () {
+          const held = PullRequest.resumingMerge(item);
+
+          if (Option.isNone(held)) {
+            return yield* new StepFailed({
+              step: "resume-merge-held",
+              message: "the work item takes up no held merge",
+            });
+          }
+
+          return yield* land(PullRequestNumber(held.value), fixed.method ?? "squash");
+        }),
+      polls: false,
+    },
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
@@ -1174,6 +1322,40 @@ const sourceReads: { readonly [name: string]: ReadonlyArray<Phases.Reading> } = 
   Object.values(sources).map((source) => [source.name, source.reads]),
 );
 
+// Where each block that parks parks, by name: the phase, the items parked
+// there it offers, whether it knows the round of a repeat it parked in and the
+// pull request a failure taking it up tells a person of, and whether it waits
+// inside the run where a run can't take it up.
+export const parkSites: {
+  readonly [name: string]: Option.Option<{
+    readonly site: string;
+    readonly offers: Parks<never, unknown, never, never>["offers"];
+    readonly rounds: boolean;
+    readonly pullRequest: boolean;
+    readonly polls: boolean;
+  }>;
+} = Object.fromEntries(
+  Object.values(catalogue).map((block) => [
+    block.name,
+    Option.map(
+      block.parks,
+      (parks: {
+        readonly site: string;
+        readonly offers: Parks<never, unknown, never, never>["offers"];
+        readonly round: Option.Option<unknown>;
+        readonly pullRequest: Option.Option<unknown>;
+        readonly polls: boolean;
+      }) => ({
+        site: parks.site,
+        offers: parks.offers,
+        rounds: Option.isSome(parks.round),
+        pullRequest: Option.isSome(parks.pullRequest),
+        polls: parks.polls,
+      }),
+    ),
+  ]),
+);
+
 const blocksByName: {
   readonly [name: string]: {
     readonly contributes: Contribution;
@@ -1222,26 +1404,22 @@ export const assemble = (flow: {
   // The document's tree as data (Compose.plan), which a run is drawn on. The
   // flow carries it, so the loader finds it on a flow compiled from a document.
   readonly plan?: Schema.Json;
-  // The nodes a run of the document can resume at, each with its block, and
-  // the document's flow, which its parked records name (resume.ts).
+  // The blocks a run of the document parks in where a run can take it up,
+  // and the document's flow (resume.ts).
   readonly resumes?: {
     readonly flow: string;
-    readonly nodes: { readonly [node: string]: BlockName };
+    readonly blocks: ReadonlyArray<BlockName>;
   };
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 }) => {
   const flowSources = flow.sources ?? [];
 
-  // Items a run of the document parked at one of those nodes, which a new run
-  // takes up there.
+  // Items a run of the document parked in one of those blocks, which a new
+  // run takes up there.
   const parked = Option.map(Option.fromUndefinedOr(flow.resumes), (resumes) =>
     Resume.parked(
       resumes.flow,
-      Object.fromEntries(
-        Object.entries(resumes.nodes).flatMap(([node, block]) =>
-          Option.toArray(Option.map(catalogue[block].parks, (parks) => [node, parks] as const)),
-        ),
-      ),
+      resumes.blocks.flatMap((block) => Option.toArray(parkSites[block] ?? Option.none())),
     ).pipe(reportAs("trigger")),
   );
 
@@ -1268,7 +1446,7 @@ export const assemble = (flow: {
   const reads = readingsOf(
     flowSources,
     flow.blocks.map((block) => catalogue[block]),
-    Object.values(flow.resumes?.nodes ?? {}).map((block) => catalogue[block]),
+    (flow.resumes?.blocks ?? []).map((block) => catalogue[block]),
   );
 
   const doctor = unique(contributions.flatMap((each) => each.doctor ?? []));

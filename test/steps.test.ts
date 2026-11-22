@@ -8,16 +8,15 @@ import {
   Claims,
   DEFAULT_LABELS,
   defineFlow,
-  GitHub,
   Hybrid,
   Implement,
   Issue,
   NeedsHuman,
   ownerMarker,
+  Phases,
   PullRequest,
   Review,
   reviewMarker,
-  Run,
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
@@ -128,24 +127,13 @@ const flow = defineFlow({
         return (yield* Hybrid.openPullRequest(ISSUE, finished, base)).url;
       }
 
-      // As a run that stopped inside claim, after its comment, finds the issue
-      // when it resumes: its branch made, and its claim marker naming its base.
+      // As a run that stopped inside claim finds the issue when it resumes:
+      // its claim ref, naming the base it claimed the issue on, and its
+      // branch made. No claim comment: one a person deleted changes nothing.
       if (work.key === "resumed-claim") {
         yield* activity(
           "claimed-before",
-          Effect.gen(function* () {
-            const run = yield* Run;
-            yield* (yield* GitHub).comment(
-              ISSUE,
-              claimMarker.write({
-                runId: run.runId,
-                claimedAt: "2026-10-28T00:00:00Z",
-                branch: `auto/issue-${ISSUE}`,
-                base: STACKED,
-                ref: true,
-              }),
-            );
-          }),
+          Effect.asVoid(Claims.acquire(Claims.issue(ISSUE), { base: STACKED })),
         );
 
         return yield* implementOn({});
@@ -502,11 +490,13 @@ describe("a base branch per item", () => {
     }),
   );
 
-  effect("a resumed claim keeps the base the run claimed the issue on", () =>
+  effect("a resumed claim keeps the base its claim ref names, with no claim comment to read", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.existing.branch = true;
       expect((yield* runToEnd(fake, "resumed-claim")).status).toBe("done");
+      // It claimed the issue already: no second claim comment.
+      expect(fake.comments.filter((comment) => comment.body.startsWith("Claimed by"))).toEqual([]);
       expect(fake.based.targets).toEqual([STACKED]);
       expect(fake.based.checkedAgainst).toEqual([STACKED, STACKED]);
       expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
@@ -958,11 +948,10 @@ describe("Implement.handOff", () => {
       expect(fake.labelsOf(PULL)).toEqual([]);
       expect(fake.people.requested).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toEqual([]);
+      // The session address-review resumes is in the issue's record, naming the pull request.
       expect(
-        fake.comments
-          .map((comment) => comment.body)
-          .some((body) => body.includes("chernabog-session")),
-      ).toBe(true);
+        Phases.authorOf(fake.records(), PULL).pipe(Option.map((found) => found.issue)),
+      ).toEqual(Option.some(ISSUE));
     }),
   );
 });

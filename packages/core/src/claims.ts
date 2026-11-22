@@ -69,6 +69,9 @@ export type Holder = {
   readonly renewedAt?: string;
   // The run whose expired lease this run took over.
   readonly takenOverFrom?: string;
+  // The branch the run builds on, so a run that resumes keeps it; a claim
+  // that names none is on whatever base its run is given.
+  readonly base?: string;
 };
 
 const trailer = (name: string, value: Option.Option<string>) =>
@@ -86,10 +89,12 @@ export const messageOf = (holder: Holder) =>
     ...trailer("Expires-At", Option.fromUndefinedOr(holder.expiresAt)),
     ...trailer("Renewed-At", Option.fromUndefinedOr(holder.renewedAt)),
     ...trailer("Taken-Over-From", Option.fromUndefinedOr(holder.takenOverFrom)),
+    ...trailer("Base", Option.fromUndefinedOr(holder.base)),
   ].join("\n");
 
 // An optional field from a trailer that is there, else nothing.
 const optional = <A extends object>(value: Option.Option<string>, field: (found: string) => A) =>
+  // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
   Option.match(value, { onNone: () => ({}), onSome: field });
 
 const TRAILER = /^([A-Za-z-]+): (.*)$/;
@@ -124,6 +129,7 @@ export const holderOf = (message: string): Option.Option<Holder> => {
     ...optional(Option.fromUndefinedOr(trailers.get("Taken-Over-From")), (takenOverFrom) => ({
       takenOverFrom,
     })),
+    ...optional(Option.fromUndefinedOr(trailers.get("Base")), (base) => ({ base })),
   }));
 };
 
@@ -312,6 +318,7 @@ export const releaseFor = (item: string, runId: string) =>
 // Why a run whose claim names another run (or none) stops: it lost the item.
 export const describeLoss = (item: string, held: Option.Option<Holder>) =>
   Option.match(held, {
+    // Stryker disable next-line ArrowFunction,StringLiteral: text for a person, which no test pins word for word
     onNone: () => `its claim on ${item} was taken over, and has been let go since`,
     onSome: (found) => `${found.persona}'s run ${found.runId} of ${found.flow} took ${item} over`,
   });
@@ -379,6 +386,7 @@ const ofThisRun = <E, R>(
 // renews it while the run is in flight, and one another run took over is lost.
 export const refMarker = Markers.define(
   "chernabog/claim-ref",
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({ item: Schema.String, runId: Schema.String }),
   (args) => releaseFor(args.item, args.runId).pipe(Effect.asVoid),
   {
@@ -391,6 +399,8 @@ export const refMarker = Markers.define(
 export type AcquireOptions = {
   // A person works on the item in the run, on the hybrid path.
   readonly withPerson?: boolean;
+  // The branch the run builds on, which the claim commit records (Holder's base).
+  readonly base?: string;
 };
 
 export type Acquired =
@@ -486,6 +496,7 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
       claimedAt: DateTime.formatIso(now),
       withPerson: options.withPerson === true,
       expiresAt: leaseEnd(now, leaseTtlOf(run)),
+      ...optional(Option.fromUndefinedOr(options.base), (base) => ({ base })),
     };
 
     const taken = yield* take(item, mine, Option.fromUndefinedOr(run.takesOver));
@@ -580,6 +591,7 @@ export const releasing =
 // A note for a skip: who holds the claim, as far as its ref says, and until when.
 export const describeHolder = (item: string, held: Option.Option<Holder>) =>
   Option.match(held, {
+    // Stryker disable next-line ArrowFunction,StringLiteral: text for a person, which no test pins word for word
     onNone: () => `${refFor(item)} exists`,
     onSome: (found) =>
       [

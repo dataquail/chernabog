@@ -10,8 +10,8 @@ import {
   type Json,
   NeedsHuman,
   NothingCommitted,
-  type PhaseData,
   type Repo,
+  type ReportedError,
   Skip,
   StepFailed,
   StepRunner,
@@ -20,7 +20,6 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Brand from "effect/Brand";
-import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
@@ -49,14 +48,6 @@ export const BranchName = Brand.nominal<BranchName>();
 export type BaseBranch = string & Brand.Brand<"BaseBranch">;
 
 export const BaseBranch = Brand.nominal<BaseBranch>();
-
-// The brands as schemas, for a block's `keeps`.
-export const Kept = {
-  issue: Schema.Finite.pipe(Schema.brand("IssueNumber")),
-  pullRequest: Schema.Finite.pipe(Schema.brand("PullRequestNumber")),
-  branch: Schema.String.pipe(Schema.brand("BranchName")),
-  base: Schema.String.pipe(Schema.brand("BaseBranch")),
-};
 
 export type WorktreePath = string & Brand.Brand<"WorktreePath">;
 
@@ -223,13 +214,44 @@ const outputKindsOf = Schema.decodeUnknownSync(Schema.Union([Schema.String, Kind
 
 const opensOf = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Array(Schema.String)));
 
+// How a block that parks is taken up by a run of a document that parked in it
+// (ADR 0021, decision 4). A park is a phase boundary: the run that takes the
+// item up reads only the record and the world, so the block's output, which is
+// all the steps after it may read, is what it records (its facts), worked out
+// again from there.
+// - site: the phase it parks on (Phases.PARKS), which says where the run
+//   that takes the item up starts.
+// - offers: the items parked there that a run of `flow` may take up, built
+//   from each record's thread and data, routed as its source routes them,
+//   and held, with why, while what it waits on hasn't settled.
+// - takeUp: the block's output for a run that takes such an item up, from
+//   the record and the world, waiting on as it would have. `fixed` is what the
+//   document gives it under `with`.
+// - round: the round of the document's repeat the item parked in, for a block
+//   that parks in one.
+// - pullRequest: the pull request a failure taking the wait up tells a
+//   person of, on a subject whose failures can say one.
+// - polls: whether, where a run can't take it up, as in a forEach's lanes,
+//   it waits inside the run instead. One that doesn't may only be where a run
+//   can.
+export type Parks<Input, Output, E, R> = {
+  readonly site: string;
+  readonly offers: (
+    flow: string,
+  ) => Effect.Effect<ReadonlyArray<WorkItem>, FlowError | ReportedError, TriggerServices>;
+  readonly takeUp: (item: WorkItem, fixed: Partial<Input>) => Effect.Effect<Output, E, R>;
+  readonly round?: (item: WorkItem) => Option.Option<number>;
+  readonly pullRequest?: (item: WorkItem) => Option.Option<PullRequestNumber>;
+  readonly polls: boolean;
+};
+
 // What a block gives, as a listing says it: a word for a value, or a word for
 // each field. It must name every field the block's output has, and no others.
 type OutputKinds<Output> = [Output] extends [string | number | boolean | void]
   ? string
   : { readonly [Field in keyof Output]-?: string };
 
-type BlockSpec<Input, Output, E, R, Outcomes, Kept> = {
+type BlockSpec<Input, Output, E, R, Outcomes> = {
   readonly name: string;
   // What it does, for someone choosing blocks.
   readonly about: string;
@@ -295,27 +317,8 @@ type BlockSpec<Input, Output, E, R, Outcomes, Kept> = {
   // The fixed input naming a phase it records on the run's item, for a block
   // that records the phase its document names: progress.advance.
   readonly recordsInput?: keyof Input & string;
-  // For a block that parks: at a node a document can resume at, whether a
-  // record it parked with lets its item start again, with why it is held
-  // while what it waits on hasn't settled (resume.ts). The document's source
-  // of parked items asks it.
-  readonly parks?: (
-    data: PhaseData,
-    item: WorkItem,
-    at: DateTime.Utc,
-  ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
-  // How its output goes into a record and back, as JSON: a step that has one
-  // can be kept for a document's run that resumes after it (resume.ts). It
-  // may keep less than the output has, so long as the output is one.
-  readonly keeps?: Schema.Codec<Kept, Json>;
-  // For an output too big for a record: how a document's run that resumes
-  // after it reads the output back from what it kept, as plan.propose keeps
-  // its round and reads the plan back from the comment it posted.
-  readonly recall?: (kept: Kept) => Effect.Effect<Output, E, R>;
-  // Whether a document's run that resumes past it runs it again rather than
-  // restore what it gave: a cheap read, or what is this machine's, such as a
-  // worktree's path, which another machine taking the item up hasn't got.
-  readonly again?: boolean;
+  // For a block that parks: how a document's run takes its wait up (resume.ts).
+  readonly parks?: Parks<Input, Output, E, R>;
   readonly contributes: Contribution;
 };
 
@@ -436,9 +439,8 @@ export const defineBlock = <
   const Outcomes extends {
     readonly [Name in string]: (output: Output) => Option.Option<unknown>;
   },
-  Kept = never,
 >(
-  spec: BlockSpec<Input, Output, E, R, Outcomes, Kept>,
+  spec: BlockSpec<Input, Output, E, R, Outcomes>,
 ) => {
   const table = dispositionsOf(spec.failures);
 
@@ -485,14 +487,18 @@ export const defineBlock = <
     suits: Option.fromUndefinedOr(spec.suits),
     records: spec.records ?? [],
     recordsInput: Option.fromUndefinedOr(spec.recordsInput),
-    parks: Option.fromUndefinedOr(spec.parks),
-    keeps: Option.fromUndefinedOr(spec.keeps),
-    recall: Option.map(
-      Option.fromUndefinedOr(spec.recall),
-      (recall) => (kept: Kept) => disposed({})(recall(kept)),
-    ),
-    recalls: Option.isSome(Option.fromUndefinedOr(spec.recall)),
-    again: spec.again === true,
+    parks: Option.map(Option.fromUndefinedOr(spec.parks), (parks) => ({
+      site: parks.site,
+      offers: parks.offers,
+      takeUp: (
+        item: WorkItem,
+        fixed: Partial<Input>,
+        overrides: Partial<Failures<NoInfer<E>>> = {},
+      ) => disposed(dispositionsOf(overrides))(parks.takeUp(item, fixed)),
+      round: Option.fromUndefinedOr(parks.round),
+      pullRequest: Option.fromUndefinedOr(parks.pullRequest),
+      polls: parks.polls,
+    })),
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) =>
       disposed(dispositionsOf(overrides))(spec.run(input)),

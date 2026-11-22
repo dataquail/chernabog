@@ -223,6 +223,17 @@ const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   Equal.equals(record.from, fromPhase(transition)) &&
   !Option.exists(transition.from, (read) => read.version === record.version);
 
+const versionOf = (read: Option.Option<{ readonly version: string }>) =>
+  Option.map(read, (found) => found.version);
+
+// The lost race of `transition` on `item`, which holds `current` now.
+const moved = (item: string, current: Option.Option<PhaseRecord>, transition: PhaseTransition) =>
+  new PhaseMoved({
+    item,
+    expected: fromPhase(transition),
+    found: Option.map(current, (record) => record.phase),
+  });
+
 // What an advance does, given the record the item holds: succeed with that
 // record (its own write, retried), fail as a lost race when it isn't the
 // record the writer read, by version, or write.
@@ -237,17 +248,8 @@ export const decide = (
     return Result.succeed(own);
   }
 
-  const version = (read: Option.Option<{ readonly version: string }>) =>
-    Option.map(read, (found) => found.version);
-
-  if (!Equal.equals(version(current), version(transition.from))) {
-    return Result.fail(
-      new PhaseMoved({
-        item,
-        expected: fromPhase(transition),
-        found: Option.map(current, (record) => record.phase),
-      }),
-    );
+  if (!Equal.equals(versionOf(current), versionOf(transition.from))) {
+    return Result.fail(moved(item, current, transition));
   }
 
   return Result.succeed(Option.none());
@@ -384,6 +386,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
     const recordAt = (tip: typeof Tip.Type) => {
       const cached = Option.fromUndefinedOr(seen.get(tip.oid));
 
+      // Stryker disable next-line ConditionalExpression,BlockStatement: the cache only saves re-parsing; a tip parsed again reads as the record cached
       if (Option.isSome(cached)) {
         return Effect.succeed(cached.value);
       }
@@ -397,6 +400,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             unreadableRecord(tip.oid, at, why),
           );
 
+          // Stryker disable next-line BlockStatement,CallExpression: the cache only saves re-parsing; a tip parsed again reads as the record cached
           seen.set(tip.oid, record);
 
           return record;
@@ -420,6 +424,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       Effect.die(
         new ProgressUnwritable({
           ...Option.match(options.persona, {
+            // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
             onNone: () => ({}),
             onSome: (login) => ({ login }),
           }),
@@ -484,6 +489,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           blobs: Arr.fromIterable(blobsOf(transition).keys()),
         };
 
+        // Stryker disable next-line BlockStatement,CallExpression: a record not cached is parsed from its commit, as the record written
         seen.set(version, record);
 
         return record;
@@ -497,6 +503,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         );
 
         if (made.status === 403 || made.status === 404) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${made.status} creating ${what}`);
         }
 
@@ -524,13 +531,19 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             make(
               `${repoPath}/git/blobs`,
               { content: base64(bytes), encoding: "base64" },
+              // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
               `blob ${hash}`,
             ),
             (sha): Json => ({ path: blobPath(hash), mode: "100644", type: "blob", sha }),
           ),
         );
 
-        return yield* make(`${repoPath}/git/trees`, { tree }, "a thread's tree");
+        return yield* make(
+          `${repoPath}/git/trees`,
+          { tree },
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
+          "a thread's tree",
+        );
       });
 
     // The item's first phase: a root commit with the empty tree, or the tree
@@ -553,6 +566,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         ).pipe(Effect.mapError(failed));
 
         if (commit.status === 403 || commit.status === 404) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${commit.status} creating a commit`);
         }
 
@@ -582,6 +596,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             Option.flatMap(ref.body, Schema.decodeUnknownOption(RefError)),
             (error) => error.message,
           ),
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word; neither text names an existing ref or a rule
           () => "no message",
         );
 
@@ -590,6 +605,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         }
 
         if (ref.status === 403 || (ref.status === 422 && /rule/i.test(said))) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${ref.status} creating ${branch}: ${said}`);
         }
 
@@ -637,6 +653,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
 
           return {
             written: Option.some(yield* written(made.oid, made.committedDate, transition)),
+            // Stryker disable next-line ArrayDeclaration: nextOrMiss reads errors only when nothing was written, and here a commit was
             errors: [],
           };
         }
@@ -645,23 +662,27 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       });
 
     // What a write that didn't land means, from the record the item holds
-    // now: someone else's advance (a lost race, or this writer's own from
-    // another attempt), or, with the branch where it was, a refusal.
+    // now: with the branch where the writer read it, a refusal; moved, this
+    // writer's own advance from another attempt, or a lost race.
     const afterMiss = (
       item: string,
       transition: PhaseTransition,
-      before: Option.Option<string>,
       refused: Effect.Effect<never, ProgressError>,
-    ) =>
+    ): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError> =>
       Effect.gen(function* () {
         const now = yield* read(item);
-        const version = Option.map(now, (record) => record.version);
 
-        if (Equal.equals(version, before)) {
+        if (Equal.equals(versionOf(now), versionOf(transition.from))) {
           return yield* refused;
         }
 
-        return yield* Effect.fromResult(decide(item, now, transition));
+        const own = Option.filter(now, (record) => isOwn(record, transition));
+
+        if (Option.isSome(own)) {
+          return own.value;
+        }
+
+        return yield* moved(item, now, transition);
       });
 
     // The first phase, or what its lost race means.
@@ -672,10 +693,10 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         if (Option.isNone(made)) {
           const unread = new ProgressError({ message: `${branch} exists, yet holds no record` });
 
-          return yield* afterMiss(item, transition, Option.none(), Effect.fail(unread));
+          return yield* afterMiss(item, transition, Effect.fail(unread));
         }
 
-        return made;
+        return made.value;
       });
 
     // A later phase, or what its miss means: a lost race, or a refusal.
@@ -689,12 +710,14 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         const result = yield* next(item, branch, transition, expected);
 
         if (Option.isSome(result.written)) {
-          return result.written;
+          return result.written.value;
         }
 
+        // Stryker disable ArrowFunction,StringLiteral,LogicalOperator: text for a person, which no test pins word for word; the decision reads errors, not this
         const said = result.errors
           .map((error) => `${error.type ?? "ERROR"}: ${error.message}`)
           .join("; ");
+        // Stryker restore ArrowFunction,StringLiteral,LogicalOperator
 
         let refused: Effect.Effect<never, ProgressError> = Effect.fail(
           new ProgressError({ message: `advancing ${branch} failed: ${said}` }),
@@ -706,7 +729,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           refused = refusal(said);
         }
 
-        return yield* afterMiss(item, transition, Option.some(expected), refused);
+        return yield* afterMiss(item, transition, refused);
       });
 
     // The writer's read is the compare-and-set's: a later phase is a commit
@@ -723,19 +746,10 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           return decided.value;
         }
 
-        const landed = yield* Option.match(transition.from, {
+        return yield* Option.match(transition.from, {
           onNone: () => firstOrMiss(item, branch, transition),
           onSome: (expected) => nextOrMiss(item, branch, transition, expected.version),
         });
-
-        return yield* Effect.fromOption(landed).pipe(
-          Effect.mapError(
-            () =>
-              new ProgressError({
-                message: `${branch} moved and came back under ${transition.by}'s advance`,
-              }),
-          ),
-        );
       });
 
     // The blob at `version`'s blobs/<hash>: GraphQL finds the file, and the

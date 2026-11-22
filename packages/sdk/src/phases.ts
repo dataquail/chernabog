@@ -24,6 +24,7 @@ import {
   ProgressError,
   Repo,
   Run,
+  SessionMarker,
   type WorkItem,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -32,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -366,6 +368,7 @@ const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Da
   return Option.match(kept, {
     onNone: () => data,
     onSome: (review) =>
+      // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
       Option.some<Data>({ ...Option.getOrElse(data, (): Data => ({})), [REVIEW]: review }),
   });
 };
@@ -470,12 +473,14 @@ export type Anomaly = {
 // (ledger-check.ts, checking): why a record is an anomaly, if it is, and the
 // anomalies its reads found, by item. None outside one, as in a run, which
 // reads its own item's record as it is.
+// Stryker disable StringLiteral: a reference's key only has to be unique, and no other uses "" (survives a 120 s timeoutMS)
 export const Checking = Context.Reference<
   Option.Option<{
     readonly check: (item: string, record: PhaseRecord) => Option.Option<Anomaly>;
     readonly noted: Map<string, Anomaly>;
   }>
 >("@chernabog/sdk/Phases/Checking", { defaultValue: () => Option.none() });
+// Stryker restore StringLiteral
 
 // `found`, the record of `item`, unless the check finds it an anomaly: then
 // none, as if the item had no record, and the anomaly noted for the trigger
@@ -669,6 +674,7 @@ export const reconcile = (
         to: asPhase(to),
         by: asWriter(by),
         ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
+          // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
           onNone: () => ({}),
           onSome: (carried) => ({ data: asData(carried) }),
         }),
@@ -721,6 +727,66 @@ export const recordAwaitingReview = (pullRequest: number, to: Phase) =>
     });
   });
 
+// What an issue's handed-off record carries (ADR 21, decision 7): the pull
+// request its progress goes on as, and the agent session that wrote it, which
+// address-review resumes (Review.findAuthorSession). The issue's record stays
+// at handed-off while the pull request's moves through review, so the session
+// outlives every phase of the pull request's. author is left out for a
+// session that doesn't fit a record, which a later run finds as none.
+const HandedOff = Schema.Struct({ pullRequest: Schema.Finite, author: SessionMarker });
+
+// The data of an issue's handed-off record for `pullRequest`, written by `session`.
+export const handedOffData = (
+  pullRequest: number,
+  session: Option.Option<SessionMarker>,
+): { readonly [key: string]: Json } => {
+  const bare = { pullRequest };
+
+  return Option.getOrElse(
+    Option.filter(
+      Option.map(session, (author) => ({ pullRequest, author: { ...author } })),
+      isPhaseData,
+    ),
+    () => bare,
+  );
+};
+
+// Records the issue handed off as `pullRequest`, with the session that wrote
+// it. Again even when the issue is at handed-off already, from an earlier
+// pull request: the data is this hand-off's. A replay keeps its own record.
+export const recordHandedOff = (
+  issue: number,
+  pullRequest: number,
+  session: Option.Option<SessionMarker>,
+) =>
+  record(issueItem(issue), PHASES.issue.handedOff, handedOffData(pullRequest, session), {
+    again: true,
+  });
+
+// Records by when they were written, oldest first.
+const byWhen = Order.mapInput(DateTime.Order, (found: { readonly at: DateTime.Utc }) => found.at);
+
+// The session a record among `all` says wrote `pullRequest`: the newest
+// handed-off record naming it, by when it was written. None when no record
+// does, such as for a pull request no run handed off.
+export const authorOf = (all: ReadonlyMap<string, PhaseRecord>, pullRequest: number) => {
+  const naming = Array.from(all.values()).flatMap((found) => {
+    const data = Option.flatMap(
+      Option.filter(found.data, () => found.phase === PHASES.issue.handedOff),
+      Schema.decodeUnknownOption(HandedOff),
+    );
+
+    return Option.toArray(
+      Option.map(
+        Option.filter(data, (handed) => handed.pullRequest === pullRequest),
+        (handed) => ({ at: found.at, author: handed.author }),
+      ),
+    );
+  });
+
+  return Option.map(Arr.last(Arr.sort(naming, byWhen)), (found) => found.author);
+};
+
 // A work item's key for the record an item holds: the item, its phase and
 // the record's version shortened as a head SHA is, `pr-7-changes-asked-1a2b3c4`.
 // A new record is new work, as a new head is to pr.conflicting.
@@ -759,6 +825,7 @@ export const itemOfWork = (subject: string, work: WorkItem): Option.Option<strin
 // The item a document's run records a team's own phase on (progress.advance):
 // its work item's, as its subject sees it, which Blocks.assemble provides.
 // None outside a document's run.
+// Stryker disable next-line StringLiteral: a reference's key only has to be unique, and no other uses "" (survives a 120 s timeoutMS)
 export const RecordedOn = Context.Reference<Option.Option<string>>("@chernabog/sdk/RecordedOn", {
   defaultValue: () => Option.none(),
 });
@@ -889,13 +956,17 @@ export const HANDED_BACK_BY = "observer:handed-back";
 const TRUSTED_PERMISSIONS = ["admin", "maintain", "write"];
 
 const LabelEvents = Schema.Array(
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({
     event: Schema.String,
+    // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
     label: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
+    // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
     actor: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
   }),
 );
 
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 const Permission = Schema.Struct({ permission: Schema.String });
 
 // GitHub lists an item's events oldest first, a page at a time.
@@ -923,10 +994,12 @@ const removedBy = (number: number, label: string) =>
             Option.none(),
           ),
         ),
+        // Stryker disable next-line ArrowFunction,ArrayDeclaration: only a malformed page of events fails to decode
         () => [],
       );
 
       for (const found of listed) {
+        // Stryker disable next-line OptionalChaining: GitHub's unlabeled events always carry their label
         if (found.event === "unlabeled" && found.label?.name === label) {
           last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
         }
@@ -1017,6 +1090,7 @@ export const handedBack = Effect.gen(function* () {
     }).pipe(
       Effect.catchTag("GitHubError", (failed) =>
         Effect.logWarning(
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           `${item}: can't tell whether a person handed it back: ${failed.message}`,
         ).pipe(Effect.as(false)),
       ),
@@ -1030,6 +1104,7 @@ export const handedBack = Effect.gen(function* () {
   return found;
 });
 
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 const WithPersonLeft = Schema.Struct({
   from: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });

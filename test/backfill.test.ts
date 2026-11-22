@@ -16,6 +16,7 @@ import {
   planMarker,
   Progress,
   reviewMarker,
+  sessionMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -354,6 +355,74 @@ describe("progress backfill's issues and epics", () => {
     }),
   );
 
+  // The session marker an implement run from before #565 left on its pull request.
+  const SESSION = {
+    adapter: "claude",
+    sessionId: "implement-session",
+    issue: ISSUE,
+    branch: `auto/issue-${ISSUE}`,
+  };
+
+  const handedOffBefore = (fake: Fake, author = ME) => {
+    comment(fake, author, `Implemented by claude for #${ISSUE}. ${sessionMarker.write(SESSION)}`);
+    fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.changesAsked);
+  };
+
+  effect(
+    "S1: an open pull request's session marker, its issue handed off with no session kept: handed-off again, with it",
+    () =>
+      Effect.gen(function* () {
+        const fake = fresh();
+        handedOffBefore(fake);
+        fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff);
+        const version = fake.records().get(ISSUE_ITEM)?.version;
+
+        const found = findingOn(ISSUE_ITEM, yield* survey(fake));
+
+        expect(found.map(saidOf)).toEqual([writes(ISSUE_ITEM, Phases.PHASES.issue.handedOff)]);
+        expect(found[0]).toMatchObject({
+          data: { pullRequest: PULL, author: SESSION },
+          over: { phase: Phases.PHASES.issue.handedOff, version },
+        });
+      }),
+  );
+
+  effect("S2: an open pull request's session marker, its issue with no record: handed-off", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      handedOffBefore(fake);
+
+      const found = findingOn(ISSUE_ITEM, yield* survey(fake));
+
+      expect(found.map(saidOf)).toEqual([writes(ISSUE_ITEM, Phases.PHASES.issue.handedOff)]);
+      expect(found[0]).toMatchObject({ data: { pullRequest: PULL, author: SESSION } });
+      expect(found[0]).not.toHaveProperty("over");
+    }),
+  );
+
+  effect(
+    "a session the issue's record keeps already, an issue at another phase, or a marker no persona wrote: nothing",
+    () =>
+      Effect.gen(function* () {
+        const kept = fresh();
+        handedOffBefore(kept);
+        kept.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff, {
+          data: { pullRequest: PULL, author: SESSION },
+        });
+
+        const elsewhere = fresh();
+        handedOffBefore(elsewhere);
+        elsewhere.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.askedQuestions);
+
+        const forged = fresh();
+        handedOffBefore(forged, PERSON);
+
+        for (const fake of [kept, elsewhere, forged]) {
+          expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+        }
+      }),
+  );
+
   effect(
     "E1: an epic a run posted its status on, with a task open: waiting, by its fingerprint",
     () =>
@@ -424,6 +493,35 @@ describe("progress backfill's writing", () => {
         data: Option.some({ key: "pr-7" }),
       });
     }),
+  );
+
+  effect(
+    "rewrites a handed-off record from the version it read, with the session beside its data",
+    () =>
+      Effect.gen(function* () {
+        const fake = fresh();
+        comment(
+          fake,
+          ME,
+          `Implemented by claude for #${ISSUE}. ${sessionMarker.write({ adapter: "claude", sessionId: "s1", issue: ISSUE, branch: "auto/issue-3" })}`,
+        );
+        fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.approved);
+        fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.handedOff, { data: { kept: true } });
+
+        yield* backfill(fake);
+
+        expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+          phase: Phases.PHASES.issue.handedOff,
+          from: Option.some(Phases.PHASES.issue.handedOff),
+          by: Backfill.WRITER,
+          data: Option.some({
+            kept: true,
+            pullRequest: PULL,
+            author: { adapter: "claude", sessionId: "s1", issue: ISSUE, branch: "auto/issue-3" },
+          }),
+        });
+        expect(yield* survey(fake)).toEqual([]);
+      }),
   );
 
   effect("a second run writes nothing", () =>
@@ -644,14 +742,64 @@ describe("progress backfill's park phases", () => {
     }),
   );
 
-  effect("a document's park stays where it is: it resumes by its node", () =>
+  effect("a document's park from before #567 keeps its phase, with only its facts", () =>
     Effect.gen(function* () {
       const fake = fresh();
+      const resume = { flow: "implement", node: "ci", login: ME, kept: { opened: {} } };
+
       fake.recordPhase(ISSUE_ITEM, "awaiting-ci", {
-        data: { pullRequest: PULL, since: SINCE, resume: { node: "ci" } },
+        data: { pullRequest: PULL, since: SINCE, resume },
       });
 
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([
+        writes(ISSUE_ITEM, Phases.PHASES.issue.awaitingCi),
+      ]);
+
+      yield* backfill(fake);
+
+      // As the recipe parks it: the pull request is the one on the issue's branch.
+      expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+        phase: Phases.PHASES.issue.awaitingCi,
+        data: Option.some({ since: SINCE }),
+      });
       expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
+  effect("a document's merge hold from before #567 names the flow that holds it", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      const resume = { flow: "re-review", node: "landed", login: ME, kept: {} };
+
+      fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.mergeHeld, {
+        data: { pullRequest: PULL, key: `${PR_ITEM}-again`, resume },
+      });
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: Phases.PHASES.pullRequest.mergeHeld,
+        data: Option.some({ pullRequest: PULL, key: `${PR_ITEM}-again`, flow: "re-review" }),
+      });
+    }),
+  );
+
+  effect("a pull request's document park on the shared phase moves without where it resumed", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      const resume = { flow: "address-review", node: "ci", login: ME, kept: {} };
+      fake.recordPhase(PR_ITEM, "awaiting-ci", {
+        data: { pullRequest: PULL, since: SINCE, resume },
+      });
+
+      expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([writes(PR_ITEM, "awaiting-fix-ci")]);
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: "awaiting-fix-ci",
+        data: Option.some({ pullRequest: PULL, since: SINCE }),
+      });
     }),
   );
 

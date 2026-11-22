@@ -134,17 +134,17 @@ A flow's `subject` is what each run works on. It decides what `trigger` gives th
 
 Each block suits only some subjects, and `chernabog recipes blocks` lists them after `suits:`. A flow may use only the blocks that suit its subject: compile refuses any other, naming the subjects it does suit, as in `epic.claim suits a flow on epic, and this is a flow on pull-request`. What a block suits comes from what it needs. A block that needs an epic's number suits only `epic`, whose trigger gives one, and one that needs `trigger.reviewer` suits only `changes-asked`. A block that needs a pull request's number suits `issue` too, since `pr.open` gives one there. A few blocks lean on what only one subject's scope does, such as the `plan.*` blocks on `spec`'s, and say so themselves.
 
-On `changes-asked`, the `author.*` blocks answer the review in the session that wrote the code. `author.session` finds it from the session marker the run that opened the pull request left: on a layer of an epic's stack, that is the task's own session, and on one a person worked on with the agent, theirs, reopened in front of them. `review.askAgain` asks `trigger.reviewer` to review again, not a reviewer from the pool:
+On `changes-asked`, the `author.*` blocks answer the review in the session that wrote the code. `author.session` finds it from the session marker the run that opened the pull request left: on a layer of an epic's stack, that is the task's own session, and on one a person worked on with the agent, theirs, reopened in front of them. `review.askAgain` asks `trigger.reviewer` to review again, not a reviewer from the pool. It comes after `author.waitForCi`, a [park](#parks), so it reads the review, what changed and the push from the wait's output:
 
 ```yaml
 - id: again
   use: review.askAgain
   in:
     pr: trigger.pr
-    review: asked
+    review: ci.review
     reviewer: trigger.reviewer
-    summary: addressed.summary
-    pushed: pushed.pushed
+    summary: ci.summary
+    pushed: ci.pushed
 - end: done
   summary: again
 ```
@@ -253,7 +253,7 @@ On `spec`, the `plan.*` blocks plan the work: the `plan` recipe composes them. `
         in: { issue: trigger.issue, round: round, draft: drafted.draft }
       - id: answer
         use: plan.awaitAnswer
-        in: { round: round }
+        in: { round: round, plan: proposed.plan }
         with: { within: 14 days }
         on:
           approved:
@@ -261,10 +261,10 @@ On `spec`, the `plan.*` blocks plan the work: the `plan` recipe composes them. `
             steps:
               - id: created
                 use: plan.create
-                in: { issue: trigger.issue, plan: proposed.plan, approved: approval.approved }
+                in: { issue: trigger.issue, plan: approval.plan, approved: approval.approved }
               - id: epic
                 use: plan.becomeEpic
-                in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                in: { issue: trigger.issue, plan: approval.plan, created: created.created }
               - id: cleaned
                 use: plan.doneDrafting
                 in: { issue: trigger.issue }
@@ -278,7 +278,7 @@ On `spec`, the `plan.*` blocks plan the work: the `plan` recipe composes them. `
               - next: { changes: asked.changes }
 ```
 
-`plan.create`, `plan.becomeEpic`, `plan.doneDrafting` and `plan.askClarification` [run last](#blocks-that-run-last), so they take no `round` in the repeat. `plan.draft` leaves the checkout to remove, so a way that ends `done` must go through `plan.doneDrafting`. The run claims the spec with `issue.claim`, whose `StepFailed` the recipe has fail the run, as `failure: { StepFailed: fail }` does.
+`plan.awaitAnswer` is a [park](#parks), so what comes after it reads the plan from its `approval`, not from `proposed`. `plan.create`, `plan.becomeEpic`, `plan.doneDrafting` and `plan.askClarification` [run last](#blocks-that-run-last), so they take no `round` in the repeat. `plan.draft` leaves the checkout to remove, so a way that ends `done` must go through `plan.doneDrafting`. The run claims the spec with `issue.claim`, whose `StepFailed` the recipe has fail the run, as `failure: { StepFailed: fail }` does.
 
 ## A flow a person starts
 
@@ -423,6 +423,16 @@ A document with problems gets a warning of its own instead. It's only a warning,
 `repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. Every way through a round must end the run or go on with `next`, and every way to a `next` must wait or change something: a step that may not run, or lanes that may be none, doesn't count. Some round must end the loop. A block that runs steps in a round must take `round` from the loop, unless it [runs last](#blocks-that-run-last), and one in a lane must name its lane, since a run resumes by step names. Otherwise the document is refused.
 
 `forEach` runs its steps once per item, as lanes beside each other. Each lane ends for itself. Blocks that run in a lane must be wired to its `lane`, because a run resumes by its step names.
+
+### Parks
+
+A block that waits on CI, on a person's answer to a plan, or on a red base branch to turn green parks: it records its own phase on the run's item, with only the facts the next run needs, and the run ends there. The document's trigger offers the item again by that phase once the wait settles, and the run that takes it up starts at the block, which takes the wait up from the record and what GitHub says now. `chernabog recipes blocks` lists the phase each parks on after `parks:`.
+
+A park is a phase boundary: nothing a step gave before it reaches the run after it. So a step after a park may read only the trigger, the park block's output (and what its outcomes bind), and the steps after it, and compile refuses anything else, naming the step and what it reads: `done reads opened, from before ci parks`. A park block's output is what it records, which it gives alike whether the run went straight through or took the wait up: `ci.waitAndFix` gives `ci.pr` and `ci.outcome` for `issue.handOff`, which on a run that took the wait up tells the issue that CI passed rather than what the agent said.
+
+- In a `repeat`, a run takes the wait up in the round it parked in, and the rounds after it run whole, so they may read nothing from before the repeat but the trigger. Nothing from the park on may read the loop's `state`, and each `next` after it must set all of it.
+- Two blocks that park on one phase, as re-review's two `pr.land`s do, must go on alike, since the phase alone says where a run starts.
+- A wait for CI where a run can't take it up, as in a `forEach`'s lanes or under an `if`, waits inside the run instead. `pr.land` and `plan.awaitAnswer` can't, so compile refuses them there.
 
 `if` runs a step only when a boolean output is true. The step's output is then optional, and `first` joins it with what stands in for it. `first: [landed, carried]` is the first of those that ran.
 

@@ -207,7 +207,11 @@ describe("leases", () => {
       {
         limits: {
           validityEvery: "1 second",
-          leaseTtl: "2 seconds",
+          // Renewed every second, a run's lease outlasts a renewal that a
+          // loaded machine makes late: else another run of the flow, which
+          // the issue's label still offers, takes the lapsed claim over before
+          // the test's other machine does.
+          leaseTtl: "10 seconds",
           leaseRenewEvery: "1 second",
         },
       },

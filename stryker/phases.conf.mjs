@@ -7,6 +7,7 @@ export default mutationConfig("phases", {
   mutate: ["packages/sdk/src/phases.ts"],
   testFiles: [
     "test/phases.test.ts",
+    "test/park-sites.test.ts",
     "test/ledger.test.ts",
     "test/phases-record.test.ts",
     "test/review-phases.test.ts",

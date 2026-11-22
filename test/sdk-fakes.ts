@@ -321,6 +321,23 @@ export const makeFake = (
     );
   };
 
+  // What an implement run's hand-off records of the session that wrote the
+  // pull request: the issue's handed-off record, naming it (ADR 21, decision 7).
+  const handedOff = (
+    session: {
+      readonly adapter: string;
+      readonly sessionId: string;
+      readonly issue: number;
+      readonly branch: string;
+      readonly withPerson?: boolean;
+    },
+    pullRequest = PULL,
+  ) => {
+    recordPhase(`issue-${session.issue}`, "handed-off", {
+      data: { pullRequest, author: { ...session } },
+    });
+  };
+
   // Records a review of the pull request as review.round does, in its
   // record's data: approved or changes-asked by the verdict, unless `phase`
   // names another, with what the review saw and who gave it.
@@ -1276,6 +1293,7 @@ export const makeFake = (
     phases,
     records,
     recordPhase,
+    handedOff,
     recordReview,
     graph,
     branchPulls,

@@ -466,6 +466,10 @@ const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
     ),
   ]),
   ...listedAfter("its wakes read", (block.wakeReads ?? []).map(describeReading)),
+  ...Option.toArray(Option.fromUndefinedOr(block.parks)).map(
+    (phase) =>
+      `  parks: on ${phase}, where a run that takes it up starts; the steps after it read its output, not what came before it`,
+  ),
   ...(block.wakeEvents ?? []).map((waking) => `  its wakes wake on: ${describeEvent(waking)}`),
   ...Option.toArray(
     Option.liftPredicate(
