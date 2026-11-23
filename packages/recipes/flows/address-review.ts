@@ -160,7 +160,15 @@ const workflow = (item: WorkItem) =>
       return yield* answerReview(address);
     });
 
-    return yield* answering.pipe(
+    // One that changes a behavior spec no person approved goes to a person,
+    // unanswered; a run taking up a fix's wait for CI went past this already.
+    const guarded = Effect.gen(function* () {
+      if (Option.isNone(Review.resumingCi(address))) {
+        yield* PullRequest.specGuard(address.pullRequest);
+      }
+    }).pipe(Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))));
+
+    const answered = answering.pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
         StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
@@ -172,8 +180,9 @@ const workflow = (item: WorkItem) =>
         PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
         NotFound: (gone) => Effect.fail(new Skip({ reason: gone.message })),
       }),
-      PullRequest.owning(address.pullRequest),
     );
+
+    return yield* guarded.pipe(Effect.andThen(answered), PullRequest.owning(address.pullRequest));
   });
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.

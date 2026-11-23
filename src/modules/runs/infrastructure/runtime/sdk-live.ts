@@ -27,6 +27,7 @@ import {
   type ReviewNote,
   type SetupError,
   type SubmittedReview,
+  type TreeFile,
   Usage,
   Worktree,
 } from "@chernabog/core";
@@ -168,7 +169,19 @@ const RestLineComment = Schema.Struct({
   original_line: Schema.OptionFromNullOr(Schema.Finite),
 });
 
-const RestFile = Schema.Struct({ filename: Schema.String });
+const RestFile = Schema.Struct({
+  filename: Schema.String,
+  // Where a renamed file was before: a rename changes both paths.
+  previous_filename: Schema.optionalKey(Schema.String),
+});
+
+const RestTree = Schema.Struct({
+  tree: Schema.Array(
+    Schema.Struct({ path: Schema.String, type: Schema.String, sha: Schema.String }),
+  ),
+  truncated: Schema.optionalKey(Schema.Boolean),
+});
+
 const RestRef = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
 const RestCommit = Schema.Struct({ sha: Schema.String, message: Schema.String });
 const RestUser = Schema.Struct({ login: Schema.String });
@@ -626,9 +639,59 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
                   Option.flatten(Option.fromUndefinedOr(found.commit_id)),
                   () => "",
                 ),
+                trusted: TRUSTED_ASSOCIATIONS.has(found.author_association),
               })),
             ),
           ),
+        );
+
+      // Walks from the commit's tree down to the directory, one level a
+      // request, then lists the directory's own tree whole, so a big repo's
+      // tree, which GitHub truncates, is never listed. GitHub takes a commit's
+      // sha for its tree.
+      const treeFiles = (commitSha: string, directory: string) =>
+        provide(
+          Effect.gen(function* () {
+            const segments = directory.split("/").filter((segment) => segment.length > 0);
+            let tree = Option.some(commitSha);
+
+            for (const segment of segments) {
+              for (const at of Option.toArray(tree)) {
+                const listed = yield* githubJson("GET", path(`/git/trees/${at}`), RestTree);
+
+                tree = Option.map(
+                  Arr.findFirst(
+                    listed.tree,
+                    (entry) => entry.path === segment && entry.type === "tree",
+                  ),
+                  (entry) => entry.sha,
+                );
+              }
+            }
+
+            if (Option.isNone(tree)) {
+              return [];
+            }
+
+            const listed = yield* githubJson(
+              "GET",
+              path(`/git/trees/${tree.value}?recursive=1`),
+              RestTree,
+            );
+
+            if (listed.truncated === true) {
+              return yield* new GitHubError({
+                message: `${directory} at ${commitSha} has more files than GitHub lists`,
+              });
+            }
+
+            return listed.tree
+              .filter((entry) => entry.type === "blob")
+              .map((entry): TreeFile => ({
+                path: [...segments, entry.path].join("/"),
+                sha: entry.sha,
+              }));
+          }),
         );
 
       return GitHub.of({
@@ -798,8 +861,16 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
               path(`/pulls/${pullRequest}/files?per_page=100`),
               Schema.Array(RestFile),
               identity,
-            ).pipe(Effect.map((files) => files.map((file) => file.filename))),
+            ).pipe(
+              Effect.map((files) =>
+                files.flatMap((file) => [
+                  file.filename,
+                  ...Option.toArray(Option.fromUndefinedOr(file.previous_filename)),
+                ]),
+              ),
+            ),
           ),
+        treeFiles,
         closedPullRequestsLabelled: (label) =>
           provide(
             githubJson(

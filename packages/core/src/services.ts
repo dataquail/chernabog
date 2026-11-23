@@ -343,12 +343,20 @@ export type NewReview = {
 };
 
 // A review someone submitted: who, its state as GitHub gives it (APPROVED,
-// CHANGES_REQUESTED, COMMENTED, DISMISSED), and the head it saw.
+// CHANGES_REQUESTED, COMMENTED, DISMISSED), and the head it saw. `trusted`
+// says whether its author is one of the repo's owners, members or
+// collaborators, as Comment's does; anyone can review a public repo's pull
+// request. Absent from a binary that doesn't say, which is taken as not.
 export type SubmittedReview = {
   readonly author: string;
   readonly state: string;
   readonly commitSha: string;
+  readonly trusted?: boolean;
 };
+
+// A file in a commit's tree: its path from the repo's root, and its blob's
+// sha, which is the same for the same content.
+export type TreeFile = { readonly path: string; readonly sha: string };
 
 export type NewCommit = {
   readonly message: string;
@@ -515,6 +523,13 @@ export class GitHub extends Context.Service<
     ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
     // Changed paths of a pull request, for path rules such as humanOnlyPaths.
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
+    // The files under `directory` (such as `test/features`) in a commit's
+    // tree, by their blobs: none when the commit has no such directory. Two
+    // commits whose lists match have the same files there.
+    treeFiles(
+      commitSha: string,
+      directory: string,
+    ): Effect.Effect<ReadonlyArray<TreeFile>, GitHubError>;
     // Recently closed or merged pull requests carrying the label, newest first.
     closedPullRequestsLabelled(
       label: string,
@@ -646,6 +661,7 @@ export const GitHubCapability = Capabilities.declare(
     branchCiState: "read",
     ciFailureDetails: "read",
     pullRequestFiles: "read",
+    treeFiles: "read",
     closedPullRequestsLabelled: "read",
     reviewComments: "read",
   },

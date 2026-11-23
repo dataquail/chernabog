@@ -1778,7 +1778,18 @@ tree:
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
-      "acceptance/": { layout: open }
+      # The acceptance tier: its tests, and the harnesses they share — the sandbox they drive the
+      # built CLI in, the fake GitHub and registry it talks to, the lockfile reader, and the
+      # timings the shards split by.
+      "acceptance/":
+        children:
+          "*.test.ts":
+            surface: [{ use: test-exports-nothing }]
+          "sandbox.ts": {}
+          "fake-github.ts": {}
+          "fake-registry.ts": {}
+          "lockfile.ts": {}
+          "timings.json": {}
       "fakebin/": { layout: open }
       "*.test.ts":
         surface: [{ use: test-exports-nothing }]

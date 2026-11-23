@@ -889,6 +889,23 @@ export const catalogue = elsewhere.and("blocks.ts", {
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
+  // A pull request that changes a behavior spec goes to a person before any
+  // persona reviews, addresses or merges it (ADR 22, decision 3).
+  "pr.specGuard": defineBlock({
+    name: "pr.specGuard",
+    about:
+      "Hands the pull request to a person, labelled auto:needs-human with why, when it changes a behavior spec (a .feature file under test/features/) that no person approved as it stands, and the run ends needs-human. Only a person's approving review of a head with the same feature files clears it: a trusted login that isn't one of the repo's personas. Put it first in a flow that reviews, addresses or merges pull requests; pr.land's merge checks again.",
+    inputKinds: { pr: "PullRequestNumber" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    inputs: { pr: "required" },
+    run: (input: { readonly pr: PullRequestNumber }) => PullRequest.specGuard(input.pr),
+    failures: { NeedsHuman: "told", NotFound: "skip", Skip: "skip", StepFailed: "fail" },
+    outcomes: {},
+    mustRoute: [],
+    contributes: {},
+  }),
+
   // Chernabog merges only pull requests on the automated path (auto:ship), and
   // only when that's safe; a person merges any other. A layer of a stack waits,
   // approved, for the layer below. One refused because it conflicts with its

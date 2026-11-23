@@ -153,6 +153,9 @@ const workflow = (item: WorkItem) =>
 
     const { pullRequest } = yield* Review.pullRequestOf(item);
 
+    // One that changes a behavior spec no person approved goes to a person, unreviewed.
+    yield* PullRequest.specGuard(pullRequest);
+
     const earlier = yield* Review.latestOwnReview(pullRequest);
 
     // No review of its own to resume, as one posted before markers named their reviewer: review afresh.

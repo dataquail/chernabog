@@ -38,6 +38,7 @@ import { commentStep } from "./comment.ts";
 import * as Phases from "./phases.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import * as SpecGuard from "./spec-guard.ts";
 import * as StatusLabels from "./status-labels.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
@@ -347,26 +348,39 @@ export const baseRed = (pull: PullRequest) =>
     return Option.some(`CI failing on ${pull.baseRef}`);
   });
 
-// Merges the pull request, only when that is safe: it is open and not a
-// layer of a stack, its checks are green on the current head by the flow's
-// CI policy (Ci.verdict: by default, its required checks passed and no check
-// failed), the latest review its record keeps (Phases.reviewOf) approved that very head or one the head has only merged
-// its base into since (onlyMergedBase), it touches no humanOnlyPaths, its
-// base branch's CI isn't red when the flow holds merges for that (baseRed),
-// and GitHub's rules for the repo allow it. A pull request into any branch may
-// merge, such as develop in git flow. One whose base is the head branch of
-// another pull request is a layer stacked on it (layerBelow): it waits while
-// the layer below is open, and after it merges, until it is retargeted onto
-// the base below. A pull request based on the flow's integration base
-// (Settings.base) is never a layer, whatever came from that branch.
-// Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
-// one closed without merging. Nothing merges unless a flow calls this.
-export const merge = (pullRequest: number, options: MergeOptions) =>
+// Hands the pull request to a person (Phases.handToPerson) and says why; no
+// flow picks it up again until a person removes the label.
+export const handToPerson = (pullRequest: number, reason: string) =>
   activity(
-    Option.match(Option.fromUndefinedOr(options.id), {
-      onNone: () => `merge-pr-${pullRequest}`,
-      onSome: (id) => `merge-pr-${pullRequest}#${id}`,
+    `needs-human-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest), reason);
+      yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
     }),
+  ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
+
+// Hands the pull request to a person (handToPerson) when it changes a
+// behavior spec that no person approved as it stands (SpecGuard.unapproved),
+// and does nothing otherwise: the review flows call it first, and merge
+// before it merges, so no persona reviews, addresses or merges such a pull
+// request. It reads again every time, so a label removed without a person's
+// approval comes back. Decided once in an activity, `step`, so a replay
+// decides the same.
+export const specGuard = (pullRequest: number, step = `spec-guard-pr-${pullRequest}`) =>
+  activity(step, SpecGuard.unapproved(pullRequest), Schema.Option(Schema.String)).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (reason) => handToPerson(pullRequest, reason),
+      }),
+    ),
+  );
+
+// merge's own checks, and the merge, as one step.
+const mergeStep = (pullRequest: number, options: MergeOptions, step: string) =>
+  activity(
+    step,
     Effect.gen(function* () {
       const github = yield* GitHub;
       const rules = yield* Settings.rules;
@@ -450,6 +464,33 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     }),
     Schema.String,
   );
+
+// Merges the pull request, only when that is safe: it is open and not a
+// layer of a stack, its checks are green on the current head by the flow's
+// CI policy (Ci.verdict: by default, its required checks passed and no check
+// failed), the latest review its record keeps (Phases.reviewOf) approved that very head or one the head has only merged
+// its base into since (onlyMergedBase), it touches no humanOnlyPaths, its
+// base branch's CI isn't red when the flow holds merges for that (baseRed),
+// and GitHub's rules for the repo allow it. A pull request into any branch may
+// merge, such as develop in git flow. One whose base is the head branch of
+// another pull request is a layer stacked on it (layerBelow): it waits while
+// the layer below is open, and after it merges, until it is retargeted onto
+// the base below. A pull request based on the flow's integration base
+// (Settings.base) is never a layer, whatever came from that branch.
+// Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
+// one closed without merging. Before any of that, one that changes a behavior
+// spec no person approved as it stands goes to a person (specGuard), so no
+// persona merges it. Nothing merges unless a flow calls this.
+export const merge = (pullRequest: number, options: MergeOptions) => {
+  const step = Option.match(Option.fromUndefinedOr(options.id), {
+    onNone: () => `merge-pr-${pullRequest}`,
+    onSome: (id) => `merge-pr-${pullRequest}#${id}`,
+  });
+
+  return specGuard(pullRequest, `spec-guard-${step}`).pipe(
+    Effect.andThen(mergeStep(pullRequest, options, step)),
+  );
+};
 
 // Whether chernabog may merge the pull request: only on the automated path,
 // one labelled ship (auto:ship). Anything else, a missing or misspelt label
@@ -903,18 +944,6 @@ export const requestReview = (pullRequest: number) =>
     }),
     Schema.String,
   );
-
-// Hands the pull request to a person (Phases.handToPerson) and says why; no
-// flow picks it up again until a person removes the label.
-export const handToPerson = (pullRequest: number, reason: string) =>
-  activity(
-    `needs-human-pr-${pullRequest}`,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest), reason);
-      yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
-    }),
-  ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
 
 // Gives the pull request to a person as the next ordinary step, such as
 // merging it: comments `message` and records it ready-for-person, which

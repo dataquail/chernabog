@@ -1102,6 +1102,14 @@ docs/adr/0022-behavior-specs-in-gherkin.md has the why.
   (`PullRequest.handToPerson`), and only a person's approving review of a
   head with the same feature files clears it. An agent acting as the human
   on a stack never resolves that hand-off, and never removes its label.
+- **The check** is `PullRequest.specGuard` (`packages/sdk/src/spec-guard.ts`,
+  block `pr.specGuard`): first in the review, re-review and address-review
+  recipes and documents, and in `PullRequest.merge` before it merges. A
+  person is a trusted login (`SubmittedReview.trusted`) that is none of
+  `Repo.personas` and no bot; feature files are compared by their blobs at
+  the approved commit and the head (`GitHub.treeFiles`). It reads only
+  GitHub's reviews, never chernabog's own comments or markers, and hands off
+  again on every run until a person approves.
 - **When a scenario fails,** fix the code, the step definitions or the
   driver. Never edit the feature to make it pass.
 - **Not everything is a feature.** Combinatorial coverage stays in the

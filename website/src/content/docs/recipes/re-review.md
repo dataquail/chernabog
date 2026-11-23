@@ -17,6 +17,7 @@ Bakes `.chernabog/flows/re-review.ts`, and `.chernabog/prompts/review.md` for a 
 
 ## Its steps
 
+1. `PullRequest.specGuard` — a pull request that changes a behavior spec goes to a person, unreviewed, as in [`review`](/chernabog/recipes/review/).
 1. `Review.latestOwnReview` — the persona's latest review of the pull request, as the pull request's record keeps it: the head it saw, its round and its session. Without one to resume, such as when another reviewer reviewed it last, it reviews afresh, as `review` does. Editing or deleting the review's comment changes nothing here.
 2. `reviewRounds` caps the re-reviews of one pull request, 1 by default: past it, `PullRequest.handToPerson` hands the pull request to a person without reviewing.
 3. `Review.recheck` — resumes the session of its own review with the change since, and posts its review.

@@ -117,6 +117,9 @@ const workflow = (item: WorkItem) =>
 
     const { pullRequest } = yield* Review.pullRequestOf(item);
 
+    // One that changes a behavior spec no person approved goes to a person, unreviewed.
+    yield* PullRequest.specGuard(pullRequest);
+
     const review = yield* Review.round(pullRequest, 1, { role: "reviewer" });
     yield* Review.doneReviewing(pullRequest);
 

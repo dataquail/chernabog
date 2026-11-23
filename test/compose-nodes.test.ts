@@ -287,11 +287,11 @@ describe("a document's run records where in its plan each step ran", () => {
           scenarioOf(REVIEW_SCENARIOS, "when it approves a pull request on the automated path"),
         );
 
-        expect(seen.path.steps.every((step) => / @ (review|land)$/.test(step))).toBe(true);
+        expect(seen.path.steps.every((step) => / @ (spec|review|land)$/.test(step))).toBe(true);
         expect(seen.path.steps.length).toBeGreaterThan(1);
-        expect(seen.path.nodes).toEqual(["review: ok", "land: ok"]);
+        expect(seen.path.nodes).toEqual(["spec: ok", "review: ok", "land: ok"]);
         expect(seen.path.branches).toEqual(["review: approve"]);
-        expect(seen.path.ends).toEqual(["steps[0].on.approve.steps[1]"]);
+        expect(seen.path.ends).toEqual(["steps[1].on.approve.steps[1]"]);
         expect(seen.plan).toEqual(Option.some(module.plan.hash));
       }),
     60_000,

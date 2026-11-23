@@ -954,6 +954,9 @@ describe("the hand-over test sees a review flow that", () => {
   );
 
   sabotagedHandOver("doesn't declare the label it gives", (flow) =>
-    flow.replace('blocks: ["review.round","pr.readyForPerson"]', 'blocks: ["review.round"]'),
+    flow.replace(
+      'blocks: ["pr.specGuard","review.round","pr.readyForPerson"]',
+      'blocks: ["pr.specGuard","review.round"]',
+    ),
   );
 });

@@ -19,6 +19,7 @@
     "test/acceptance/cancel.test.ts": 23245,
     "test/acceptance/personas.test.ts": 23173,
     "test/acceptance/versions.test.ts": 22414,
+    "test/acceptance/spec-guard.test.ts": 22133,
     "test/acceptance/dashboard.test.ts": 21447,
     "test/acceptance/reload.test.ts": 21043,
     "test/acceptance/ci-park.test.ts": 21000,
