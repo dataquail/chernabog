@@ -1,8 +1,8 @@
-@driver:in-process
+@driver:in-process @driver:sandbox
 Feature: One persona hands work to another
-  The in-process driver's own test feature: two personas on one machine
-  taking turns, alice writing and bob reviewing. It is not a spec: specs are
-  test/features/*.feature.
+  The drivers' own test feature: two personas on one machine taking turns,
+  alice writing and bob reviewing, the same on every driver. It is not a
+  spec: specs are test/features/*.feature.
 
   Background:
     Given alice and bob are personas on this machine
