@@ -682,6 +682,19 @@ export const reviewersOf = (pullRequest: number) =>
       ),
   );
 
+// Whether `found`, a pull request's record, says chernabog adopted it
+// (StatusLabels.ADOPTED_KEY), which every later record of it carries.
+export const saysAdopted = (found: PhaseRecord) =>
+  Option.exists(found.data, (data) => data[StatusLabels.ADOPTED_KEY] === true);
+
+// Whether chernabog adopted the pull request, by its record: auto:adopted is
+// only its projection.
+export const adopted = (pullRequest: number) =>
+  Effect.map(
+    Progress.use((progress) => progress.read(pullRequestItem(pullRequest))),
+    (found) => Option.exists(found, saysAdopted),
+  );
+
 // Records `to` on the pull request, a phase it waits on a review at, with who
 // had reviewed it so far (reviewersOf), and what `also` says of it, such as
 // that chernabog adopted it (StatusLabels.ADOPTED_KEY).

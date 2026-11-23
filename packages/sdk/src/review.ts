@@ -18,6 +18,7 @@ import {
   Machine,
   NeedsHuman,
   type PhaseRecord,
+  Progress,
   type PullRequest,
   Repo,
   ReviewerSeat,
@@ -37,7 +38,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
-import { ADOPTED_LABEL, type CiWait, heldOnCi, sessionIdFor } from "./implement.ts";
+import { type CiWait, heldOnCi, sessionIdFor } from "./implement.ts";
 import type { Observed } from "./ledger-check.ts";
 import * as Phases from "./phases.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
@@ -871,15 +872,22 @@ export const latestOwnReview = (pullRequest: number) =>
   );
 
 // Open pull requests this persona wrote, and those it adopted for an issue
-// they close (Implement.ADOPTED_LABEL, with the persona assigned).
+// they close (their records say so, with the persona assigned).
 export const authoredByMe = Effect.gen(function* () {
   const github = yield* GitHub;
   const me = yield* github.login;
+  const all = yield* Progress.use((progress) => progress.readAll);
+
+  const adopted = (pull: PullRequest) =>
+    Option.exists(
+      Option.fromUndefinedOr(all.get(Phases.pullRequestItem(pull.number))),
+      Phases.saysAdopted,
+    );
 
   return (yield* github.openPullRequests).filter(
     (pull) =>
       sameLogin(pull.author, me) ||
-      (pull.labels.includes(ADOPTED_LABEL) && pull.assignees.some((login) => sameLogin(login, me))),
+      (adopted(pull) && pull.assignees.some((login) => sameLogin(login, me))),
   );
 });
 
