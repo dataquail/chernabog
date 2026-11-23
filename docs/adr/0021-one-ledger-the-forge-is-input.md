@@ -617,8 +617,24 @@ change.
 ## Consequences
 
 - Sources that still read progress from the world are violations to fix,
-  each in its own change. `docs/run-progress/audit.md` lists them. So are
-  in-run waits that don't park on a daemon.
+  each in its own change. `docs/run-progress/audit.md` lists them, and every
+  row is done (#570). So are in-run waits that don't park on a daemon.
+- The build enforces "the world is input, never record" (#570).
+  `bun run lint:architecture` fails on a status label tested or listed, or a
+  `.read` of a marker other than the linking ones (`planNodeMarker`,
+  `followUpMarker`, the epic status comment's `statusMarker`), anywhere in
+  the SDK or the recipes but backfill, the projector, the hand-back observer
+  and backfill's reader of the merge-hold marker
+  (`scripts/world-reads.ts`). A world-sabotage suite deletes, and separately
+  edits, every status label and comment chernabog wrote, at each recipe's
+  and each document's parks and in the middle of the phase before them, and
+  holds the records and the outcome to an untouched run's.
+- A person's hand-back is never lost to a projection. A projection that puts
+  `auto:needs-human` back on an item still recorded `with-person`, before
+  the observer's tick, leaves the removal in the label's events; the
+  observer records `handed-back` from a trusted removal since the
+  `with-person` record, ignoring a persona putting the label back, and a
+  person putting it back takes the hand-back back.
 - Three waits break decision 4's first point in CI today: an adopted draft
   marked ready, a plan's answer, and a merge held for a red base. Each parks
   in the run's journal, and its source only wakes the waiting run. A CI job
