@@ -8,12 +8,14 @@ import { createHash } from "node:crypto";
 
 import {
   activity,
+  BlobHash,
   Claims,
   GitHub,
   type LinkedIssue,
+  NeedsHuman,
   type PhaseRecord,
   planNodeMarker,
-  printJson,
+  Progress as Ledger,
   type PullRequest,
   Repo,
   Run,
@@ -28,12 +30,12 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
+import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
 import * as Ci from "./ci.ts";
 import * as Implement from "./implement.ts";
-import { heldOnCi, issueItem, issueOf, routed } from "./implement.ts";
+import { issueItem, issueOf, routed } from "./implement.ts";
 import * as Phases from "./phases.ts";
 import { type Kind, VERIFY } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
@@ -612,14 +614,11 @@ export const LOOK_AGAIN_AFTER = "1 day";
 
 const Pairs = Schema.Array(Schema.Tuple([Schema.Finite, Schema.Finite]));
 
-// What a run keeps of the tasks it started, for the run that takes the epic
-// up after it parks: each task's attempts so far, the tasks read as something
-// other than ready since their attempt (handed back, so they may start
-// again), and those whose attempt ended with a person.
-// A task whose lane ended on its pull request's pending CI (audit W7): the
-// lane can't park on its own, so it leaves the round, and the epic's run
-// takes it up once CI settles (takeUpCi), from the round of CI it waits on,
-// counting ciTimeout from `since`, when that round's wait began.
+// A task whose lane ended on its pull request's pending CI (audit W7), as
+// the task's own record keeps it (awaiting-task-ci): the lane can't park on
+// its own, so it leaves the round, and the epic's run takes it up once CI
+// settles (takeUpCi), from the round of CI it waits on, counting ciTimeout
+// from `since`, when that round's wait began.
 export const PendingCi = Schema.Struct({
   issue: Schema.Finite,
   pullRequest: Schema.Finite,
@@ -632,79 +631,60 @@ export const PendingCi = Schema.Struct({
 
 export type PendingCi = typeof PendingCi.Type;
 
+// What a run keeps of the tasks it started, for the run that takes the epic
+// up after it parks: each task's attempts so far, and the tasks read as
+// something other than ready since their attempt (handed back, so they may
+// start again). Whether a task is with a person is its own record's
+// (with-person, #560), not the epic's; a task left on its pending CI is on
+// its own record too.
 export const TaskKeep = Schema.Struct({
   attempts: Pairs,
   handedBack: Schema.Array(Schema.Finite),
-  withPerson: Schema.Array(Schema.Finite),
-  // Tasks whose CI was pending when their lane ended. None in a record from
-  // before lanes left on CI.
-  ci: Schema.optionalKey(Schema.Array(PendingCi)),
 });
 
 export type TaskKeep = typeof TaskKeep.Type;
 
-// What a run keeps of carrying layers up and landing them, by pull request:
-// each layer's refresh attempt, the base head it last brought each up to,
-// the layers whose refresh went to a person, the layer below each was last
-// seen stacked on, and those brought up to date with that one's merge.
 // A layer whose refresh (Stack.refreshLayer) left on its pull request's
-// pending CI (audit W7): the run can't park on one layer, so the refresh
-// ends there, the layers above it wait, and its review waits too, until a
-// round takes it up once CI settles (takeUpRefreshes). It keeps the layer's
-// task, its pull request, the base head it was brought up to, the layer below
-// when it caught up with that one's merge (Stack.LayerRefresh's lower), and
-// what the refresh left (Stack.RefreshLeft): the round of CI, the base, when
-// that round's wait began, and what it says to a reviewer asked again.
+// pending CI (audit W7), as the pull request's own record keeps it
+// (awaiting-refresh-ci): the run can't park on one layer, so the refresh ends
+// there, the layers above it wait, and its review waits too, until a round
+// takes it up once CI settles (takeUpRefreshes). It keeps the layer's task,
+// its pull request, the base head it was brought up to, the layer below when
+// it caught up with that one's merge (Stack.LayerRefresh's lower), the round
+// of CI, the base, and when that round's wait began. `kept` names the blob
+// written with the record (RefreshKept): what the refresh says to a reviewer
+// asked again, and the record it was written over, to put back.
 export const PendingRefresh = Schema.Struct({
   layer: Schema.Finite,
   pullRequest: Schema.Finite,
   baseSha: Schema.String,
   lower: Schema.optionalKey(Schema.Finite),
-  ...Stack.RefreshLeft.fields,
+  round: Schema.Finite,
+  base: Schema.String,
+  since: Schema.String,
+  kept: Schema.String,
 });
 
 export type PendingRefresh = typeof PendingRefresh.Type;
 
+// What a run keeps of carrying layers up and landing them, by pull request:
+// each layer's refresh attempt, the base head it last brought each up to,
+// the layer below each was last seen stacked on, and those brought up to
+// date with that one's merge. Whether a layer is with a person is its pull
+// request's own record (with-person, #561), and a refresh left on its
+// pending CI is on that record too, not here.
 export const LayerKeep = Schema.Struct({
   attempts: Pairs,
   recorded: Schema.Array(Schema.Tuple([Schema.Finite, Schema.String])),
-  withPerson: Schema.Array(Schema.Finite),
   below: Pairs,
   caughtUp: Schema.Array(Schema.Finite),
-  // Refreshes left on pending CI. None in a record from before refreshes left.
-  ci: Schema.optionalKey(Schema.Array(PendingRefresh)),
 });
 
 export type LayerKeep = typeof LayerKeep.Type;
 
-// The most bytes, as JSON, the refreshes left on pending CI take of the
-// epic's 4 KB record: a refresh that would take them past it waits for its
-// CI inside the run instead, so the rest of the record keeps its room: six
-// layers at the least, each keeping SAID_SIZE characters of what it says,
-// and nine with only the line that says what it merged.
-export const REFRESH_CI_SIZE = 2048;
-
-const encodeRefreshes = Schema.encodeSync(Schema.Array(PendingRefresh));
-
-// Whether these refreshes left on pending CI fit their share of the record.
-export const fitsRefreshCi = (pending: ReadonlyArray<PendingRefresh>) =>
-  new TextEncoder().encode(printJson(encodeRefreshes(pending))).length <= REFRESH_CI_SIZE;
-
-// Whether a refresh of this layer may leave on pending CI beside those
-// already left: whether they fit, with the most it could keep of its own.
-export const roomForRefresh = (
-  pending: ReadonlyArray<PendingRefresh>,
-  layer: Omit<PendingRefresh, "round" | "since" | "said">,
-) =>
-  fitsRefreshCi([
-    ...pending,
-    { ...layer, round: 99, since: "2026-01-01T00:00:00.000Z", said: "x".repeat(Stack.SAID_SIZE) },
-  ]);
-
 // What the epic's waiting record carries (ADR 0021, decision 4): the
 // fingerprint of the epic as the parked run last read it, which the trigger
-// compares, and what the run kept between rounds. `layers` is left out when
-// keeping it would take the record past its 4 KB.
+// compares, and what the run kept between rounds, the epic's own facts only.
 export const Waiting = Schema.Struct({
   fingerprint: Schema.String,
   tasks: TaskKeep,
@@ -716,43 +696,10 @@ export type Waiting = typeof Waiting.Type;
 const encodeWaiting = Schema.encodeSync(Waiting);
 const decodeWaiting = Schema.decodeUnknownOption(Waiting);
 
-const NOTHING_KEPT: TaskKeep = { attempts: [], handedBack: [], withPerson: [] };
-
-// `waiting` as record data, as much of it as a record takes: with only the
-// refreshes the layers' upkeep left on pending CI, then with only what was
-// left on pending CI, the tasks' and the refreshes', then without the
-// layers' upkeep, then with neither, when it is too big. What was left on
-// pending CI goes last: nothing but this record takes it up again.
-export const waitingData = (waiting: Waiting) => {
-  const { layers: _layers, ...tasksOnly } = waiting;
-  const least: Waiting = { fingerprint: waiting.fingerprint, tasks: NOTHING_KEPT };
-
-  const refreshesOnly: Waiting = {
-    ...tasksOnly,
-    layers: {
-      attempts: [],
-      recorded: [],
-      withPerson: [],
-      below: [],
-      caughtUp: [],
-      ci: waiting.layers?.ci ?? [],
-    },
-  };
-
-  const pendingCiOnly: Waiting = {
-    ...refreshesOnly,
-    tasks: { ...NOTHING_KEPT, ci: waiting.tasks.ci ?? [] },
-  };
-
-  return encodeWaiting(
-    Option.getOrElse(
-      Arr.findFirst([waiting, refreshesOnly, pendingCiOnly, tasksOnly], (kept) =>
-        Phases.fitsAPark(encodeWaiting(kept)),
-      ),
-      () => least,
-    ),
-  );
-};
+// `waiting` as record data, all of it: the epic's own facts are small, and
+// nothing is dropped to fit. Past a record's 4 KB, writing it fails, as any
+// record's does, rather than a new run starting afresh unseen.
+export const waitingData = (waiting: Waiting) => encodeWaiting(waiting);
 
 // Records that the run parks waiting for a layer to change, as the step
 // `epic-waiting-<round>`, then parks until one does or `after` passes. A
@@ -809,141 +756,68 @@ const parkedOn = (all: ReadonlyMap<string, PhaseRecord>, epic: number) =>
       })),
   );
 
-// Why a parked epic waits on CI: the first of its tasks' pull requests, or
-// of its layers' refreshes, whose CI is still pending with time left. None
-// when one has settled or run past ciTimeout, for the run that takes the
-// epic up to take it up, or when none waits.
-const waitingOnCiOf = (waiting: Waiting) =>
-  Effect.gen(function* () {
-    const pending = [
-      ...(waiting.tasks.ci ?? []).map((task) => ({ ...task })),
-      ...(waiting.layers?.ci ?? []).map((refresh) => ({ ...refresh, issue: refresh.layer })),
-    ];
-
-    const reasons: Array<string> = [];
-
-    for (const one of pending) {
-      const why = yield* heldOnCi(one.pullRequest, Option.some({ since: one.since }));
-
-      if (Option.isNone(why)) {
-        return { settled: true, held: Option.none<string>() };
-      }
-
-      reasons.push(`#${one.issue}: ${why.value}`);
-    }
-
-    return { settled: false, held: Arr.head(reasons) };
-  });
-
-// Open epics (auto:epic), oldest first, as work items keyed by the epic's
-// issue, each routed by its assignees. The epic's record, not its status
-// comment, says whether a run parked on it (ADR 0021, decision 3): one parked
-// (waiting) is offered only once a layer changed since, which carries
-// LAYER_CHANGED and wakes a run still parked, once a task or a layer's
-// refresh it left on pending CI has CI green or red, or past ciTimeout, or
-// once `after` passed since it parked; the new run takes up what the parked
-// one kept. One whose CI is all still pending is held, with why. Any other epic
-// is offered while it has an open sub-issue.
-export const queuedAfter = (after: Duration.Input) =>
-  Effect.gen(function* () {
-    const github = yield* GitHub;
-    const all = yield* Phases.records;
-    const now = yield* DateTime.now;
-    const items: Array<WorkItem> = [];
-
-    for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
-      if (epic.state === "closed") {
-        continue;
-      }
-
-      const parked = parkedOn(all, epic.number);
-
-      if (Option.isNone(parked)) {
-        if ((yield* github.subIssues(epic.number)).some((task) => task.state === "open")) {
-          items.push(yield* routed(epic, issueItem(epic)));
-        }
-
-        continue;
-      }
-
-      const { since, waiting } = parked.value;
-      const changed = waiting.fingerprint !== (yield* fingerprint(epic.number));
-      const tasksCi = yield* waitingOnCiOf(waiting);
-
-      const due = DateTime.isLessThanOrEqualTo(
-        DateTime.addDuration(since, Duration.fromInputUnsafe(after)),
-        now,
-      );
-
-      const item: WorkItem = {
-        ...issueItem(epic),
-        data: { issue: epic.number, resumeEpic: encodeWaiting(waiting) },
-      };
-
-      if (!changed && !due && !tasksCi.settled) {
-        // Held, with why, while a task's CI, or a refresh's, is still pending.
-        for (const why of Option.toArray(tasksCi.held)) {
-          items.push({ ...item, held: why });
-        }
-
-        continue;
-      }
-
-      // A layer changed: also a wake, for a run still parked on the epic.
-      if (changed) {
-        items.push(yield* routed(epic, { ...item, signals: [LAYER_CHANGED] }));
-        continue;
-      }
-
-      items.push(yield* routed(epic, item));
-    }
-
-    return items;
-  });
-
-// queuedAfter, looking at a parked epic again after LOOK_AGAIN_AFTER.
-export const queued = queuedAfter(LOOK_AGAIN_AFTER);
-
-// Where a task's lane, in an epic document, leaves its pending CI for the
-// lane's ending to carry (epic.recordEndings): set by the lane's scope, and
-// read by a wait for CI in it, which then ends the lane (leaveLane). None
-// outside an epic's lane.
-export type LaneCiSlot = {
-  // The lane's task.
-  readonly issue: number;
-  readonly left: Ref.Ref<Option.Option<PendingCi>>;
-};
-
-export const LaneCi = Context.Reference<Option.Option<LaneCiSlot>>("@chernabog/sdk/Epic/LaneCi", {
-  defaultValue: () => Option.none(),
+// The epic's tasks whose lanes left on pending CI, and its layers whose
+// refreshes did, each oldest first.
+export const LeftOnCi = Schema.Struct({
+  tasks: Schema.Array(PendingCi),
+  refreshes: Schema.Array(PendingRefresh),
 });
 
-// What a task's lane records of its pull request's pending CI as it leaves
-// the round, as the step `ci-left-<round>#<lane>`: when the round's wait
-// began, so ciTimeout counts across the runs that take the epic up.
-export const leftOnCi = (task: Omit<PendingCi, "since" | "round">, round: number) =>
-  activity(
-    `ci-left-${round}#${task.lane}`,
-    Effect.map(DateTime.now, (now): PendingCi => ({
-      ...task,
-      round,
-      since: DateTime.formatIso(now),
-    })),
-    PendingCi,
-  ).pipe(Effect.orDie);
+export type LeftOnCi = typeof LeftOnCi.Type;
 
-// Ends a task's lane in an epic document on its pull request's pending CI,
-// which the lane's scope (LaneCi) hands to the next round. It ends as a lane
-// skipped does, so the steps after it, its hand-off, don't run.
-export const leaveLane = (pending: PendingCi) =>
-  Effect.gen(function* () {
-    for (const slot of Option.toArray(yield* LaneCi)) {
-      yield* Ref.set(slot.left, Option.some(pending));
+const decodePendingCi = Schema.decodeUnknownOption(PendingCi);
+const decodePendingRefresh = Schema.decodeUnknownOption(PendingRefresh);
+
+type Waited = { readonly since: string; readonly pullRequest: number };
+
+// Oldest first, by when each wait began, then by pull request.
+const oldestFirst = Order.combine(
+  Order.mapInput(Order.String, (wait: Waited) => wait.since),
+  Order.mapInput(Order.Number, (wait: Waited) => wait.pullRequest),
+);
+
+// What `all`, every item's record, says the epic left on pending CI, by each
+// item's own record: an open task's (`open`) at awaiting-task-ci, and its
+// layer's pull request's at awaiting-refresh-ci.
+const leftAmong = (all: ReadonlyMap<string, PhaseRecord>, open: ReadonlySet<number>): LeftOnCi => {
+  const lanes: Array<PendingCi> = [];
+  const refreshes: Array<PendingRefresh> = [];
+
+  for (const [item, record] of all) {
+    if (record.phase === Phases.PHASES.issue.awaitingTaskCi) {
+      for (const task of Option.toArray(Option.flatMap(record.data, decodePendingCi))) {
+        if (item === Phases.issueItem(task.issue) && open.has(task.issue)) {
+          lanes.push(task);
+        }
+      }
     }
 
-    return yield* new Skip({
-      reason: `#${pending.issue} waits on CI for #${pending.pullRequest}; the epic takes it up once it settles`,
-    });
+    if (record.phase === Phases.PHASES.pullRequest.awaitingRefreshCi) {
+      for (const left of Option.toArray(Option.flatMap(record.data, decodePendingRefresh))) {
+        if (item === Phases.pullRequestItem(left.pullRequest) && open.has(left.layer)) {
+          refreshes.push(left);
+        }
+      }
+    }
+  }
+
+  return { tasks: Arr.sort(lanes, oldestFirst), refreshes: Arr.sort(refreshes, oldestFirst) };
+};
+
+const openTasks = (epic: number) =>
+  Effect.map(
+    GitHub.use((github) => github.subIssues(epic)),
+    (issues) =>
+      new Set(issues.filter((issue) => issue.state === "open").map(({ number }) => number)),
+  );
+
+// What the epic left on pending CI, by its tasks' and layers' own records:
+// one read of every record, whatever the epic's size.
+export const leftOf = (epic: number) =>
+  Effect.gen(function* () {
+    const open = yield* openTasks(epic);
+
+    return leftAmong(yield* Phases.records, open);
   });
 
 const TaskCi = Schema.Struct({
@@ -990,11 +864,160 @@ const taskCi = (task: { readonly pullRequest: number; readonly since: string }) 
     return { state: "pending", url } satisfies typeof TaskCi.Type;
   });
 
+// Why a parked epic waits on CI: the first of its tasks' pull requests, or
+// of its layers' refreshes, whose CI is still pending with time left, by
+// their own records. None when one has settled or run past ciTimeout, for
+// the run that takes the epic up to take it up, or when none waits. One
+// whose pull request closed since waits on nothing.
+const waitingOnCiOf = (left: LeftOnCi) =>
+  Effect.gen(function* () {
+    const pending = [
+      ...left.tasks.map((task) => ({ ...task })),
+      ...left.refreshes.map((refresh) => ({ ...refresh, issue: refresh.layer })),
+    ];
+
+    const reasons: Array<string> = [];
+
+    for (const one of pending) {
+      const read = yield* taskCi(one);
+
+      if (read.state === "settled" || read.state === "timed-out") {
+        return { settled: true, held: Option.none<string>() };
+      }
+
+      if (read.state === "pending") {
+        reasons.push(`#${one.issue}: waits on CI for #${one.pullRequest}`);
+      }
+    }
+
+    return { settled: false, held: Arr.head(reasons) };
+  });
+
+// Open epics (auto:epic), oldest first, as work items keyed by the epic's
+// issue, each routed by its assignees. The epic's record, not its status
+// comment, says whether a run parked on it (ADR 0021, decision 3): one parked
+// (waiting) is offered only once a layer changed since, which carries
+// LAYER_CHANGED and wakes a run still parked, once a task or a layer's
+// refresh it left on pending CI, by that task's or pull request's own
+// record, has CI green or red, or past ciTimeout, or
+// once `after` passed since it parked; the new run takes up what the parked
+// one kept. One whose CI is all still pending is held, with why. Any other epic
+// is offered while it has an open sub-issue.
+export const queuedAfter = (after: Duration.Input) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const all = yield* Phases.records;
+    const now = yield* DateTime.now;
+    const items: Array<WorkItem> = [];
+
+    for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
+      if (epic.state === "closed") {
+        continue;
+      }
+
+      const parked = parkedOn(all, epic.number);
+
+      if (Option.isNone(parked)) {
+        if ((yield* github.subIssues(epic.number)).some((task) => task.state === "open")) {
+          items.push(yield* routed(epic, issueItem(epic)));
+        }
+
+        continue;
+      }
+
+      const { since, waiting } = parked.value;
+      const changed = waiting.fingerprint !== (yield* fingerprint(epic.number));
+      const tasksCi = yield* waitingOnCiOf(leftAmong(all, yield* openTasks(epic.number)));
+
+      const due = DateTime.isLessThanOrEqualTo(
+        DateTime.addDuration(since, Duration.fromInputUnsafe(after)),
+        now,
+      );
+
+      const item: WorkItem = {
+        ...issueItem(epic),
+        data: { issue: epic.number, resumeEpic: encodeWaiting(waiting) },
+      };
+
+      if (!changed && !due && !tasksCi.settled) {
+        // Held, with why, while a task's CI, or a refresh's, is still pending.
+        for (const why of Option.toArray(tasksCi.held)) {
+          items.push({ ...item, held: why });
+        }
+
+        continue;
+      }
+
+      // A layer changed: also a wake, for a run still parked on the epic.
+      if (changed) {
+        items.push(yield* routed(epic, { ...item, signals: [LAYER_CHANGED] }));
+        continue;
+      }
+
+      items.push(yield* routed(epic, item));
+    }
+
+    return items;
+  });
+
+// queuedAfter, looking at a parked epic again after LOOK_AGAIN_AFTER.
+export const queued = queuedAfter(LOOK_AGAIN_AFTER);
+
+// Where a task's lane runs in an epic document: set by the lane's scope, and
+// read by a wait for CI in it, which ends the lane on pending CI (leaveLane)
+// rather than park. None outside an epic's lane.
+export type LaneCiSlot = {
+  // The lane's task.
+  readonly issue: number;
+};
+
+export const LaneCi = Context.Reference<Option.Option<LaneCiSlot>>("@chernabog/sdk/Epic/LaneCi", {
+  defaultValue: () => Option.none(),
+});
+
+const encodePendingCi = Schema.encodeSync(PendingCi);
+
+// Records a task's pull request's pending CI on the task's own record as its
+// lane leaves the round (awaiting-task-ci), as the step
+// `ci-left-<round>#<lane>`: the round of CI, and when the round's wait began,
+// so ciTimeout counts across the runs that take the epic up, which find it
+// by the record (leftOf).
+export const leftOnCi = (task: Omit<PendingCi, "since" | "round">, round: number) =>
+  activity(
+    `ci-left-${round}#${task.lane}`,
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const pending: PendingCi = { ...task, round, since: DateTime.formatIso(now) };
+
+      // Written afresh even over a record of this run's: a task taken up and
+      // left again waits on a later round.
+      yield* Phases.record(
+        Phases.issueItem(task.issue),
+        Phases.PHASES.issue.awaitingTaskCi,
+        encodePendingCi(pending),
+        { always: true },
+      );
+
+      return pending;
+    }),
+    PendingCi,
+  );
+
+// Ends a task's lane in an epic document on its pull request's pending CI,
+// which the task's record keeps (leftOnCi) for a later round to take up. It
+// ends as a lane skipped does, so the steps after it, its hand-off, don't run.
+export const leaveLane = (pending: PendingCi) =>
+  Effect.fail(
+    new Skip({
+      reason: `#${pending.issue} waits on CI for #${pending.pullRequest}; the epic takes it up once it settles`,
+    }),
+  );
+
 // How a task taken up ended: handed off, left on CI again (after a fix, or
 // still pending), or with a person.
 type TakenUp =
   | { readonly kind: "done" }
-  | { readonly kind: "left"; readonly pending: PendingCi }
+  | { readonly kind: "left" }
   | { readonly kind: "person"; readonly issue: number };
 
 // Takes one task up from where its lane left it: in a worktree on its
@@ -1039,7 +1062,9 @@ const takeUp = (task: PendingCi, url: string, round: number, late: boolean) =>
       );
 
       if (Option.isSome(left)) {
-        return { kind: "left", pending: yield* leftOnCi(task, left.value) } satisfies TakenUp;
+        yield* leftOnCi(task, left.value);
+
+        return { kind: "left" } satisfies TakenUp;
       }
 
       yield* Implement.handOff(
@@ -1064,14 +1089,6 @@ const takeUp = (task: PendingCi, url: string, round: number, late: boolean) =>
     );
   });
 
-const leftAgain = (one: TakenUp): ReadonlyArray<PendingCi> => {
-  if (one.kind !== "left") {
-    return [];
-  }
-
-  return [one.pending];
-};
-
 const wentToPerson = (one: TakenUp): ReadonlyArray<number> => {
   if (one.kind !== "person") {
     return [];
@@ -1081,27 +1098,35 @@ const wentToPerson = (one: TakenUp): ReadonlyArray<number> => {
 };
 
 // What a round's take-up of the tasks left on pending CI leaves: whether it
-// took any up (and so the round reads the epic again), the tasks still left
-// on CI, and those that went to a person.
+// took any up (and so the round reads the epic again), and those that went
+// to a person. Those still left keep their own records.
 export type TasksCi = {
   readonly taken: boolean;
-  readonly pending: ReadonlyArray<PendingCi>;
   readonly withPerson: ReadonlyArray<number>;
 };
 
-// Takes up, as a step of the round each (`task-ci-<round>#<lane>`), the tasks
-// whose lanes left on pending CI whose CI has since settled or run past
-// ciTimeout, `concurrency` at once; those still pending stay left, and one
-// whose pull request closed is dropped. The recipe and the epic document
+// The epic's tasks left on pending CI, by their records, read once a round
+// as the step `tasks-ci-<round>`, so a replay takes up the same ones.
+const tasksLeft = (round: number, epic: number) =>
+  activity(
+    `tasks-ci-${round}`,
+    Effect.map(leftOf(epic), (left) => left.tasks),
+    Schema.Array(PendingCi),
+  );
+
+// Takes up, as a step of the round each (`task-ci-<round>#<lane>`), the
+// epic's tasks whose lanes left on pending CI, by the tasks' own records
+// (awaiting-task-ci), whose CI has since settled or run past ciTimeout,
+// `concurrency` at once; those still pending stay left, and one whose pull
+// request closed is passed over. The recipe and the epic document
 // (epic.settleCi) take them up alike.
-export const takeUpCi = (round: number, pending: ReadonlyArray<PendingCi>, concurrency: number) =>
+export const takeUpCi = (round: number, epic: number, concurrency: number) =>
   Effect.gen(function* () {
     type Due = { readonly task: PendingCi; readonly url: string; readonly late: boolean };
 
-    const still: Array<PendingCi> = [];
     const due: Array<Due> = [];
 
-    for (const task of pending) {
+    for (const task of yield* tasksLeft(round, epic)) {
       const read = yield* activity(
         `task-ci-${round}#${task.lane}`,
         taskCi(task).pipe(
@@ -1111,10 +1136,6 @@ export const takeUpCi = (round: number, pending: ReadonlyArray<PendingCi>, concu
         ),
         TaskCi,
       );
-
-      if (read.state === "pending") {
-        still.push(task);
-      }
 
       if (read.state === "settled" || read.state === "timed-out") {
         due.push({ task, url: read.url, late: read.state === "timed-out" });
@@ -1127,10 +1148,152 @@ export const takeUpCi = (round: number, pending: ReadonlyArray<PendingCi>, concu
 
     return {
       taken: due.length > 0,
-      pending: [...still, ...ended.flatMap(leftAgain)],
       withPerson: ended.flatMap(wentToPerson),
     } satisfies TasksCi;
   });
+
+// The record a refresh left on pending CI was written over, which the run
+// that takes it up records again: its phase, and the data it carried, if any.
+const Restore = Schema.Struct({
+  phase: Schema.String,
+  data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+});
+
+type Restore = typeof Restore.Type;
+
+// What a refresh left on pending CI keeps in the blob its record names
+// (PendingRefresh's `kept`): what it says to a reviewer it asks again, whole,
+// and the record it was written over. A blob, so neither has to fit beside
+// the rest of the pull request's record.
+const Kept = Schema.Struct({ said: Schema.String, restore: Restore });
+
+const RefreshKept = Schema.fromJsonString(Kept);
+
+type RefreshKept = typeof Kept.Type;
+
+const encodePendingRefresh = Schema.encodeSync(PendingRefresh);
+
+// What the blob `left` names keeps; none when the store has no such blob.
+const keptFor = (left: PendingRefresh) =>
+  Effect.gen(function* () {
+    const ledger = yield* Ledger;
+    const hash = Schema.decodeOption(BlobHash)(left.kept);
+
+    if (Option.isNone(hash)) {
+      return Option.none<RefreshKept>();
+    }
+
+    const bytes = yield* ledger.blob(Phases.pullRequestItem(left.pullRequest), hash.value);
+
+    return Option.flatMap(bytes, (found) =>
+      Schema.decodeOption(RefreshKept)(new TextDecoder().decode(found)),
+    );
+  });
+
+// The record a refresh would be written over, from the pull request's record
+// now: the record itself, or, for one a refresh already left on pending CI,
+// the record that one kept.
+const writtenOver = (left: Option.Option<PendingRefresh>, found: PhaseRecord) =>
+  Effect.gen(function* () {
+    if (Option.isSome(left)) {
+      return Option.map(yield* keptFor(left.value), (kept) => kept.restore);
+    }
+
+    return Option.some(
+      Option.match(found.data, {
+        onNone: (): Restore => ({ phase: found.phase }),
+        onSome: (data): Restore => ({ phase: found.phase, data }),
+      }),
+    );
+  });
+
+// The layer whose refresh left on pending CI: its task, its pull request, the
+// base head it was brought up to, and the layer below once that one merged.
+export type RefreshOf = Pick<PendingRefresh, "layer" | "pullRequest" | "baseSha" | "lower">;
+
+// Records a refresh that left on pending CI on the layer's pull request's
+// own record (awaiting-refresh-ci), as the step `<step>`, for a later round
+// to take up (takeUpRefreshes): `left`, what Stack.refreshLayer or
+// Stack.finishRefresh left, and a blob of what it says to a reviewer and the
+// record it is written over, which the take-up records again. A pull request
+// with no record to put back goes to a person: every one a run opened has
+// one, as backfill gave those from before.
+export const leaveRefresh = (step: string, layer: RefreshOf, left: Stack.RefreshLeft) =>
+  activity(
+    step,
+    Effect.gen(function* () {
+      const item = Phases.pullRequestItem(layer.pullRequest);
+      const found = yield* Phases.current(item);
+
+      const leftBefore = Option.flatMap(
+        Option.filter(
+          found,
+          (record) => record.phase === Phases.PHASES.pullRequest.awaitingRefreshCi,
+        ),
+        (record) => Option.flatMap(record.data, decodePendingRefresh),
+      );
+
+      const restore = yield* Option.match(found, {
+        onNone: () => Effect.succeed(Option.none<Restore>()),
+        onSome: (record) => writtenOver(leftBefore, record),
+      });
+
+      if (Option.isNone(restore)) {
+        return yield* new NeedsHuman({
+          reason: `#${layer.pullRequest} has no record for its refresh's wait on CI to put back; chernabog progress backfill gives it one`,
+        });
+      }
+
+      const text = yield* Schema.encodeEffect(RefreshKept)({
+        said: left.said,
+        restore: restore.value,
+      }).pipe(Effect.orDie);
+
+      const kept = createHash("sha256").update(text).digest("hex");
+
+      const pending: PendingRefresh = {
+        ...layer,
+        round: left.round,
+        base: left.base,
+        since: left.since,
+        kept,
+      };
+
+      // Written afresh even over a record of this run's: a refresh taken up
+      // and left again waits on a later round.
+      yield* Phases.record(
+        item,
+        Phases.PHASES.pullRequest.awaitingRefreshCi,
+        encodePendingRefresh(pending),
+        { always: true, blobs: [text] },
+      );
+
+      return pending;
+    }),
+    PendingRefresh,
+  );
+
+// Records again what a refresh's record was written over, once the refresh
+// is taken up and its review settled, as the step
+// `refresh-restored-<round>#<pull request>`: only while the pull request
+// still holds the refresh's phase, so a reviewer asked again
+// (review-asked-again), or another writer since, keeps theirs.
+const restoreRefresh = (round: number, left: PendingRefresh, restore: Option.Option<Restore>) =>
+  activity(
+    `refresh-restored-${round}#${left.pullRequest}`,
+    Effect.gen(function* () {
+      const item = Phases.pullRequestItem(left.pullRequest);
+
+      const still = Option.exists(
+        yield* Phases.current(item),
+        (record) => record.phase === Phases.PHASES.pullRequest.awaitingRefreshCi,
+      );
+
+      for (const back of Option.toArray(Option.filter(restore, () => still))) {
+        yield* Phases.record(item, back.phase, back.data);
+      }
+    }),
+  );
 
 // How a refresh taken up ended: CI green and its review settled, left on CI
 // again (after a fix), with a person, or its pull request gone.
@@ -1144,8 +1307,9 @@ type RefreshTaken =
 // layer's branch, waits on from its round of CI with ids of this round's
 // (`<pull request>-r<round>`), fixing red in the author's session, then asks
 // the reviewer again unless the head only merged the base, as the refresh
-// would have (Stack.finishRefresh). Past ciTimeout, or failing as a refresh
-// does, it goes to a person, as a refresh would.
+// would have (Stack.finishRefresh), and puts back the record it was written
+// over unless a reviewer was asked again. Past ciTimeout, or failing as a
+// refresh does, it goes to a person, as a refresh would.
 const takeUpRefresh = (left: PendingRefresh, round: number, late: boolean) =>
   Effect.gen(function* () {
     const id = `${left.pullRequest}-r${round}`;
@@ -1165,16 +1329,31 @@ const takeUpRefresh = (left: PendingRefresh, round: number, late: boolean) =>
     }
 
     return yield* Effect.gen(function* () {
+      const kept = yield* activity(`refresh-kept-${id}`, keptFor(left), Schema.Option(Kept));
+
+      const said = Option.match(kept, {
+        onNone: () => `Merged \`${left.base}\` into this branch.`,
+        onSome: (found) => found.said,
+      });
+
       const worktree = yield* Implement.prepareWorktree(branch, {
         base: left.base,
         id: `refresh-${id}`,
       });
 
-      const again = yield* Stack.finishRefresh(worktree, { ...left, branch }, { id });
+      const again = yield* Stack.finishRefresh(worktree, { ...left, said, branch }, { id });
 
       if (Option.isSome(again)) {
-        return { kind: "left", pending: { ...left, ...again.value } } satisfies RefreshTaken;
+        const pending = yield* leaveRefresh(`refresh-ci-record-${id}`, left, again.value);
+
+        return { kind: "left", pending } satisfies RefreshTaken;
       }
+
+      yield* restoreRefresh(
+        round,
+        left,
+        Option.map(kept, (found) => found.restore),
+      );
 
       return { kind: "done" } satisfies RefreshTaken;
     }).pipe(
@@ -1192,9 +1371,10 @@ const takeUpRefresh = (left: PendingRefresh, round: number, late: boolean) =>
   });
 
 // What a round's take-up of the refreshes left on pending CI leaves: whether
-// it took any up (and so the round reads the epic again), the refreshes still
-// left, those whose CI went green and review settled (carried), and the pull
-// requests of those that went to a person.
+// it took any up (and so the round reads the epic again), the refreshes
+// still left, which hold their layers back this round, those whose CI went
+// green and review settled (carried), and the pull requests of those that
+// went to a person.
 export type RefreshesCi = {
   readonly taken: boolean;
   readonly pending: ReadonlyArray<PendingRefresh>;
@@ -1202,19 +1382,31 @@ export type RefreshesCi = {
   readonly withPerson: ReadonlyArray<number>;
 };
 
-// Takes up, bottom to top as they were left, as a step of the round each
-// (`refresh-ci-<round>#<pull request>`), the refreshes whose CI has since
-// settled or run past ciTimeout; those still pending stay left, and one whose
-// pull request closed is dropped. The recipe's stack upkeep and the epic
-// document's (stack.carryUp) take them up alike, first in the round.
-export const takeUpRefreshes = (round: number, pending: ReadonlyArray<PendingRefresh>) =>
+// The epic's refreshes left on pending CI, by their pull requests' records,
+// read once a round as the step `refreshes-ci-<round>`, so a replay takes up
+// the same ones.
+const refreshesLeft = (round: number, epic: number) =>
+  activity(
+    `refreshes-ci-${round}`,
+    Effect.map(leftOf(epic), (left) => left.refreshes),
+    Schema.Array(PendingRefresh),
+  );
+
+// Takes up, oldest first, as a step of the round each
+// (`refresh-ci-<round>#<pull request>`), the epic's refreshes left on pending
+// CI, by their pull requests' own records (awaiting-refresh-ci), whose CI
+// has since settled or run past ciTimeout; those still pending stay left,
+// and one whose pull request closed is passed over. The recipe's stack
+// upkeep and the epic document's (stack.carryUp) take them up alike, first
+// in the round.
+export const takeUpRefreshes = (round: number, epic: number) =>
   Effect.gen(function* () {
     const still: Array<PendingRefresh> = [];
     const carried: Array<PendingRefresh> = [];
     const withPerson: Array<number> = [];
     let taken = false;
 
-    for (const left of pending) {
+    for (const left of yield* refreshesLeft(round, epic)) {
       const read = yield* activity(
         `refresh-ci-${round}#${left.pullRequest}`,
         taskCi(left).pipe(

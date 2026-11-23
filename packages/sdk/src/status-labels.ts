@@ -4,8 +4,9 @@
 // (Phases' recording, reconcile and every other write of a record) and every
 // claim change (acquire, release, and a run's end, by core's claimLabel
 // marker). No flow or block writes a status label. A label a person added or
-// removed by hand is put right by the next projection, and no source reads
-// one, so it changes nothing else.
+// removed by hand is put right by the next projection, and changes nothing
+// else: no source reads one, but for reconcileHandedBack, which takes a
+// trusted person's removal of auto:needs-human as handing the item back.
 //
 // Intent labels (auto:eligible, auto:plan, auto:plan-approved, auto:ship,
 // auto:epic, hybrid) and every label chernabog doesn't own are never touched
@@ -153,6 +154,13 @@ const pullLabel = (phase: string, named: Names): ReadonlyArray<string> => {
 // Whether `record`'s data says `key`.
 const said = (record: PhaseRecord, key: string) =>
   Option.exists(record.data, (data) => data[key] === true);
+
+// Whether `record` says chernabog adopted its pull request (ADOPTED_KEY): the
+// one thing that makes an adopted pull request chernabog's (audit R1 and R2).
+// Its auto:adopted label is only the projection, so one added or taken off by
+// hand changes nothing.
+export const saysAdopted = (record: Option.Option<PhaseRecord>) =>
+  Option.exists(record, (found) => said(found, ADOPTED_KEY));
 
 // `label` when `shows`, none otherwise.
 const when = (shows: boolean, label: string): ReadonlyArray<string> =>

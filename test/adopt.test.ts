@@ -11,7 +11,6 @@ import {
   type Json,
   Phases,
   Review,
-  StatusLabels,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +45,7 @@ const implementing = flowHandle(repo, "implement", implement);
 const work = item(`issue-${ISSUE}`, { issue: ISSUE });
 const POOL = { reviewers: ["zach", "data-quail"] };
 const BRANCH = "zach/fix-it";
+const PR_ITEM = Phases.pullRequestItem(PULL);
 const PULL_URL = `https://github.com/dataquail/demo/pull/${PULL}`;
 
 // An open pull request that closes the issue, as GitHub's GraphQL API gives it.
@@ -352,9 +352,11 @@ const consider = defineFlow({
     ),
 });
 
-// A pull request's record that says chernabog adopted it.
-const PR_ADOPTED = `pr-${PULL}`;
-const ADOPTED_DATA = { [StatusLabels.ADOPTED_KEY]: true };
+// The pull request's record, saying chernabog adopted it: what makes an
+// adopted pull request chernabog's (audit R1, R2), not its auto:adopted label.
+const adoptedRecord = (fake: Fake) => {
+  fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.reviewAsked, { data: { adopted: true } });
+};
 
 describe("an adopted pull request", () => {
   effect("is one address-review and resolve-conflicts take as the persona's own", () =>
@@ -362,25 +364,40 @@ describe("an adopted pull request", () => {
       const fake = queuedWithPull();
       expect(yield* onFake(fake, Review.authoredByMe)).toEqual([]);
 
-      // Adopted, by its record, but by another persona: still not this one's.
-      fake.recordPhase(PR_ADOPTED, "review-asked", { data: ADOPTED_DATA });
+      // Its record says adopted, but another persona has it: still not this one's.
+      adoptedRecord(fake);
       expect(yield* onFake(fake, Review.authoredByMe)).toEqual([]);
 
       fake.people.pullAssigned = [fake.people.me];
       expect((yield* onFake(fake, Review.authoredByMe)).map((pull) => pull.number)).toEqual([PULL]);
+    }),
+  );
 
-      // The label is only the record's projection: alone, it adopts nothing.
-      const labelled = queuedWithPull();
-      labelled.setLabels(PULL, [Implement.ADOPTED_LABEL]);
-      labelled.people.pullAssigned = [labelled.people.me];
-      expect(yield* onFake(labelled, Review.authoredByMe)).toEqual([]);
+  effect("auto:adopted added by hand, with no record saying so, makes it nobody's", () =>
+    Effect.gen(function* () {
+      const fake = queuedWithPull();
+      fake.people.pullAssigned = [fake.people.me];
+      fake.setLabels(PULL, [Implement.ADOPTED_LABEL]);
+
+      expect(yield* onFake(fake, Review.authoredByMe)).toEqual([]);
+    }),
+  );
+
+  effect("auto:adopted taken off by hand leaves it the persona's, by its record", () =>
+    Effect.gen(function* () {
+      const fake = queuedWithPull();
+      fake.people.pullAssigned = [fake.people.me];
+      adoptedRecord(fake);
+      fake.setLabels(PULL, []);
+
+      expect((yield* onFake(fake, Review.authoredByMe)).map((pull) => pull.number)).toEqual([PULL]);
     }),
   );
 
   effect("gives a new author session the pull request's history before the review", () =>
     Effect.gen(function* () {
       const fake = queuedWithPull();
-      fake.recordPhase(PR_ADOPTED, "review-asked", { data: ADOPTED_DATA });
+      adoptedRecord(fake);
       const finished = yield* runToEnd(flowHandle(repo, "consider", consider), fake, item("pr"));
       expect(finished.status).toBe("done");
 

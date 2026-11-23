@@ -15,8 +15,10 @@ import {
   Plan,
   planMarker,
   Progress,
+  Review,
   reviewMarker,
   sessionMarker,
+  StatusLabels,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -448,7 +450,7 @@ describe("progress backfill's issues and epics", () => {
         expect(found[0]).toMatchObject({
           data: {
             fingerprint: "f1",
-            tasks: { attempts: [], handedBack: [], withPerson: [] },
+            tasks: { attempts: [], handedBack: [] },
           },
         });
       }),
@@ -817,6 +819,84 @@ describe("progress backfill's park phases", () => {
       expect(fake.records().get(PR_ITEM)).toMatchObject({
         phase: Phases.PHASES.pullRequest.changesAsked,
       });
+    }),
+  );
+});
+
+// A1 (audit R1, R2): a pull request chernabog adopted before its records said
+// so keeps being chernabog's once backfill writes adoption into its record.
+describe("progress backfill's adopted pull requests", () => {
+  const adoptedInRecord = (fake: Fake) =>
+    Option.exists(
+      Option.flatMap(Option.fromUndefinedOr(fake.records().get(PR_ITEM)), (found) => found.data),
+      (data) => data[StatusLabels.ADOPTED_KEY] === true,
+    );
+
+  // The review source's move to changes-asked, from the record the pull request holds.
+  const changesAsked = (fake: Fake) =>
+    onFake(
+      fake,
+      Phases.reconcile(
+        PR_ITEM,
+        Option.fromUndefinedOr(fake.records().get(PR_ITEM)),
+        Phases.PHASES.pullRequest.changesAsked,
+        "observer:review.changesRequested",
+      ),
+    );
+
+  const adoptedBefore = () => {
+    const fake = fresh();
+    fake.authored.author = PERSON;
+    fake.people.pullAssigned = [fake.people.me];
+    // A record from before records said adopted, and the label that did.
+    fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.reviewAsked);
+    fake.setLabels(PULL, [StatusLabels.ADOPTED]);
+
+    return fake;
+  };
+
+  effect("writes adopted into its record, so it stays the persona's and keeps its label", () =>
+    Effect.gen(function* () {
+      const fake = adoptedBefore();
+      expect(adoptedInRecord(fake)).toBe(false);
+
+      yield* backfill(fake);
+      expect(adoptedInRecord(fake)).toBe(true);
+      expect(fake.records().get(PR_ITEM)?.phase).toBe<string>(
+        Phases.PHASES.pullRequest.reviewAsked,
+      );
+
+      yield* changesAsked(fake);
+
+      expect(fake.labelsOf(PULL)).toContain(StatusLabels.ADOPTED);
+      expect(adoptedInRecord(fake)).toBe(true);
+      expect((yield* onFake(fake, Review.authoredByMe)).map((pull) => pull.number)).toEqual([PULL]);
+
+      // Written once: a second backfill finds nothing to write.
+      expect(yield* survey(fake)).toEqual([]);
+    }),
+  );
+
+  effect("one with a person gets adopted in its hand-off record too", () =>
+    Effect.gen(function* () {
+      const fake = adoptedBefore();
+      fake.setLabels(PULL, [StatusLabels.ADOPTED, DEFAULT_LABELS.needsHuman]);
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(PR_ITEM)?.phase).toBe<string>(Phases.PHASES.issue.withPerson);
+      expect(adoptedInRecord(fake)).toBe(true);
+    }),
+  );
+
+  effect("without backfill, its next advance takes the label off and it is nobody's", () =>
+    Effect.gen(function* () {
+      const fake = adoptedBefore();
+
+      yield* changesAsked(fake);
+
+      expect(fake.labelsOf(PULL)).not.toContain(StatusLabels.ADOPTED);
+      expect(yield* onFake(fake, Review.authoredByMe)).toEqual([]);
     }),
   );
 });

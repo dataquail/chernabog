@@ -63,7 +63,7 @@ run parks in its local workflow journal, and a signal wakes it.
 | W4  | `waitForCi` for a new or resumed pull request (`flows/implement.ts:137-142, 201-206`) and address-review's fix (`flows/address-review.ts:92-128`) | The pull request's CI                                 | Polls                                                   | Parks                                                   | issue `awaiting-ci[-n]`; pull request `awaiting-fix-ci[-n]`                                                                                                                     | **Done (#535).** Yes, in CI: `awaitingCi`, `fixesAwaitingCi`                                                                                                                                                                                                                  |
 | W5  | `waitForCi` for an adopted pull request (`flows/implement.ts`, the adopted path; `ci.waitPreparing` at `adoptedCi`)                               | The pull request's CI                                 | Parks                                                   | Parks                                                   | issue `awaiting-adopted-ci[-n]`, with the adopted `pullRequest` and `since`                                                                                                     | **Done (#542).** Yes: `awaitingCi` finds the pull request from the record's data, and `Resume.parked`, once CI settles or `ciTimeout` from `since` passes                                                                                                                     |
 | W6  | resolve-conflicts' CI (`Conflict.waitForCi`, from `flows/resolve-conflicts.ts` and `conflict.waitForCi`)                                          | CI on the merge commit                                | Parks                                                   | Parks                                                   | pull request `awaiting-conflict-ci[-n]`, with `restore` (the review phase it parked over) and `since`                                                                           | **Done (#541).** Yes: `Conflict.parkedOnCi` and `Resume.parked`, once CI settles or `ciTimeout` from `since` passes; the review phase is recorded again                                                                                                                       |
-| W7  | Epic task CI (`flows/epic.ts`, `ci.waitAndFix` in a lane) and stack refresh (`Stack.refreshLayer`, in `carryUp` and `catchUp`)                    | CI on a task's or a layer's pull request              | Parks: the lane or the refresh ends, and the epic parks | Parks: the lane or the refresh ends, and the epic parks | epic `waiting`, with the task's `PendingCi` in `tasks.ci` and the refresh's `PendingRefresh` in `layers.ci`                                                                     | **Done (#543, #546; #568 keeps the CI on the task's and the layer's own records).** Yes: `Epic.queued` once CI settles or `ciTimeout` from `since` passes, then `Epic.takeUpCi` / `epic.settleCi` and `Epic.takeUpRefreshes` (first in `carryUp`, recipe and `stack.carryUp`) |
+| W7  | Epic task CI (`flows/epic.ts`, `ci.waitAndFix` in a lane) and stack refresh (`Stack.refreshLayer`, in `carryUp` and `catchUp`)                    | CI on a task's or a layer's pull request              | Parks: the lane or the refresh ends, and the epic parks | Parks: the lane or the refresh ends, and the epic parks | the task's issue `awaiting-task-ci` (`PendingCi`) and the layer's pull request `awaiting-refresh-ci` (`PendingRefresh`, its review phase in a blob)                             | **Done (#543, #546; #568 keeps the CI on the task's and the layer's own records).** Yes: `Epic.queued` once CI settles or `ciTimeout` from `since` passes, then `Epic.takeUpCi` / `epic.settleCi` and `Epic.takeUpRefreshes` (first in `carryUp`, recipe and `stack.carryUp`) |
 | W8  | Blocks: `ci.waitPreparing`, `ci.waitAndFix`, `author.waitForCi`, `plan.awaitAnswer`, `pr.land`, `conflict.waitForCi`, `hybrid.waitForCi`          | CI, a person's answer to a plan, the base branch's CI | Parks                                                   | Parks                                                   | `awaiting-ci[-n]`, `awaiting-adopted-ci[-n]`, `awaiting-fix-ci[-n]`, `proposed` (with the round), `merge-held` (with the flow) or `awaiting-conflict-ci`, with only their facts | **Done (#537, #538, #567).** Yes for all but the last: `Resume.parked`, by the phase. Where a run can't take it up, the CI waits poll; `pr.land` and `plan.awaitAnswer` must be where it can. `hybrid.waitForCi` polls                                                        |
 | W9  | post-merge's `awaitMergeCi` (`flows/post-merge.ts`) and `merged.awaitCi`                                                                          | Push CI on the merge commit                           | Parks                                                   | Parks                                                   | pull request `watched` (S5), then `awaiting-merge-ci` with the sha and `since`, and `watched` again when the watch ends                                                         | **Done (#539, #540).** Yes: the recipe's trigger and `Resume.parked`, once CI settles or `noCiGrace`/`ciTimeout` from `since` passes                                                                                                                                          |
 | W10 | Epic park (`flows/epic.ts:884`, `epic.park`)                                                                                                      | A layer changing                                      | Journal                                                 | Restarts fresh on every sweep                           | none (`waiting` declared, not written)                                                                                                                                          | **Done (#536).** Partly: `Epic.queued` restarts it from GitHub, and loses `attempts`                                                                                                                                                                                          |
@@ -128,7 +128,7 @@ at c38058b9.
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
 | J1  | Park sites that share a phase, such as implement's two waits for CI on the issue's `awaiting-ci` (`implement.ts:1953`, `phases.ts:48`)                           | Which wait it is, told apart only by `resume.node`                                                                  | **Done.** Every park site records a phase of its own (`Phases.PARKS`): the adopted wait is `awaiting-adopted-ci`, address-review's `awaiting-fix-ci`; `test/park-sites.test.ts` proves no two share one                               | #566 |
 | J2  | `resume.ts:48`, `:52`, `:70`, `:101`, `:114`: `Block.keeps`, `Block.recall`, `kept` and `resume.node`                                                            | The node a document parked at and earlier steps' outputs, in the record's `data`                                    | **Done.** They go. A document resumes at the phase it parked on (`Resume.parked`, `Block.parks`); a node after a park reads only the trigger, its park block's output and what comes after it, and the compiler rejects anything else | #567 |
-| J3  | The epic's `waiting` record: `tasks.ci` (`epic.ts:593`) and `layers.ci` (`epic.ts:627`), with `REFRESH_CI_SIZE` (`epic.ts:637`) and `SAID_SIZE` (`stack.ts:363`) | A task's or a layer's pending CI, copied into the epic's `data`, under a size budget that polls when it is exceeded | **Done (#568).** A task's or a layer's CI wait is on that task's or pull request's own record, and the epic reads those records. The budgets go; the 4 KB check is the only one left                                                  | #568 |
+| J3  | The epic's `waiting` record: `tasks.ci` (`epic.ts:593`) and `layers.ci` (`epic.ts:627`), with `REFRESH_CI_SIZE` (`epic.ts:637`) and `SAID_SIZE` (`stack.ts:363`) | A task's or a layer's pending CI, copied into the epic's `data`, under a size budget that polls when it is exceeded | **Done.** A task's CI wait is on the task's `awaiting-task-ci`, a refresh's on the layer's pull request's `awaiting-refresh-ci`, and the epic reads those records (`Epic.leftOf`). The budgets are gone                               | #568 |
 
 ### `auto:needs-human` read back as "with a person" (decision 1)
 
@@ -158,11 +158,11 @@ status label, and no source reads one. These read `auto:adopted` and
 intent, so the epic source (`epic.ts:806`) and `epicRunTasks` (`implement.ts:166`)
 keep finding epics by `auto:epic`.
 
-| #   | Where                               | Reads the label to                                                       | Fix                                                                                                                                                                             | Task |
-| --- | ----------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| R1  | `review.ts:854` (`authoredByMe`)    | Count an adopted pull request assigned to this persona as its own        | **Done (#570):** `authoredByMe` reads adoption from the pull request's record (`Phases.saysAdopted`). Adoption is in the pull request's record's `data`, with the claim's facts | #565 |
-| R2  | `implement.ts:1047` (`withHistory`) | Tell the agent it is working on a pull request a person opened           | **Done (#570):** `withHistory` reads it from the record (`Phases.adopted`). The same: read adoption from the record                                                             | #565 |
-| R3  | `epic.ts:335` (`personReason`)      | Say a task waits for answers to its questions, beside H5's `needs-human` | **Done (#560).** Read the task's `asked-questions` record                                                                                                                       | #560 |
+| #   | Where                               | Reads the label to                                                       | Fix                                                                                                                                                                                                                | Task |
+| --- | ----------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| R1  | `review.ts:854` (`authoredByMe`)    | Count an adopted pull request assigned to this persona as its own        | **Done:** `StatusLabels.saysAdopted` on the pull request's record (`adopted`), which hand-off writes and every record carries on; backfill's A1 writes it for one adopted before. The label is only its projection | #569 |
+| R2  | `implement.ts:1047` (`withHistory`) | Tell the agent it is working on a pull request a person opened           | **Done:** the same, read from the pull request's current record                                                                                                                                                    | #569 |
+| R3  | `epic.ts:335` (`personReason`)      | Say a task waits for answers to its questions, beside H5's `needs-human` | **Done (#560).** Read the task's `asked-questions` record                                                                                                                                                          | #560 |
 
 Backfill's reads of these labels stay, as H12 does: `backfill.ts:147` and `:273`
 (`auto:adopted`) and `:385` (`auto:awaiting-ready`) infer an item's first record
@@ -268,7 +268,8 @@ writes nothing and lists the item for a person.
 
 Pull requests: open ones an agent wrote (`auto/` head), a run adopted
 (`auto:adopted`), or one of the repo's personas is asked to review or has
-reviewed. The first row that matches decides.
+reviewed. The first row that matches decides. One labelled `auto:adopted` also
+gets `adopted: true` in the record it writes (A1).
 
 | #   | GitHub says                                                                                                                             | Phase                | Data                        |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------- |
@@ -290,6 +291,12 @@ reviewer). A record that holds one already gets its phase again with the
 review copied in, from that record's version (#564). This is the one read of
 `reviewMarker` left in the SDK: since #564 a review writes no marker, and the
 merge gate, `latestOwnReview` and `read-review` read the record.
+
+A1: an open pull request labelled `auto:adopted` whose record doesn't say
+`adopted` (one adopted before #569) gets its phase again with `adopted: true`
+added, from that record's version, or carried in with the review copied in
+alongside it. With a person, its hand-off record says it too. From then the
+record, not the label, makes it chernabog's (R1, R2).
 
 A pull request labelled `auto:needs-human` is with a person (W1, below)
 before any of these rows is read, so P4's label check only matters to one
@@ -376,16 +383,16 @@ Each fix is its own pull request.
    resolve-conflicts parks on `awaiting-conflict-ci` and puts the review
    phase back. So is W5: an adopted pull request's wait parks on the issue's
    `awaiting-adopted-ci` (#566), whose data keeps the pull request. W7's task CI is: a task's
-   lane whose CI is pending ends there, the epic parks with it in its
-   `waiting` record (`tasks.ci`), and a later round takes it up once CI
+   lane whose CI is pending ends there, recording the task's
+   `awaiting-task-ci`, the epic parks, and a later round takes it up once CI
    settles. So is the stack refresh's: a refresh whose CI is pending ends
    there, the layer and those above it wait, and so does its review
-   (`reviewAfterRefresh`); the epic parks with it in `layers.ci`, and the
-   next round's `carryUp` takes it up first once CI settles, fixing red,
-   asking the reviewer again, or giving the layer to a person past
-   `ciTimeout`. The refreshes left take at most 2 KB of the record (six
-   layers at their largest, nine plain ones); a refresh past that waits
-   for CI inside the run. W5 to W10 are done; `hybrid.waitForCi` polls by
+   (`reviewAfterRefresh`); the layer's pull request records
+   `awaiting-refresh-ci`, the epic parks, and the next round's `carryUp`
+   takes it up first once CI settles, fixing red, asking the reviewer
+   again, or giving the layer to a person past `ciTimeout`, and puts the
+   review phase it was written over back. No size budget limits either
+   (#568). W5 to W10 are done; `hybrid.waitForCi` polls by
    design (W8).
 7. **Backfill, then S6 and S7:** `chernabog progress backfill` writes a record
    for every open item without one. Then the no-record paths go. Done:

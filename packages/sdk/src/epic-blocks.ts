@@ -20,7 +20,6 @@ import {
 import * as Brand from "effect/Brand";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import {
@@ -235,9 +234,8 @@ type Carried = {
 // pushes and waits for CI. `lower`, once the layer below has merged, is its
 // pull request, so a squash of it is reconciled rather than merged again. One that needs a person is handed to one, and
 // reads as not carried, so the layers above it wait. CI still pending ends
-// the refresh, which then carries what it left (audit W7), when that fits the
-// epic's record beside `ci`, the refreshes already left; otherwise it waits
-// for CI. Every step is keyed by
+// the refresh (audit W7), which records what it left on the layer's pull
+// request (Epic.leaveRefresh) and carries it. Every step is keyed by
 // the pull request, the base's sha and, after a hand-back, the attempt, so the
 // refresh after one runs again rather than replaying the outcome it saved.
 const notCarried: Carried = {
@@ -253,7 +251,6 @@ const refresh = (
   base: string,
   baseSha: string,
   attempt: number,
-  ci: ReadonlyArray<Epic.PendingRefresh>,
   lower: Option.Option<number> = Option.none(),
 ) => {
   const again = Option.match(
@@ -286,14 +283,19 @@ const refresh = (
       baseSha,
       attempt,
       ...below,
-      leave: Epic.roomForRefresh(ci, { ...which, base }),
+      leave: true,
+    });
+
+    const left = yield* Option.match(refreshed.left, {
+      onNone: () => Effect.succeedNone,
+      onSome: (found) => Effect.asSome(Epic.leaveRefresh(`refresh-ci-record-${key}`, which, found)),
     });
 
     return {
       carried: true,
       pushed: !refreshed.upToDate,
       toPerson: false,
-      left: Option.map(refreshed.left, (left): Epic.PendingRefresh => ({ ...which, ...left })),
+      left,
     } satisfies Carried;
   }).pipe(
     Effect.catchTags({
@@ -342,15 +344,17 @@ const stackedLayers = (progress: Epic.Progress) => {
 // them, by pull request: the base head it last brought each layer up to, its
 // refresh attempt, the layers whose refresh it handed to a person, the layer
 // below each was last seen stacked on, and the layers it has brought up to
-// date with that one's merge, and the refreshes left on pending CI. Rebuilt
-// from the rounds' saved results whenever the run resumes.
+// date with that one's merge, and the refreshes left on pending CI, as this
+// round reads their records. Rebuilt from the rounds' saved results whenever
+// the run resumes.
 export type Upkeep = {
   readonly attempts: Map<number, number>;
   readonly recorded: Map<number, string>;
   readonly withPerson: Set<number>;
   readonly below: Map<number, number>;
   readonly caughtUp: Set<number>;
-  // Refreshes left on their pull request's pending CI, bottom to top.
+  // Refreshes left on their pull request's pending CI, by their records:
+  // never kept in the epic's own.
   readonly ci: Array<Epic.PendingRefresh>;
 };
 
@@ -367,9 +371,9 @@ const copyOf = (upkeep: Upkeep): Upkeep => ({
 // past ciTimeout (Epic.takeUpRefreshes), into `upkeep`: one green and
 // reviewed is carried, as a refresh that waited would have been, and one
 // that went to a person waits for them. Whether it took any up.
-const settleRefreshes = (round: number, upkeep: Upkeep) =>
+const settleRefreshes = (round: number, epic: number, upkeep: Upkeep) =>
   Effect.gen(function* () {
-    const settled = yield* Epic.takeUpRefreshes(round, upkeep.ci);
+    const settled = yield* Epic.takeUpRefreshes(round, epic);
     upkeep.ci.splice(0, upkeep.ci.length, ...settled.pending);
 
     // One that caught up with the merge of the layer below, or with its base.
@@ -403,13 +407,13 @@ const heldBack = (layer: Epic.Layer, waiting: ReadonlySet<number>, upkeep: Upkee
 // layer and those above it wait, and its review waits too, until a round
 // takes it up once CI settles, first thing (settleRefreshes). Whether
 // anything was pushed, or taken up.
-const carryUp = (round: number, progress: Epic.Progress, kept: Upkeep) =>
+const carryUp = (round: number, epic: number, progress: Epic.Progress, kept: Upkeep) =>
   Effect.gen(function* () {
     const upkeep = copyOf(kept);
     const { attempts, recorded, withPerson } = upkeep;
     const waiting = new Set<number>();
     // A refresh left on pending CI that has settled is taken up first.
-    let pushed = yield* settleRefreshes(round, upkeep);
+    let pushed = yield* settleRefreshes(round, epic, upkeep);
 
     for (const layer of stackedLayers(progress)) {
       const pullRequest = layer.pullRequest ?? 0;
@@ -437,7 +441,7 @@ const carryUp = (round: number, progress: Epic.Progress, kept: Upkeep) =>
       }
 
       const attempt = attempts.get(pullRequest) ?? 1;
-      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha, attempt, upkeep.ci);
+      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha, attempt);
 
       if (refreshed.toPerson) {
         withPerson.add(pullRequest);
@@ -591,7 +595,6 @@ const catchUp = (
       read.target,
       Option.getOrElse(read.targetSha, () => ""),
       upkeep.attempts.get(pullRequest) ?? 1,
-      upkeep.ci,
       Option.some(lower),
     );
 
@@ -706,17 +709,14 @@ export type TaskState = {
   readonly handedBack: ReadonlySet<number>;
   readonly withPerson: ReadonlySet<number>;
   readonly waitedOn: ReadonlyMap<number, ReadonlySet<number>>;
-  // Tasks whose lane ended on their pull request's pending CI, which
-  // epic.settleCi takes up once it settles.
-  readonly ci: ReadonlyArray<Epic.PendingCi>;
 };
 
-// How a task's attempt ended, for the next round to read: with a person, or
-// on its pull request's pending CI.
+// How a task's attempt ended, for the next round to read: with a person or
+// not. One that ended on its pull request's pending CI is on the task's own
+// record (Epic.leftOnCi), which epic.settleCi reads.
 export type LaneEnding = {
   readonly issue: number;
   readonly withPerson: boolean;
-  readonly ci: Option.Option<Epic.PendingCi>;
 };
 
 // A task to start: its lane carries its attempt.
@@ -739,12 +739,10 @@ const waitingOf = (
   const kept: Epic.Waiting = {
     fingerprint: progress.fingerprint,
     tasks: Option.match(tasks, {
-      onNone: () => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onNone: () => ({ attempts: [], handedBack: [] }),
       onSome: (state) => ({
         attempts: [...state.attempts],
         handedBack: [...state.handedBack],
-        withPerson: [...state.withPerson],
-        ci: state.ci,
       }),
     }),
   };
@@ -756,10 +754,8 @@ const waitingOf = (
       layers: {
         attempts: [...upkeep.attempts],
         recorded: [...upkeep.recorded],
-        withPerson: [...upkeep.withPerson],
         below: [...upkeep.below],
         caughtUp: [...upkeep.caughtUp],
-        ci: [...upkeep.ci],
       },
     }),
   });
@@ -772,16 +768,16 @@ const waitingOf = (
 export const loopStates = {
   "epic.tasks": (item: WorkItem): TaskState => {
     const kept = Option.match(Epic.resuming(item), {
-      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [] }),
       onSome: (parked) => parked.tasks,
     });
 
     return {
       attempts: new Map(kept.attempts),
       handedBack: new Set(kept.handedBack),
-      withPerson: new Set(kept.withPerson),
+      // This run's own: a round reads it as handed back before the run parks.
+      withPerson: new Set(),
       waitedOn: new Map(),
-      ci: kept.ci ?? [],
     };
   },
   "stack.upkeep": (item: WorkItem): Upkeep => {
@@ -801,10 +797,11 @@ export const loopStates = {
       onSome: (found) => ({
         attempts: new Map(found.attempts),
         recorded: new Map(found.recorded),
-        withPerson: new Set(found.withPerson),
+        // This run's own: the pull request's record says who has it.
+        withPerson: new Set(),
         below: new Map(found.below),
         caughtUp: new Set(found.caughtUp),
-        ci: [...(found.ci ?? [])],
+        ci: [],
       }),
     });
   },
@@ -851,7 +848,7 @@ const planStarts = (progress: Epic.Progress, tasks: TaskState) => {
     };
   });
 
-  return { attempts, handedBack, withPerson, waitedOn: tasks.waitedOn, ci: tasks.ci, starts };
+  return { attempts, handedBack, withPerson, waitedOn: tasks.waitedOn, starts };
 };
 
 // Publishes a task's work: its branch pushed, its pull request opened on the
@@ -1076,8 +1073,9 @@ export const epicBlocks = {
   "stack.carryUp": defineBlock({
     name: "stack.carryUp",
     about:
-      "Carries a moved layer's change up its stack, bottom to top. A layer that needs a person holds the ones above it. A refresh whose CI is still pending ends there and holds the layer and those above it, its review waiting too; a later round takes it up first, once CI is green or red, or past ciTimeout (refresh-ci-<round>#<pull request>): it fixes red, asks the reviewer again unless the head only merged the base, and gives the layer to a person past the timeout.",
+      "Carries a moved layer's change up its stack, bottom to top. A layer that needs a person holds the ones above it. A refresh whose CI is still pending ends there, recording the layer's pull request awaiting-refresh-ci, and holds the layer and those above it, its review waiting too; a later round takes it up first, from that record,, once CI is green or red, or past ciTimeout (refresh-ci-<round>#<pull request>): it fixes red, asks the reviewer again unless the head only merged the base, and gives the layer to a person past the timeout.",
     inputKinds: {
+      epic: "EpicNumber",
       round: "the round",
       progress: "from epic.progress",
       stack: "the stack.upkeep state",
@@ -1088,12 +1086,13 @@ export const epicBlocks = {
     },
     outcomeKinds: { moved: "the stack.upkeep state, updated" },
     before: ["stack.land", "epic.startable"],
-    inputs: { round: "required", progress: "required", stack: "required" },
+    inputs: { epic: "required", round: "required", progress: "required", stack: "required" },
     run: (input: {
+      readonly epic: EpicNumber;
       readonly round: number;
       readonly progress: Epic.Progress;
       readonly stack: Upkeep;
-    }) => carryUp(input.round, input.progress, input.stack),
+    }) => carryUp(input.round, input.epic, input.progress, input.stack),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {
       moved: (carried: { readonly moved: boolean; readonly stack: Upkeep }) =>
@@ -1101,10 +1100,11 @@ export const epicBlocks = {
     },
     mustRoute: ["moved"],
     progressOn: ["moved"],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingRefreshCi }],
     contributes: {
       settings: { ...Settings.Stacks.fields, ...Settings.Ci.fields },
       // A finished CI run settles a refresh's CI: its pull request is the
-      // layer's, which the epic's waiting record names (layers.ci).
+      // layer's, whose record names it (awaiting-refresh-ci).
       wakeEvents: [Events.ciRunCompleted],
     },
   }),
@@ -1136,6 +1136,7 @@ export const epicBlocks = {
     },
     mustRoute: ["moved"],
     progressOn: ["moved"],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingRefreshCi }],
     contributes: { settings: Settings.MergeHold.fields },
   }),
 
@@ -1144,8 +1145,9 @@ export const epicBlocks = {
   "epic.settleCi": defineBlock({
     name: "epic.settleCi",
     about:
-      "Takes up the tasks whose lanes ended on their pull request's pending CI, once CI is green or red, or past ciTimeout from when that round's wait began (task-ci-<round>#<lane>): in a worktree on the task's branch it waits on from that round, fixing red, and hands the pull request off once CI is green. One still pending after a fix is left again; one past ciTimeout goes to a person. Comes to moved when it took any up, for the round to read the epic again.",
+      "Takes up the tasks whose lanes ended on their pull request's pending CI, by each task's own record (awaiting-task-ci), once CI is green or red, or past ciTimeout from when that round's wait began (task-ci-<round>#<lane>): in a worktree on the task's branch it waits on from that round, fixing red, and hands the pull request off once CI is green. One still pending after a fix is left again; one past ciTimeout goes to a person. Comes to moved when it took any up, for the round to read the epic again.",
     inputKinds: {
+      epic: "EpicNumber",
       round: "the round",
       tasks: "the epic.tasks state",
       atOnce: "number: how many at once, from epic.atOnce",
@@ -1156,13 +1158,17 @@ export const epicBlocks = {
     },
     outcomeKinds: { moved: "the epic.tasks state, updated" },
     before: ["epic.startable"],
-    inputs: { round: "required", tasks: "required", atOnce: "required" },
-    run: (input: { readonly round: number; readonly tasks: TaskState; readonly atOnce: number }) =>
-      Effect.map(Epic.takeUpCi(input.round, input.tasks.ci, input.atOnce), (tasksCi) => ({
+    inputs: { epic: "required", round: "required", tasks: "required", atOnce: "required" },
+    run: (input: {
+      readonly epic: EpicNumber;
+      readonly round: number;
+      readonly tasks: TaskState;
+      readonly atOnce: number;
+    }) =>
+      Effect.map(Epic.takeUpCi(input.round, input.epic, input.atOnce), (tasksCi) => ({
         taken: tasksCi.taken,
         tasks: {
           ...input.tasks,
-          ci: tasksCi.pending,
           withPerson: new Set([...input.tasks.withPerson, ...tasksCi.withPerson]),
         },
       })),
@@ -1173,10 +1179,11 @@ export const epicBlocks = {
     },
     mustRoute: ["moved"],
     progressOn: ["moved"],
+    records: [{ item: "issue", phase: PHASES.issue.awaitingTaskCi }],
     contributes: {
       settings: Settings.Ci.fields,
       // A finished CI run settles a task's CI: its pull request is the
-      // task's, which the epic's waiting record names (tasks.ci).
+      // task's, which the task's record names (awaiting-task-ci).
       wakeEvents: [Events.ciRunCompleted],
     },
   }),
@@ -1300,10 +1307,6 @@ export const epicBlocks = {
             ...input.tasks.started.withPerson,
             ...input.endings.filter((ending) => ending.withPerson).map((ending) => ending.issue),
           ]),
-          ci: [
-            ...input.tasks.started.ci,
-            ...input.endings.flatMap((ending) => Option.toArray(ending.ci)),
-          ],
         },
       }),
     failures: {},
@@ -1397,16 +1400,15 @@ export const laneScopes = {
   "epic.task": <A, E, R>(task: TaskStart, body: Scoped<A, E | ToPerson | Skip, R>) =>
     Effect.gen(function* () {
       const context: FailureContext = { pr: Option.none() };
-      // Where a wait for CI in the lane leaves its pending CI (Epic.leaveLane).
-      const left = yield* Ref.make(Option.none<Epic.PendingCi>());
 
       const ended = (withPerson: boolean) =>
-        Effect.map(Ref.get(left), (ci): LaneEnding => ({ issue: task.issue, withPerson, ci }));
+        Effect.succeed<LaneEnding>({ issue: task.issue, withPerson });
 
       // Each task's steps run in its lane of the forEach's node.
       return yield* Effect.suspend(() => body(context)).pipe(
         PlanNodes.inLane(task.lane),
-        Effect.provideService(Epic.LaneCi, Option.some({ issue: task.issue, left })),
+        // A wait for CI in the lane ends it on pending CI (Epic.leaveLane).
+        Effect.provideService(Epic.LaneCi, Option.some({ issue: task.issue })),
         Effect.andThen(ended(false)),
         Effect.catchIf(
           (failure): failure is Skip => failure instanceof Skip,
@@ -1436,7 +1438,12 @@ export const epicSources = {
       },
     }),
     {
-      reads: [{ item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] }],
+      reads: [
+        { item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] },
+        // What a parked epic left on pending CI, on its tasks' and layers' own records.
+        { item: "issue", phases: [PHASES.issue.awaitingTaskCi] },
+        { item: "pull-request", phases: [PHASES.pullRequest.awaitingRefreshCi] },
+      ],
       events: [Events.issueLabelled, ...Events.layerChanged],
     },
   ),

@@ -18,7 +18,6 @@ import {
   Machine,
   NeedsHuman,
   type PhaseRecord,
-  Progress,
   type PullRequest,
   Repo,
   ReviewerSeat,
@@ -45,6 +44,7 @@ import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 import { pullRequestValidity } from "./still-valid.ts";
 
 export {
@@ -872,22 +872,19 @@ export const latestOwnReview = (pullRequest: number) =>
   );
 
 // Open pull requests this persona wrote, and those it adopted for an issue
-// they close (their records say so, with the persona assigned).
+// they close: the pull request's record says adopted (StatusLabels.saysAdopted),
+// with the persona assigned. Not its auto:adopted label, the record's
+// projection (audit R1).
 export const authoredByMe = Effect.gen(function* () {
   const github = yield* GitHub;
   const me = yield* github.login;
-  const all = yield* Progress.use((progress) => progress.readAll);
-
-  const adopted = (pull: PullRequest) =>
-    Option.exists(
-      Option.fromUndefinedOr(all.get(Phases.pullRequestItem(pull.number))),
-      Phases.saysAdopted,
-    );
+  const all = yield* Phases.records;
 
   return (yield* github.openPullRequests).filter(
     (pull) =>
       sameLogin(pull.author, me) ||
-      (adopted(pull) && pull.assignees.some((login) => sameLogin(login, me))),
+      (StatusLabels.saysAdopted(Phases.recordOf(all, Phases.pullRequestItem(pull.number))) &&
+        pull.assignees.some((login) => sameLogin(login, me))),
   );
 });
 

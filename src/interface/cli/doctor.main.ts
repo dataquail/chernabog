@@ -580,7 +580,7 @@ export const doctor = Effect.gen(function* () {
 
         warn(
           `${name}: #${drifted.number}'s status labels differ from what ${drifted.item}'s record projects: ${said}`,
-          "nothing to do: they are written again on its next record or claim change, and no flow reads them",
+          "they are written again on its next record or claim change. Until then, one still counts: taking auto:needs-human off hands an item back",
         );
       }
     });
