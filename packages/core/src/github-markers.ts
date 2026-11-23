@@ -9,13 +9,35 @@ import * as Schema from "effect/Schema";
 
 import * as Claims from "./claims.ts";
 import { define, type Marker } from "./run-markers.ts";
-import { GitHub, Repo } from "./services.ts";
+import { GitHub, Repo, Run } from "./services.ts";
 
 // A label on an issue or pull request, taken off.
 export const label = define(
   "chernabog/label",
   Schema.Struct({ number: Schema.Finite, label: Schema.String }),
   (args) => GitHub.use((github) => github.removeLabel(args.number, args.label)),
+);
+
+// A label that shows a run's claim on `item`, such as the SDK's
+// auto:in-progress, taken off issue or pull request `number` once the run
+// lets the claim go: when it releases the claim itself, or when it ends. Left
+// on while another run's live claim holds the item by then, since the label
+// shows that run's claim now. The SDK's status-label projector holds it, so
+// the label follows the claim however a run ends; no flow holds it.
+export const claimLabel = define(
+  "chernabog/claim-label",
+  Schema.Struct({ item: Schema.String, number: Schema.Finite, label: Schema.String }),
+  (args) =>
+    Effect.gen(function* () {
+      const run = yield* Run;
+      const held = yield* Claims.liveHolder(args.item);
+
+      if (Option.exists(held, (found) => found.runId !== run.runId)) {
+        return;
+      }
+
+      yield* (yield* GitHub).removeLabel(args.number, args.label);
+    }),
 );
 
 // The persona's assignment to an issue, taken off. Unassigning someone not
@@ -90,6 +112,7 @@ export const claimBranch = define(
 // Every marker the SDK defines, which the engine releases whatever the flow lists.
 export const builtIn: ReadonlyArray<Marker> = [
   label,
+  claimLabel,
   assignment,
   boardStatus,
   claimBranch,

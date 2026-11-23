@@ -40,7 +40,6 @@ import {
   branchFor,
   Claimed,
   claimedBase,
-  dropInProgress,
   issueItem,
   landedBase,
   latestClaim,
@@ -50,8 +49,9 @@ import {
   sessionIdFor,
 } from "./implement.ts";
 import { renderPromptOr } from "./prompt.ts";
-import { requestReview } from "./pull-request.ts";
+import { hasReviewer, requestReview } from "./pull-request.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // Finds nothing, on whatever schedule it is given.
 /** @deprecated Leave `trigger` out instead: a flow with `item` and no trigger is manual, and runs only when a person names its work. */
@@ -122,7 +122,7 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       const base = yield* landedBase(yield* baseOf(options));
       const baseSha = yield* baseHead(base);
       const before = yield* latestClaim(issue);
-      const claimed = yield* Claims.acquire(item, { withPerson: true, base });
+      const claimed = yield* StatusLabels.acquire(item, { withPerson: true, base });
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -142,7 +142,8 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       }
 
       // A person's session that fails, as one they close does, leaves the
-      // issue in progress for their next start.
+      // issue on the board and assigned for their next start. Its
+      // in-progress label follows the claim, which the run's end lets go.
       yield* markClaimed(issue, { keepOn: ["failed"] });
 
       for (const queued of [labelNames.eligible, labelNames.ship]) {
@@ -304,8 +305,10 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
         pullRequest.number,
         `Worked on by a person with ${repo.agent} for #${issue}.`,
       );
-      yield* dropInProgress(issue);
-      yield* recordHandOff(issue, pullRequest.number, { session });
+      yield* recordHandOff(issue, pullRequest.number, {
+        session,
+        unasked: !(yield* hasReviewer(pullRequest.number)),
+      });
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${finished.summary}`,

@@ -41,6 +41,7 @@ import { type Kind, VERIFY } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import * as Settings from "./settings.ts";
 import * as Stack from "./stack.ts";
+import * as StatusLabels from "./status-labels.ts";
 import { epicValidity } from "./still-valid.ts";
 
 export type { Kind } from "./plan.ts";
@@ -290,13 +291,13 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
 
 // Claims the epic for this run with its claim ref (Claims.epic), or skips the
 // run when another run holds it. Safe to repeat. A flow lets it go with
-// `Claims.releasing(Claims.epic(epic))`.
+// `StatusLabels.releasing(Claims.epic(epic))`.
 export const claim = (epic: number) =>
   activity(
     "claim-epic",
     Effect.gen(function* () {
       const item = Claims.epic(epic);
-      const claimed = yield* Claims.acquire(item);
+      const claimed = yield* StatusLabels.acquire(item);
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -1030,7 +1031,9 @@ const takeUp = (task: PendingCi, url: string, round: number, late: boolean) =>
 
     const toPerson = (reason: string) =>
       Implement.handToHuman(task.issue, reason, Option.some(task.pullRequest), { id }).pipe(
-        Effect.tap(() => activity(`release-claim#${id}`, Claims.release(Claims.issue(task.issue)))),
+        Effect.tap(() =>
+          activity(`release-claim#${id}`, StatusLabels.release(Claims.issue(task.issue))),
+        ),
         Effect.as<TakenUp>({ kind: "person", issue: task.issue }),
       );
 

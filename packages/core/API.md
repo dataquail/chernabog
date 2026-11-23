@@ -446,6 +446,11 @@ export declare const label: import("./run-markers.ts").Definition<{
     readonly number: number;
     readonly label: string;
 }>;
+export declare const claimLabel: import("./run-markers.ts").Definition<{
+    readonly item: string;
+    readonly number: number;
+    readonly label: string;
+}>;
 export declare const assignment: import("./run-markers.ts").Definition<{
     readonly number: number;
     readonly login: string;

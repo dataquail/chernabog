@@ -25,6 +25,8 @@ import * as Schema from "effect/Schema";
 
 import { transitions } from "./blocks.ts";
 import { ACKNOWLEDGED, type Anomaly, check, isUnreadable } from "./ledger-check.ts";
+import * as Phases from "./phases.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 export * from "./ledger-check.ts";
 
@@ -112,7 +114,7 @@ export const acknowledge = (anomalies: ReadonlyArray<Anomaly>) =>
         onSome: (data: { readonly [key: string]: Json }) => ({ ...base, data: asData(data) }),
       });
 
-      const written = yield* progress.advance(anomaly.item, transition).pipe(
+      const written = yield* Phases.advance(anomaly.item, transition).pipe(
         Effect.as(true),
         Effect.catchTag("PhaseMoved", () => Effect.succeed(false)),
       );
@@ -122,3 +124,8 @@ export const acknowledge = (anomalies: ReadonlyArray<Anomaly>) =>
 
     return results;
   });
+
+// Every open item whose status labels differ from their projection
+// (StatusLabels.drifted): plain JSON, as `chernabog doctor` reads it from the
+// repo's SDK (loadRepoLedger).
+export const labelDrift = StatusLabels.drifted;

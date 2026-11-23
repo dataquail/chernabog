@@ -39,6 +39,7 @@ import {
   Routing,
   Settings,
   Skip,
+  StatusLabels,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -240,7 +241,7 @@ const flow = defineFlow({
         Effect.catchTag("StepFailed", (failed) => toPerson(`${failed.step}: ${failed.message}`)),
         // However the run ends, its claim on the issue goes; the branch and
         // any pull request stay.
-        Claims.releasing(Claims.issue(issue)),
+        StatusLabels.releasing(Claims.issue(issue)),
       );
     }).pipe(
       // An issue deleted or transferred under the run leaves nothing to do.

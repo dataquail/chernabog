@@ -207,8 +207,9 @@ describe("review", () => {
       const finished = yield* runToEnd(reviewing, fake, work);
       expect(summaryOf(finished)).toBe(`#${PULL}: review 1 requested changes`);
       expect(fake.submitted.map((submitted) => submitted.state)).toEqual(["CHANGES_REQUESTED"]);
-      // No label: the author's address-review reads the review itself.
-      expect(fake.labelsOf(PULL)).toEqual([]);
+      // The changes-asked record's projection, which nothing reads: the
+      // author's address-review reads the review itself.
+      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
     }),
   );
 });

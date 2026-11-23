@@ -89,6 +89,7 @@ import * as Resume from "./resume.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 import { suited } from "./suits.ts";
 
 const summaryOf = (pullRequest: PullRequestNumber, round: number) =>
@@ -1193,7 +1194,7 @@ export const subjects = {
       );
 
       if (options.claims) {
-        return handled.pipe(Claims.releasing(Claims.issue(trigger.issue)));
+        return handled.pipe(StatusLabels.releasing(Claims.issue(trigger.issue)));
       }
 
       return handled;

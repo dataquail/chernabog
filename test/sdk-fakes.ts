@@ -527,6 +527,11 @@ export const makeFake = (
 
   const PERMISSION = new RegExp(`^/repos/${settings.slug}/collaborators/([^/]+)/permission$`);
 
+  // GitHub's open issues and pull requests, a page at a time.
+  const OPEN_ITEMS = new RegExp(
+    `^/repos/${settings.slug}/issues\\?state=open&per_page=\\d+&page=(\\d+)$`,
+  );
+
   let planned = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -1009,6 +1014,30 @@ export const makeFake = (
             const all = timeline.events.get(number) ?? [];
 
             return Effect.succeed<Json>(all.slice((page - 1) * 100, page * 100));
+          }
+
+          const open = Option.fromNullOr(OPEN_ITEMS.exec(path));
+
+          // The queued issue, the issues a plan made, and the pull request,
+          // as REST lists them: a pull request names itself.
+          if (method === "GET" && Option.isSome(open)) {
+            if (open.value[1] !== "1") {
+              return Effect.succeed<Json>([]);
+            }
+
+            const named = (number: number) => labelsOf(number).map((name) => ({ name }));
+
+            return Effect.succeed<Json>([
+              ...allIssues()
+                .filter((found) => found.state === "open")
+                .map((found) => ({ number: found.number, labels: named(found.number) })),
+              ...Option.toArray(
+                Option.liftPredicate(
+                  { number: PULL, labels: named(PULL), pull_request: {} },
+                  () => states.pull === "open",
+                ),
+              ),
+            ]);
           }
 
           const permission = Option.fromNullOr(PERMISSION.exec(path));

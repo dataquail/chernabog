@@ -19,6 +19,7 @@ import {
   Review,
   Settings,
   Skip,
+  StatusLabels,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
@@ -73,7 +74,7 @@ const workflow = (item: WorkItem) =>
 
     // However the run ends, its claim on the issue goes; the branch and any
     // pull request stay.
-    return yield* work(issue).pipe(Claims.releasing(Claims.issue(issue)));
+    return yield* work(issue).pipe(StatusLabels.releasing(Claims.issue(issue)));
   }).pipe(
     // An issue deleted or transferred under the run leaves nothing to do.
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),

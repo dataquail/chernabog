@@ -49,6 +49,7 @@ import {
   Run,
   Settings,
   Stack,
+  StatusLabels,
   Worktree,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
@@ -111,7 +112,7 @@ const queuedAs = (ships: boolean) =>
 // Lets the task's claim go once its attempt ends with a person, as a step of
 // the attempt's own, so a later attempt lets it go again.
 const releaseTask = (issue: number, id: string) =>
-  activity(`release-claim#${id}`, Claims.release(Claims.issue(issue)));
+  activity(`release-claim#${id}`, StatusLabels.release(Claims.issue(issue)));
 
 // Where a stacked task's pull request goes once its work is done, as the step
 // `task-base#<id>`: its base, or, when the layer below merged while the task
@@ -1094,7 +1095,7 @@ const flow = defineFlow({
       // However the run ends, its claim on the epic goes, and the engine lets
       // its tasks' claims go too; a run parked between rounds keeps them.
       return yield* workThrough(epic, ships, concurrency, Epic.resuming(item)).pipe(
-        Claims.releasing(Claims.epic(epic)),
+        StatusLabels.releasing(Claims.epic(epic)),
       );
     }),
 });

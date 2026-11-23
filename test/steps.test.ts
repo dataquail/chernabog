@@ -244,7 +244,7 @@ const ignoringOptional = flowHandle(
 
 describe("the review steps", () => {
   effect(
-    "Review.round posts a real review, records it, naming the reviewer and its session, and leaves the labels alone",
+    "Review.round posts a real review, records it, naming the reviewer and its session, and its labels are the record's projection",
     () =>
       Effect.gen(function* () {
         const fake = makeFake("request-changes");
@@ -274,7 +274,9 @@ describe("the review steps", () => {
         expect(
           fake.comments.filter((comment) => Option.isSome(reviewMarker.read(comment.body))),
         ).toEqual([]);
-        expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
+        // The changes-asked record projects its label (StatusLabels); the
+        // needs-review the fake started with isn't the record's.
+        expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
       }),
   );
 });
@@ -646,8 +648,9 @@ describe("considering findings", () => {
         expect(consider.cwd).toBe("/tmp/demo-worktrees/auto/issue-3");
         expect(consider.prompt).toContain("README.md:1: Mention the change.");
         expect(address.prompt).toContain("Address review 1");
-        // Considering changes nothing on GitHub.
-        expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
+        // Considering changes nothing on GitHub: the labels are the review's
+        // changes-asked record's projection.
+        expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
       }),
   );
 
