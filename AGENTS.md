@@ -1096,6 +1096,17 @@ docs/adr/0022-behavior-specs-in-gherkin.md has the why.
   against (sandbox, personas, items, runs), the drivers, and each feature's
   entry files: one `.test.ts` per driver, the in-process one in
   `test/features/` and the sandbox one in `test/acceptance/`.
+- **The runner** is `test/features/runner.ts`: an entry file is one call,
+  `feature("review-loop", driver, steps)`, which registers a describe block
+  and a test per scenario (and per outline row) the driver's tag names.
+  What can't run registers a failing test that names the file and line.
+  Step definitions are `defineSteps` (`test/features/steps/registry.ts`):
+  `Given`/`When`/`Then` with a string pattern (`{word}`, `{string}`, `{int}`
+  captures, typed) or a RegExp, matched whatever the keyword. Their bodies
+  get the domain layer (`test/features/domain.ts`) and the scenario's state,
+  nothing else. A new driver's name goes in the runner's `DRIVERS`. The
+  runner's own tests and toy features are in `test/gherkin/`, outside
+  `test/features/`, so they aren't specs.
 - **What agents don't own.** A `.feature` file. Once a person has approved
   one, an agent may propose a change but never approve it. A pull request
   that touches a feature file is handed to a person

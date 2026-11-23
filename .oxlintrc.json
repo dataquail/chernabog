@@ -315,6 +315,15 @@
       }
     },
     {
+      // The feature runner registers a feature's scenarios as bun:test tests while
+      // its entry file loads, which bun:test requires be synchronous, so it reads
+      // the feature file with node:fs rather than an Effect.
+      "files": ["test/features/runner.ts"],
+      "rules": {
+        "effect/noNodeBuiltinImport": "off"
+      }
+    },
+    {
       // The acceptance tier drives the built CLI as a black box, as fddh's Playwright
       // tier drives the app: bun:test's async callbacks, thrown assertions and
       // lifecycle hooks, a fake GitHub on Bun.serve, and sandboxes built and child
