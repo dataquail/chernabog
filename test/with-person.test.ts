@@ -24,8 +24,10 @@ import {
   Plan,
   PullRequest,
   Stack,
+  StatusLabels,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -363,6 +365,111 @@ describe("handing an item back is the intent of a trusted person", () => {
 
       expect(fake.phases()[PR_ITEM]).toBe(WITH_PERSON);
       expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+});
+
+// A projection puts auto:needs-human back on an item whose record is still
+// with-person (ADR 21, decision 8). A trusted person's removal before the
+// observer's tick is their hand-back all the same (#573): the observer reads
+// it from the removal event, so the person's hand-back is never lost.
+describe("a hand-back and a projection, in either order", () => {
+  // The issue handed to a person by a run, its label projected; then a
+  // trusted person takes the label off.
+  const removedByPerson = () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      yield* runStep(fake, Implement.handToHuman(ISSUE, "stuck", Option.none()));
+      expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+
+      fake.setLabels(
+        ISSUE,
+        fake.labelsOf(ISSUE).filter((label) => label !== DEFAULT_LABELS.needsHuman),
+      );
+      listing(fake, ISSUE, ...(fake.timeline.events.get(ISSUE) ?? []), unlabeled(PERSON));
+
+      return fake;
+    });
+
+  // A claim on the issue, which projects its labels again.
+  const claimed = (fake: Fake) =>
+    runStep(fake, StatusLabels.acquire(ISSUE_ITEM).pipe(Effect.orDie));
+
+  effect(
+    "a claim before the observer's tick puts the label back; the tick still hands it back",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* removedByPerson();
+
+        yield* claimed(fake);
+        expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+        expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+
+        yield* handingBack(fake);
+
+        expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+        expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
+  );
+
+  effect("an advance of the epic sharing the issue, before the tick, loses nothing either", () =>
+    Effect.gen(function* () {
+      const fake = yield* removedByPerson();
+
+      yield* onFake(fake, StatusLabels.projectItem(Claims.epic(ISSUE)));
+      expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+
+  effect("a claim after the observer's tick projects the hand-back: no label", () =>
+    Effect.gen(function* () {
+      const fake = yield* removedByPerson();
+
+      yield* handingBack(fake);
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+
+      yield* claimed(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+      expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.needsHuman);
+    }),
+  );
+
+  effect("a person who puts the label back after removing it keeps the item", () =>
+    Effect.gen(function* () {
+      const fake = yield* removedByPerson();
+      fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), DEFAULT_LABELS.needsHuman]);
+      listing(fake, ISSUE, ...(fake.timeline.events.get(ISSUE) ?? []), labeled(PERSON));
+
+      yield* claimed(fake);
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+
+  effect("a removal from before the item went to the person hands nothing back", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, []);
+      fake.recordPhase(ISSUE_ITEM, WITH_PERSON, {
+        at: DateTime.makeUnsafe("2026-06-01T00:00:00Z"),
+        data: Phases.withPersonData("stuck again", Option.none()),
+      });
+      listing(fake, ISSUE, {
+        event: "unlabeled",
+        label: { name: DEFAULT_LABELS.needsHuman },
+        actor: { login: PERSON },
+        created_at: "2026-05-01T00:00:00Z",
+      });
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
     }),
   );
 });
