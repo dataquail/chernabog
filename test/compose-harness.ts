@@ -609,7 +609,7 @@ steps:
                   summary: summary
         - id: carried
           use: stack.carryUp
-          in: { round: round, progress: progress, stack: state.stack }
+          in: { epic: trigger.epic, round: round, progress: progress, stack: state.stack }
           on:
             moved:
               as: moved
@@ -628,7 +628,7 @@ steps:
           first: [landed, carried]
         - id: settled
           use: epic.settleCi
-          in: { round: round, tasks: noted.tasks, atOnce: howMany.value }
+          in: { epic: trigger.epic, round: round, tasks: noted.tasks, atOnce: howMany.value }
           on:
             moved:
               as: tookUp

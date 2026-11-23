@@ -1,6 +1,7 @@
 // An epic's task whose CI is pending (audit W7, ADR 0021 decision 4). Its
-// lane can't park on its own, so it leaves the round rather than poll, and
-// the epic parks with the task's pending CI in its waiting record. Epic.queued
+// lane can't park on its own, so it leaves the round rather than poll,
+// recording the wait on the task's own record (awaiting-task-ci), and the
+// epic parks. Epic.queued
 // holds the epic, with why, while that CI is pending with time left, and
 // offers it once CI is green or red, or ciTimeout passes from when the wait
 // began. The run that takes the epic up takes the task up (Epic.takeUpCi,
@@ -8,11 +9,13 @@
 // gives the task to a person past ciTimeout, as the lane would have. The
 // recipe and its document leave and take up alike.
 
+import { printJson } from "@chernabog/core";
 import {
   Claims,
   DEFAULT_LABELS,
   Epic,
   type LinkedIssue,
+  Phases,
   Plan,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -79,16 +82,19 @@ const epicFake = () => {
   return fake;
 };
 
-// What the epic's waiting record keeps, decoded.
-const kept = (fake: Fake) =>
-  Option.flatMap(Option.fromUndefinedOr(fake.records().get(EPIC_ITEM)), (record) =>
-    Option.flatMap(record.data, (data) => Epic.resuming(item("any", { resumeEpic: data }))),
-  );
+const TASK_ITEM = Claims.issue(TASK);
 
+// The task's wait on its pending CI, as its own record keeps it; none once
+// the record is anything else.
 const pendingCi = (fake: Fake) =>
-  Option.getOrElse(
-    Option.map(kept(fake), (found) => found.tasks.ci ?? []),
-    (): ReadonlyArray<Epic.PendingCi> => [],
+  Option.toArray(
+    Option.flatMap(
+      Option.filter(
+        Option.fromUndefinedOr(fake.records().get(TASK_ITEM)),
+        (record) => record.phase === Phases.PHASES.issue.awaitingTaskCi,
+      ),
+      (record) => Option.flatMap(record.data, Schema.decodeUnknownOption(Epic.PendingCi)),
+    ),
   );
 
 // Whether the run is parked on the epic's round `round`.
@@ -142,7 +148,7 @@ for (const [form, loading] of forms) {
 
   describe(`the epic's ${form}, on a task whose CI is pending`, () => {
     effect(
-      "leaves the task's lane rather than poll, and parks with its pending CI in the epic's record",
+      "leaves the task's lane rather than poll, records its pending CI on the task, and parks",
       () =>
         Effect.gen(function* () {
           const before = yield* DateTime.now;
@@ -152,6 +158,7 @@ for (const [form, loading] of forms) {
 
           expect(run.status).toBe("running");
           expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
+          expect(fake.phases()[TASK_ITEM]).toBe(Phases.PHASES.issue.awaitingTaskCi);
 
           const [left] = pendingCi(fake);
           expect(left).toMatchObject({
@@ -167,6 +174,12 @@ for (const [form, loading] of forms) {
           ).toBe(true);
           // Not handed off: nobody is asked to review while CI runs.
           expect(fake.people.requested).toEqual([]);
+          // The epic's own record keeps none of it.
+          expect(
+            Option.flatMap(Option.fromUndefinedOr(fake.records().get(EPIC_ITEM)), (record) =>
+              Option.map(record.data, printJson),
+            ).pipe(Option.getOrElse(() => "")),
+          ).not.toContain(`"pullRequest"`);
         }),
       ENGINE_TIMEOUT,
     );
@@ -200,6 +213,7 @@ for (const [form, loading] of forms) {
           // No agent ran again, and nothing is left on CI.
           expect(fake.requests).toHaveLength(agentRuns);
           expect(pendingCi(fake)).toEqual([]);
+          expect(fake.phases()[TASK_ITEM]).toBe(Phases.PHASES.issue.handedOff);
         }),
       ENGINE_TIMEOUT,
     );
@@ -226,20 +240,17 @@ for (const [form, loading] of forms) {
       () =>
         Effect.gen(function* () {
           const fake = yield* leftOnCi(PENDING);
-          const waiting = Option.getOrThrow(kept(fake));
+          const [left] = pendingCi(fake);
 
           const since = DateTime.formatIso(
             DateTime.subtractDuration(yield* DateTime.now, Duration.hours(3)),
           );
 
-          const ci = (waiting.tasks.ci ?? []).map((one) => ({ ...one, since }));
+          const data = yield* Schema.encodeEffect(Epic.PendingCi)({ ...left, since }).pipe(
+            Effect.orDie,
+          );
 
-          const data = yield* Schema.encodeEffect(Epic.Waiting)({
-            ...waiting,
-            tasks: { ...waiting.tasks, ci },
-          }).pipe(Effect.orDie);
-
-          fake.recordPhase(EPIC_ITEM, "waiting", { data });
+          fake.recordPhase(TASK_ITEM, Phases.PHASES.issue.awaitingTaskCi, { data });
 
           yield* takenUp(fake);
 

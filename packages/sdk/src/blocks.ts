@@ -648,7 +648,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
     about:
-      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds. CI still pending records awaiting-ci on the issue, and the run ends at the park; a run that takes it up starts here, fixing red in a worktree it makes again, and hands off with what CI passing says rather than the agent's outcome. Its output, the pull request and what to tell the issue, is what the steps after it read. In an epic's task lane, CI still pending ends the lane instead (ci-left), and epic.settleCi takes the task up once CI settles.",
+      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds. CI still pending records awaiting-ci on the issue, and the run ends at the park; a run that takes it up starts here, fixing red in a worktree it makes again, and hands off with what CI passing says rather than the agent's outcome. Its output, the pull request and what to tell the issue, is what the steps after it read. In an epic's task lane, CI still pending ends the lane instead, recording the task's issue awaiting-task-ci (ci-left), and epic.settleCi takes the task up once CI settles.",
     inputKinds: {
       pr: "a pull request, from pr.open or stack.publish",
       outcome: "what the agent said, for issue.handOff",

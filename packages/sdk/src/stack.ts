@@ -358,15 +358,11 @@ export type LayerRefresh = {
   readonly leave?: boolean;
 };
 
-// The most characters of what a refresh says to a reviewer asked again that
-// a left refresh keeps, so the record it goes in stays small.
-export const SAID_SIZE = 150;
-
 // What a refresh that left on pending CI keeps, as the step
 // `refresh-ci-left-<key>`, for the run that takes it up (finishRefresh): the
 // round of CI it waits on, the base it merged in, when the round's wait
 // began, so ciTimeout counts across runs, and what it says to a reviewer it
-// asks again, cut to SAID_SIZE.
+// asks again.
 export const RefreshLeft = Schema.Struct({
   round: Schema.Finite,
   base: Schema.String,
@@ -389,14 +385,6 @@ export type Refreshed = {
   readonly left: Option.Option<RefreshLeft>;
 };
 
-const cut = (said: string) => {
-  if (said.length <= SAID_SIZE) {
-    return said;
-  }
-
-  return `${said.slice(0, SAID_SIZE - 1)}…`;
-};
-
 // Records the CI a refresh left pending, when its round's wait began.
 const leftOnCi = (name: string, round: number, base: string, said: string) =>
   activity(
@@ -405,7 +393,7 @@ const leftOnCi = (name: string, round: number, base: string, said: string) =>
       round,
       base,
       since: DateTime.formatIso(now),
-      said: cut(said),
+      said,
     })),
     RefreshLeft,
   );
