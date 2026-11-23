@@ -733,3 +733,10 @@ What the #557 amendments change for flow authors:
   `chernabog progress backfill` maps the old state of items in flight (a
   label, a marker, a node in `data`) onto the new records, as it did for
   the first records.
+  The upgrade order is: stop the daemon, upgrade, run
+  `chernabog progress backfill --write` for each enrolled repo, then start
+  the daemon. The backfill isn't optional. Nothing reads the old state at
+  runtime, so an item it didn't map is treated as having no record. For
+  example, a pull request adopted before records said `adopted` (A1) stops
+  being chernabog's. Its next record write then takes `auto:adopted` off,
+  and after that the backfill can't recover it.
