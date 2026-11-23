@@ -266,11 +266,40 @@ const asPhase = Schema.decodeSync(CorePhase);
 const asWriter = Schema.decodeSync(PhaseWriter);
 const asData = Schema.decodeSync(PhaseData);
 
+const PULL_ITEM = /^pr-(\d+)$/;
+
+// A pull request's records from before records said StatusLabels.ADOPTED_KEY
+// leave it out, though chernabog adopted the pull request and its
+// auto:adopted label says so. Without it, the next projection would take the
+// label off, and Review.authoredByMe and Implement.withHistory, which still
+// read the label (#570), would stop taking the pull request as chernabog's.
+// So a pull request's advance from a record, whose data doesn't say adopted,
+// takes adoption from that label: once, as a migration, since the record
+// written says it and carries it on from then (CARRIED).
+const adopting = (item: string, transition: PhaseTransition) =>
+  Effect.gen(function* () {
+    const pull = Option.fromNullOr(PULL_ITEM.exec(item));
+    const given: Data = transition.data ?? {};
+
+    if (
+      Option.isNone(pull) ||
+      Option.isNone(transition.from) ||
+      StatusLabels.ADOPTED_KEY in given ||
+      !(yield* StatusLabels.labelledAdopted(Number(pull.value[1])))
+    ) {
+      return transition;
+    }
+
+    return { ...transition, data: asData({ ...given, [StatusLabels.ADOPTED_KEY]: true }) };
+  });
+
 // Moves `item` by `transition`, as Progress.advance does, then projects its
 // status labels from the record written (ADR 21, decision 8): every write of
 // a record the SDK makes goes through here, so the labels follow each one.
+// A pull request adopted before records said so learns it here (adopting).
 export const advance = (item: string, transition: PhaseTransition) =>
-  Progress.use((progress) => progress.advance(item, transition)).pipe(
+  adopting(item, transition).pipe(
+    Effect.flatMap((moved) => Progress.use((progress) => progress.advance(item, moved))),
     Effect.tap(() => StatusLabels.projectItem(item)),
   );
 
