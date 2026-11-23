@@ -20,7 +20,7 @@
     "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint:architecture": "architecture check src packages test scripts",
+    "lint:architecture": "architecture check src packages test scripts && bun scripts/check-world-reads.ts",
     "architecture:baseline": "architecture baseline src packages test scripts",
     "architecture:coverage": "architecture coverage src packages test scripts",
     "architecture:conformance": "architecture conformance src packages test scripts",
