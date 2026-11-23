@@ -128,6 +128,8 @@ graph:
         - "~/dashboard/src/main.tsx"
         # Run with `bun scripts/<name>.ts`.
         - "scripts/gen-*.ts"
+        # lint:architecture's check that no source reads the world back as a record.
+        - "scripts/check-world-reads.ts"
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
         - "scripts/release-pr-check.ts"
@@ -1799,6 +1801,15 @@ tree:
     children:
       # What a script renders, which a test renders again; the script prints or writes it.
       "templates.ts": { members: [{ use: no-talking }] }
+      # The rule that no source reads the world back as a record (ADR 21), over
+      # TypeScript's own parse of each source; check-world-reads.ts prints what it finds.
+      "world-reads.ts":
+        members: [{ use: no-talking }]
+        imports:
+          message: >-
+            The world-reads rule parses each source with TypeScript's compiler, and names nothing
+            else.
+          external: [typescript]
       "core-api.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
       # The dashboard's page with Bun's hot reload, over the installed daemon's API.
