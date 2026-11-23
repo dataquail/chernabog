@@ -44,6 +44,7 @@ import {
   flowsOf,
   handsOff,
   issueOfBranch,
+  reasonsOf,
   RECIPES,
   verdictOf,
 } from "./cast.ts";
@@ -78,12 +79,12 @@ type Machine = {
 
 const failed = (message: string) => new DomainFailed({ message });
 
-const flowsFor = (login: Login): Readonly<Record<string, Json>> =>
+const flowsFor = (login: Login, pool: ReadonlyArray<Login>): Readonly<Record<string, Json>> =>
   Object.fromEntries(
     RECIPES.map((name) => [
       name,
       Option.match(
-        Option.liftPredicate(name, (found) => flowsOf(login).includes(found)),
+        Option.liftPredicate(name, (found) => flowsOf(login, pool).includes(found)),
         {
           onNone: () => OFF,
           onSome: () => OFTEN,
@@ -102,7 +103,9 @@ const sandboxOf = (machine: Machine) =>
     {
       github: [...machine.personas],
       personas: [...machine.personas],
-      personaFlows: Object.fromEntries(machine.personas.map((login) => [login, flowsFor(login)])),
+      personaFlows: Object.fromEntries(
+        machine.personas.map((login) => [login, flowsFor(login, machine.pool)]),
+      ),
     },
   );
 
@@ -235,10 +238,11 @@ const repliesSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>) =>
           id: comment.id,
           pullRequest: pull.number,
           author: comment.user.login,
+          reasons: reasonsOf(comment.body),
         })),
     ),
     Order.mapInput(Order.Number, (reply: { readonly id: number }) => reply.id),
-  ).map(({ author, pullRequest }) => ({ pullRequest, author }));
+  ).map(({ author, pullRequest, reasons }) => ({ pullRequest, author, reasons }));
 
 // Each push to a pull request's branch, before it opened too.
 const pushesSeen = (sandbox: Sandbox, pulls: ReadonlyArray<FakePull>) =>
@@ -286,6 +290,7 @@ const sessionsSeen = (
           pullRequest: pull.number,
           persona,
           session: call.session,
+          resumed: call.call === "resume",
         })),
       ),
     ),
