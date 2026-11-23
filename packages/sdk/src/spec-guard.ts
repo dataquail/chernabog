@@ -28,9 +28,11 @@ export const isPerson = (login: string, personas: ReadonlyArray<string>) =>
   !personas.some((persona) => sameLogin(persona, login));
 
 // The heads people approved, newest first: each person's latest review that
-// decides (approves or requests changes), when it approves. A dismissed
-// approval, which GitHub lists as DISMISSED, approves nothing; an untrusted
-// login's review, or a persona's, never counts.
+// decides (approves, requests changes or was dismissed), when it approves. A
+// dismissed review, which GitHub lists as DISMISSED, approves nothing and
+// leaves none of that person's earlier approvals standing, as GitHub's own
+// review decision does, until they approve again; an untrusted login's
+// review, or a persona's, never counts.
 export const approvedHeads = (
   reviews: ReadonlyArray<SubmittedReview>,
   personas: ReadonlyArray<string>,
@@ -41,7 +43,9 @@ export const approvedHeads = (
     if (
       review.trusted === true &&
       isPerson(review.author, personas) &&
-      (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED")
+      (review.state === "APPROVED" ||
+        review.state === "CHANGES_REQUESTED" ||
+        review.state === "DISMISSED")
     ) {
       latest.delete(review.author.toLowerCase());
       latest.set(review.author.toLowerCase(), review);

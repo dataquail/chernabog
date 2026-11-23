@@ -300,6 +300,29 @@ describe("who clears it", () => {
     ).toEqual(["f", "e"]);
   });
 
+  test("a person's dismissed review leaves no earlier approval of theirs standing, until they approve again", () => {
+    const dismissed = (author: string, commitSha: string): SubmittedReview => ({
+      author,
+      state: "DISMISSED",
+      commitSha,
+      trusted: true,
+    });
+
+    expect(approvedHeads([approval("zach", "a"), dismissed("zach", "b")], PERSONAS)).toEqual([]);
+    expect(
+      approvedHeads(
+        [approval("zach", "a"), dismissed("zach", "b"), approval("erin", "a")],
+        PERSONAS,
+      ),
+    ).toEqual(["a"]);
+    expect(
+      approvedHeads(
+        [approval("zach", "a"), dismissed("zach", "b"), approval("zach", "c")],
+        PERSONAS,
+      ),
+    ).toEqual(["c"]);
+  });
+
   test("a person is no persona, under any case, and no bot", () => {
     expect(isPerson("zach", PERSONAS)).toBe(true);
     expect(isPerson("Data-Quail", PERSONAS)).toBe(false);
