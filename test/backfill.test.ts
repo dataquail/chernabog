@@ -448,7 +448,7 @@ describe("progress backfill's issues and epics", () => {
         expect(found[0]).toMatchObject({
           data: {
             fingerprint: "f1",
-            tasks: { attempts: [], handedBack: [], withPerson: [] },
+            tasks: { attempts: [], handedBack: [] },
           },
         });
       }),

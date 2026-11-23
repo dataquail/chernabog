@@ -150,9 +150,10 @@ change.
    (`Events.mergeCiCompleted`), whose head is the merge commit its
    `awaiting-merge-ci` record names. The epic wakes on any finished run
    (`Events.ciRunCompleted`): a task's or a stack layer's CI runs on that
-   pull request's branch, which names no epic, but the epic's `waiting`
-   record names the pull request (`tasks.ci`, `layers.ci`), and the run's
-   `pull_requests` names it too. It doesn't keep the task's head, so the
+   pull request's branch, which names no epic, but the wait's own record
+   names the pull request (the task's `awaiting-task-ci`, the layer's pull
+   request's `awaiting-refresh-ci`, #568), and the run's `pull_requests`
+   names it too. It doesn't keep the task's head, so the
    commit alone wouldn't find it; a run with no pull requests, such as one
    from a fork, finds nothing, and the sweep takes the epic up. The sweep
    that every finished run used to start (`Events.baseCiCompleted`) is
@@ -270,19 +271,21 @@ change.
    block that can't wait inside the run (`pr.land`, `plan.awaitAnswer`)
    must be where a run can take it up. An epic task's wait for CI is the
    exception to a lane's polling: its lane can't park alone, so it ends, and the
-   epic's `waiting` record keeps the task's pending CI (`tasks.ci`: the
-   pull request, its round, and `since`). `Epic.queued` offers the epic
-   once that CI settles or `ciTimeout` passes, and holds it with why until
-   then; a round takes the task up (`Epic.takeUpCi`, `epic.settleCi`),
-   hands it off on green, fixes red, and gives it to a person past the
-   timeout. An epic's stack refresh (`Stack.refreshLayer`) waits on its
-   layer's CI the same way: CI still pending ends the refresh, the layer and
-   those above it wait, and so does its review, and the `waiting` record
-   keeps it (`layers.ci`: the layer, its pull request, the base and its
-   head, the round, `since`, and a few words for the reviewer). The next
-   round takes it up first (`Epic.takeUpRefreshes`, in `carryUp`). Those
-   refreshes take at most half the record; one past that waits inside the
-   run. A flow a person starts has no trigger to offer its item again, so
+   task's own record keeps its pending CI (`awaiting-task-ci`: the pull
+   request, the lane, its round, and `since`; #568). `Epic.queued` reads the
+   epic's tasks' records, offers the epic once that CI settles or
+   `ciTimeout` passes, and holds it with why until then; a round takes the
+   task up (`Epic.takeUpCi`, `epic.settleCi`), hands it off on green, fixes
+   red, and gives it to a person past the timeout. An epic's stack refresh
+   (`Stack.refreshLayer`) waits on its layer's CI the same way: CI still
+   pending ends the refresh, the layer and those above it wait, and so does
+   its review, and the layer's pull request's record keeps it
+   (`awaiting-refresh-ci`: the layer, the base and its head, the round,
+   `since`, and a blob of what it says to the reviewer and the review phase
+   it was written over). The next round takes it up first
+   (`Epic.takeUpRefreshes`, in `carryUp`) and records that review phase
+   again unless it asked the reviewer again. The epic's `waiting` record
+   keeps only the epic's own facts, so no wait is dropped for room. A flow a person starts has no trigger to offer its item again, so
    its waits poll too, by design: `hybrid.waitForCi` is the one block that
    polls in any document, and polling is not a park, so it strands
    nothing.
