@@ -46,6 +46,7 @@ import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { holdKeysOf, ships } from "./pull-request.ts";
 import { isAgentBranch } from "./review.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // Who backfill's records name as their writer.
 export const WRITER = "observer:backfill";
@@ -347,6 +348,38 @@ const reviewFinding = (
           ),
       ),
   );
+
+// A1: an open pull request chernabog adopted before its records said so
+// (StatusLabels.ADOPTED_KEY): its auto:adopted label is the only trace, so
+// once, here, the record learns it. From then the record is what makes the
+// pull request chernabog's (Review.authoredByMe, audit R1 and R2) and what
+// projects the label. `finding` is what else backfill writes on that record,
+// if anything, which then carries adoption too.
+const withAdoption = (
+  item: string,
+  pull: PullRequest,
+  found: PhaseRecord,
+  finding: Option.Option<Finding>,
+): Option.Option<Finding> => {
+  if (!pull.labels.includes(ADOPTED_LABEL) || StatusLabels.saysAdopted(Option.some(found))) {
+    return finding;
+  }
+
+  const adopted = { [StatusLabels.ADOPTED_KEY]: true };
+
+  if (Option.isSome(finding) && finding.value.kind === "write") {
+    return Option.some({ ...finding.value, data: { ...finding.value.data, ...adopted } });
+  }
+
+  return Option.some({
+    kind: "write",
+    item,
+    phase: found.phase,
+    data: { ...Option.getOrUndefined(found.data), ...adopted },
+    why: `adopted: its ${ADOPTED_LABEL} label says so, from before its record did`,
+    over: { phase: found.phase, version: found.version },
+  });
+};
 
 // The phase of one open pull request with no record, by the table's rows
 // P1 to P9, in order.
@@ -685,10 +718,19 @@ const withPersonFindings = (all: ReadonlyMap<string, PhaseRecord>) =>
     const labelNames = yield* Settings.labels;
     const why = `labelled ${labelNames.needsHuman}`;
 
-    const items = [
-      ...(yield* github.pullRequestsLabelled(labelNames.needsHuman))
-        .filter((pull) => pull.state === "open")
+    const pulls = (yield* github.pullRequestsLabelled(labelNames.needsHuman)).filter(
+      (pull) => pull.state === "open",
+    );
+
+    // A1 for a pull request with a person: its hand-off says adopted too.
+    const adopted = new Set(
+      pulls
+        .filter((pull) => pull.labels.includes(ADOPTED_LABEL))
         .map((pull) => Phases.pullRequestItem(pull.number)),
+    );
+
+    const items = [
+      ...pulls.map((pull) => Phases.pullRequestItem(pull.number)),
       ...(yield* github.issuesLabelled(labelNames.needsHuman))
         .filter((issue) => issue.state !== "closed")
         .map(issueOrEpic),
@@ -701,7 +743,10 @@ const withPersonFindings = (all: ReadonlyMap<string, PhaseRecord>) =>
         return [];
       }
 
-      const data = Phases.withPersonData(why, found);
+      const data = {
+        ...Phases.withPersonData(why, found),
+        ...(adopted.has(item) && { [StatusLabels.ADOPTED_KEY]: true }),
+      };
 
       return [
         Option.match(found, {
@@ -732,7 +777,12 @@ const surveyPullRequest = (
     const recorded = Phases.recordOf(all, item);
 
     if (Option.isSome(recorded)) {
-      return reviewFinding(item, recorded.value, yield* markedReview(pull, logins));
+      return withAdoption(
+        item,
+        pull,
+        recorded.value,
+        reviewFinding(item, recorded.value, yield* markedReview(pull, logins)),
+      );
     }
 
     const reviews = yield* GitHub.use((github) => github.reviews(pull.number));
@@ -742,8 +792,17 @@ const surveyPullRequest = (
     }
 
     const review = yield* markedReview(pull, logins);
+    const finding = withReview(yield* pullRequestFinding(pull, reviews), review);
 
-    return Option.some(withReview(yield* pullRequestFinding(pull, reviews), review));
+    // A1, for one with no record yet: the record written says adopted too.
+    if (finding.kind === "write" && pull.labels.includes(ADOPTED_LABEL)) {
+      return Option.some<Finding>({
+        ...finding,
+        data: { ...finding.data, [StatusLabels.ADOPTED_KEY]: true },
+      });
+    }
+
+    return Option.some(finding);
   });
 
 // I3 for every spec's record, but those with a person.
@@ -972,7 +1031,7 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         onSome: (data) => ({ ...base, data: asData(data) }),
       });
 
-      const written = yield* progress.advance(finding.item, transition).pipe(
+      const written = yield* Phases.advance(finding.item, transition).pipe(
         Effect.as(true),
         Effect.catchTag("PhaseMoved", () => Effect.succeed(false)),
       );

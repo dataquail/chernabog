@@ -104,7 +104,7 @@ describe("human-initiated", () => {
   );
 
   effect(
-    "fails when the person closes the session first, keeping the issue in progress for the next start",
+    "fails when the person closes the session first: the claim goes, and its in-progress label with it",
     () =>
       Effect.gen(function* () {
         const fake = makeFake("approve", POOL);
@@ -112,7 +112,8 @@ describe("human-initiated", () => {
         const finished = yield* runToEnd(starting, fake, work);
         expect(finished.status).toBe("failed");
         expect(summaryOf(finished)).toContain("the person closed the session");
-        expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
+        // auto:in-progress shows a run's claim (StatusLabels), which the run's end let go.
+        expect(fake.labelsOf(ISSUE)).toEqual([]);
         expect(fake.git.pushes).toBe(0);
       }),
   );

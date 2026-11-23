@@ -32,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Phases from "./phases.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // Whether a block runs at a node its document can take its park up at: none
 // in a recipe, or at a node a run can't be taken up at, such as in a
@@ -140,7 +141,7 @@ export const claimAgain = Effect.gen(function* () {
     yield* activity(
       "claim-again",
       Effect.gen(function* () {
-        const claimed = yield* Claims.acquire(item);
+        const claimed = yield* StatusLabels.acquire(item);
 
         if (!claimed.acquired) {
           return yield* new Skip({

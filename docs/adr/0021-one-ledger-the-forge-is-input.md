@@ -561,10 +561,24 @@ change.
      the next change. A person removing `auto:needs-human` is intent, not a
      label to put back: the observer records `handed-back` first (decision
      1), and the projector projects from that record.
+   - **Where it runs (#569):** the SDK's `StatusLabels`. Every write of a
+     record goes through `Phases.advance`, which projects the item after it,
+     and every claim through `StatusLabels.acquire`. An issue's and the epic
+     it became share one GitHub issue, so their projections are one set. An
+     issue's `auto:in-progress` shows a live claim, but not once its record
+     says the run let it go (handed-off, asked-questions, with-person,
+     became-epic); core's `claimLabel` marker takes it off when the run
+     releases the claim or ends. `chernabog doctor` lists the open items
+     whose labels differ from their projection.
    - **No flow writes a status label directly.** `auto:in-progress`,
      `auto:needs-human`, `auto:awaiting-ready`, `auto:plan-proposed`,
      `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`,
-     `auto:adopted` and the plan's labels are the projector's.
+     `auto:adopted` and the plan's labels are the projector's. A pull
+     request's record says it was adopted (`adopted`), and that, not the
+     label, makes it chernabog's to answer reviews on (`Review.authoredByMe`,
+     `Implement.withHistory`; audit R1, R2). `chernabog progress backfill`
+     writes `adopted` into the record of an open pull request labelled
+     `auto:adopted` from before records said so (A1).
    - **Intent labels are input only:** `auto:eligible`, `auto:plan`,
      `auto:plan-approved`, `auto:ship`, `auto:epic` and `hybrid`. A person
      applies any of them by hand. Chernabog removes one only to acknowledge
@@ -703,3 +717,10 @@ What the #557 amendments change for flow authors:
   `chernabog progress backfill` maps the old state of items in flight (a
   label, a marker, a node in `data`) onto the new records, as it did for
   the first records.
+  The upgrade order is: stop the daemon, upgrade, run
+  `chernabog progress backfill --write` for each enrolled repo, then start
+  the daemon. The backfill isn't optional. Nothing reads the old state at
+  runtime, so an item it didn't map is treated as having no record. For
+  example, a pull request adopted before records said `adopted` (A1) stops
+  being chernabog's. Its next record write then takes `auto:adopted` off,
+  and after that the backfill can't recover it.

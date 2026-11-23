@@ -39,6 +39,7 @@ import * as Phases from "./phases.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
 import * as SpecGuard from "./spec-guard.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
 export const own = (pullRequest: number) =>
@@ -47,7 +48,7 @@ export const own = (pullRequest: number) =>
     Effect.gen(function* () {
       const run = yield* Run;
       const item = Claims.pullRequest(pullRequest);
-      const claimed = yield* Claims.acquire(item);
+      const claimed = yield* StatusLabels.acquire(item);
 
       if (!claimed.acquired) {
         return yield* new Skip({
@@ -81,7 +82,7 @@ export const release = (pullRequest: number) =>
     `release-pr-${pullRequest}`,
     Effect.gen(function* () {
       const run = yield* Run;
-      yield* Claims.release(Claims.pullRequest(pullRequest));
+      yield* StatusLabels.release(Claims.pullRequest(pullRequest));
 
       const marker = ownerMarker.write({
         flow: run.flow,
@@ -907,21 +908,33 @@ const sameLogin = (left: string, right: string) => left.toLowerCase() === right.
 // Asks one reviewer from the team's pool (reviewers: in config) to review the
 // pull request, never its author. The choice is made once, at random, in an
 // activity, so a replay asks the same person. Without a pool, or with no one
-// in it but the author, it labels the pull request needs-review for a person.
+// in it but the author, it asks nobody: the hand-off recorded the pull
+// request unasked, which projects needs-review for a person.
+// The reviewers in the team's pool (reviewers: in config) who may review the
+// pull request: all but its author.
+const poolFor = (pullRequest: number) =>
+  Effect.gen(function* () {
+    const reviewerPool = (yield* Settings.reviewers).pool;
+    const pull = yield* (yield* GitHub).pullRequest(pullRequest);
+
+    return reviewerPool.filter((login) => !sameLogin(login, pull.author));
+  });
+
+// Whether requestReview has someone to ask: without, the hand-off records
+// the pull request unasked, which projects needs-review for a person.
+export const hasReviewer = (pullRequest: number) =>
+  Effect.map(poolFor(pullRequest), (pool) => pool.length > 0);
+
 export const requestReview = (pullRequest: number) =>
   activity(
     `request-review-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const reviewerPool = (yield* Settings.reviewers).pool;
       const labelNames = yield* Settings.labels;
-      const pull = yield* github.pullRequest(pullRequest);
-      const pool = reviewerPool.filter((login) => !sameLogin(login, pull.author));
+      const pool = yield* poolFor(pullRequest);
 
       if (pool.length === 0) {
-        yield* github.addLabel(pullRequest, labelNames.needsReview);
-
-        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${labelNames.needsReview} for a person`;
+        return `#${pullRequest}: no reviewer in the pool but its author; ${labelNames.needsReview}, for a person`;
       }
 
       const reviewer = pool[yield* Random.nextIntBetween(0, pool.length, { halfOpen: true })];
@@ -933,15 +946,15 @@ export const requestReview = (pullRequest: number) =>
   );
 
 // Gives the pull request to a person as the next ordinary step, such as
-// merging it: labels it by the flow's ready-for-person label and comments
-// `message`. Unlike handToPerson, the run goes on, and can end done.
+// merging it: comments `message` and records it ready-for-person, which
+// projects the flow's ready-for-person label. Unlike handToPerson, the run
+// goes on, and can end done.
 export const readyForPerson = (pullRequest: number, message: string) =>
   activity(
     `ready-for-person-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
       const label = yield* Settings.readyForPerson;
-      yield* github.addLabel(pullRequest, label);
       yield* github.comment(pullRequest, message);
       // With who reviewed it, so a review asked of one of them later is a
       // review again (Phases.reviewedBefore).

@@ -19,6 +19,7 @@ import {
   Phase as CorePhase,
   PhaseData,
   type PhaseRecord,
+  type PhaseTransition,
   PhaseWriter,
   Progress,
   ProgressError,
@@ -37,77 +38,16 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { PHASES } from "./phase-names.ts";
 import * as Settings from "./settings.ts";
+import * as StatusLabels from "./status-labels.ts";
 
 // What a phase is kept for. These are the names claim refs already use.
 export type ItemKind = "issue" | "pull-request" | "epic";
 
 export const ITEM_KINDS: ReadonlyArray<ItemKind> = ["issue", "pull-request", "epic"];
 
-export const PHASES = {
-  issue: {
-    handedOff: "handed-off",
-    askedQuestions: "asked-questions",
-    awaitingReady: "awaiting-ready",
-    readyTimedOut: "ready-timed-out",
-    // implement's wait for CI on the pull request its run opened, which parked.
-    awaitingCi: "awaiting-ci",
-    // implement's wait for CI on a pull request it adopted, which parked: not
-    // awaiting-ci, so the phase alone says the run that takes it up hands the
-    // pull request off as an adopted one. Its data keeps the pull request,
-    // which isn't on the issue's branch.
-    awaitingAdoptedCi: "awaiting-adopted-ci",
-    // An epic's task whose lane ended on its pull request's pending CI (audit
-    // W7): a lane can't park on its own, so the epic's run takes the task up
-    // once CI settles (Epic.takeUpCi). Not awaiting-ci, which implement's
-    // source resumes as its own. Its data keeps the pull request, the lane,
-    // its branch and base, the round of CI and when that round began.
-    awaitingTaskCi: "awaiting-task-ci",
-    proposed: "proposed",
-    planHandedBack: "plan-handed-back",
-    becameEpic: "became-epic",
-    // With a person (ADR 21, decision 1): handed to one, or a plan's task
-    // for one; auto:needs-human is this record's projection.
-    withPerson: "with-person",
-    // A trusted person removed auto:needs-human from an item with-person: their
-    // intent, which observer:handed-back records.
-    handedBack: "handed-back",
-  },
-  pullRequest: {
-    reviewAsked: "review-asked",
-    changesAsked: "changes-asked",
-    reviewAskedAgain: "review-asked-again",
-    approved: "approved",
-    mergeHeld: "merge-held",
-    readyForPerson: "ready-for-person",
-    draft: "draft",
-    watched: "watched",
-    // address-review's wait for CI on the fix it pushed, which parked: not
-    // the issue's awaiting-ci, which is implement's.
-    awaitingFixCi: "awaiting-fix-ci",
-    // A watch of a merge commit's push CI that parked: post-merge's, not the
-    // pull request's own CI, which awaiting-fix-ci is.
-    awaitingMergeCi: "awaiting-merge-ci",
-    // resolve-conflicts' wait for CI on the merge it pushed, which parked: not
-    // awaiting-fix-ci, which is address-review's wait on its own fix. Its data
-    // keeps the review phase it parked over, which the run that takes it up
-    // records again (Conflict.waitForCi).
-    awaitingConflictCi: "awaiting-conflict-ci",
-    // An epic layer's refresh whose CI was still pending (audit W7): the
-    // epic's run takes it up once CI settles (Epic.takeUpRefreshes), then
-    // records again the review phase it was written over, which a blob its
-    // data names keeps beside what the refresh says to a reviewer asked again.
-    awaitingRefreshCi: "awaiting-refresh-ci",
-    withPerson: "with-person",
-    handedBack: "handed-back",
-  },
-  epic: {
-    waiting: "waiting",
-    finished: "finished",
-    withPerson: "with-person",
-    handedBack: "handed-back",
-  },
-} as const;
+export { PHASES } from "./phase-names.ts";
 
 type PhasesOf<Kind extends keyof typeof PHASES> =
   (typeof PHASES)[Kind][keyof (typeof PHASES)[Kind]];
@@ -326,6 +266,14 @@ const asPhase = Schema.decodeSync(CorePhase);
 const asWriter = Schema.decodeSync(PhaseWriter);
 const asData = Schema.decodeSync(PhaseData);
 
+// Moves `item` by `transition`, as Progress.advance does, then projects its
+// status labels from the record written (ADR 21, decision 8): every write of
+// a record the SDK makes goes through here, so the labels follow each one.
+export const advance = (item: string, transition: PhaseTransition) =>
+  Progress.use((progress) => progress.advance(item, transition)).pipe(
+    Effect.tap(() => StatusLabels.projectItem(item)),
+  );
+
 // The times a run's write reads the item again after another writer moved it.
 const RECORD_TRIES = 3;
 
@@ -363,25 +311,37 @@ export const reviewData = (review: Reviewed) => ({
 
 type Data = { readonly [key: string]: Json };
 
-// `data` with the review `from` keeps, unless `data` names one: a pull
-// request's latest review stays in its record through every phase after it
-// (merge-held, review-asked-again, a wait on CI), until a review replaces it.
-const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Data>) => {
-  if (Option.exists(data, (given) => REVIEW in given)) {
-    return data;
-  }
+// What a pull request's record carries into every record after it, unless
+// `data` names it: its latest review, through every phase after it
+// (merge-held, review-asked-again, a wait on CI), until a review replaces it;
+// and that chernabog adopted it (StatusLabels.ADOPTED_KEY), which projects
+// auto:adopted.
+const CARRIED: ReadonlyArray<{ readonly key: string; readonly carries: (value: Json) => boolean }> =
+  [
+    { key: REVIEW, carries: () => true },
+    { key: StatusLabels.ADOPTED_KEY, carries: (value) => value === true },
+  ];
 
-  const kept = Option.flatMap(
+const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Data>) => {
+  const kept = Option.getOrElse(
     Option.flatMap(from, (found) => found.data),
-    (found) => Option.fromUndefinedOr(found[REVIEW]),
+    (): Data => ({}),
   );
 
-  return Option.match(kept, {
-    onNone: () => data,
-    onSome: (review) =>
-      // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
-      Option.some<Data>({ ...Option.getOrElse(data, (): Data => ({})), [REVIEW]: review }),
-  });
+  return CARRIED.reduce((carried, { carries, key }) => {
+    if (!(key in kept) || Option.exists(carried, (given) => key in given)) {
+      return carried;
+    }
+
+    const value = kept[key];
+
+    if (!carries(value)) {
+      return carried;
+    }
+
+    // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
+    return Option.some<Data>({ ...Option.getOrElse(carried, (): Data => ({})), [key]: value });
+  }, data);
 };
 
 // Records that `item` has reached `to`, as the run: from whatever phase it
@@ -444,7 +404,7 @@ export const recording = (
         onSome: (found) => ({ ...base, data: found }),
       });
 
-      const written = yield* progress.advance(item, transition).pipe(
+      const written = yield* advance(item, transition).pipe(
         Effect.asSome,
         Effect.catchTag("PhaseMoved", (lost) => {
           if (tries < RECORD_TRIES) {
@@ -678,22 +638,18 @@ export const reconcile = (
   by: string,
   data?: { readonly [key: string]: Json },
 ) =>
-  Progress.use((progress) =>
-    progress
-      .advance(item, {
-        from: found,
-        to: asPhase(to),
-        by: asWriter(by),
-        ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
-          // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
-          onNone: () => ({}),
-          onSome: (carried) => ({ data: asData(carried) }),
-        }),
-      })
-      .pipe(
-        Effect.asSome,
-        Effect.catchTag("PhaseMoved", () => progress.read(item)),
-      ),
+  advance(item, {
+    from: found,
+    to: asPhase(to),
+    by: asWriter(by),
+    ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
+      // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
+      onNone: () => ({}),
+      onSome: (carried) => ({ data: asData(carried) }),
+    }),
+  }).pipe(
+    Effect.asSome,
+    Effect.catchTag("PhaseMoved", () => Progress.use((progress) => progress.read(item))),
   );
 
 // What a record a pull request waits on a review at carries (review-asked,
@@ -727,15 +683,22 @@ export const reviewersOf = (pullRequest: number) =>
   );
 
 // Records `to` on the pull request, a phase it waits on a review at, with who
-// had reviewed it so far (reviewersOf).
-export const recordAwaitingReview = (pullRequest: number, to: Phase) =>
+// had reviewed it so far (reviewersOf), and what `also` says of it, such as
+// that chernabog adopted it (StatusLabels.ADOPTED_KEY).
+export const recordAwaitingReview = (pullRequest: number, to: Phase, also: Data = {}) =>
   Effect.gen(function* () {
     const reviewed = yield* reviewersOf(pullRequest);
 
-    yield* Option.match(reviewed, {
-      onNone: () => record(pullRequestItem(pullRequest), to),
-      onSome: (data) => record(pullRequestItem(pullRequest), to, data),
+    const data = Option.match(reviewed, {
+      onNone: () => also,
+      onSome: (found) => ({ ...found, ...also }),
     });
+
+    if (Object.keys(data).length === 0) {
+      return yield* record(pullRequestItem(pullRequest), to);
+    }
+
+    yield* record(pullRequestItem(pullRequest), to, data);
   });
 
 // What an issue's handed-off record carries (ADR 21, decision 7): the pull
@@ -920,9 +883,9 @@ export const isWithPerson = (found: Option.Option<PhaseRecord>) =>
 export const withPerson = (item: string) => Effect.map(current(item), isWithPerson);
 
 // Records that `item` is with a person, and why, from whatever phase it
-// holds; nothing when it is with one already. Without the label: for an item
-// labelled as it is made, such as a plan's human task. Call it inside the
-// activity that makes the hand-off, as record.
+// holds; nothing when it is with one already. auto:needs-human (the repo's
+// needs-human label) is the record's projection, which the record writes.
+// Call it inside the activity that makes the hand-off, as record.
 export const recordWithPerson = (item: string, why: string) =>
   Effect.gen(function* () {
     const left = yield* Progress.use((progress) => progress.read(item));
@@ -930,19 +893,10 @@ export const recordWithPerson = (item: string, why: string) =>
     yield* record(item, PHASES.issue.withPerson, withPersonData(why, left));
   });
 
-// Hands `item` to a person (ADR 21, decision 1): records with-person, then
-// labels its issue or pull request auto:needs-human (the repo's needs-human
-// label), the record's projection. The one way the SDK hands an item to a
-// person. Call it inside the activity that makes the hand-off, as record.
-export const handToPerson = (item: string, why: string) =>
-  Effect.gen(function* () {
-    yield* recordWithPerson(item, why);
-
-    for (const number of Option.toArray(numberOf(item))) {
-      const labels = yield* Settings.labels;
-      yield* GitHub.use((github) => github.addLabel(number, labels.needsHuman));
-    }
-  });
+// Hands `item` to a person (ADR 21, decision 1): records with-person
+// (recordWithPerson), whose projection labels it. The one way the SDK hands
+// an item to a person.
+export const handToPerson = (item: string, why: string) => recordWithPerson(item, why);
 
 const HandedBackData = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
 

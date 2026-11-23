@@ -273,6 +273,13 @@ export type ProgressLedger = {
   readonly acknowledge: (
     anomalies: ReadonlyArray<unknown>,
   ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
+  // Every open item whose status labels differ from their projection, for
+  // `chernabog doctor`; none in an SDK from before the projector (#569).
+  readonly labelDrift?: Effect.Effect<
+    ReadonlyArray<unknown>,
+    { readonly message: string },
+    Core.Progress | Core.Repo | Core.GitHub
+  >;
 };
 
 const LedgerSdk = Schema.Struct({

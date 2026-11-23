@@ -1742,7 +1742,8 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
     {},
     (recipe) => {
       expect(recipe.summary).toContain("the person closed the session");
-      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.inProgress]);
+      // The claim's end takes its in-progress label off (StatusLabels).
+      expect(recipe.issueLabels).toEqual([]);
     },
   );
 

@@ -25,6 +25,7 @@ import {
   Routing,
   Settings,
   Skip,
+  StatusLabels,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
@@ -150,7 +151,7 @@ const workflow = (item: WorkItem) =>
 
     // However the run ends, its claim on the spec goes; a run waiting on an
     // answer to its plan keeps it.
-    return yield* work(spec, item).pipe(Claims.releasing(Claims.issue(spec)));
+    return yield* work(spec, item).pipe(StatusLabels.releasing(Claims.issue(spec)));
   }).pipe(
     // An issue deleted or transferred under the run leaves nothing to do.
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),

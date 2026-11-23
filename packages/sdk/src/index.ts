@@ -25,6 +25,7 @@ export * as Review from "./review.ts";
 export * as Routing from "./routing.ts";
 export * as Settings from "./settings.ts";
 export * as Stack from "./stack.ts";
+export * as StatusLabels from "./status-labels.ts";
 export * from "@chernabog/core";
 
 // PullRequest and Issue are each both a type, core's, and the steps on one;

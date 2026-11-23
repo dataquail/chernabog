@@ -190,7 +190,8 @@ describe("claiming an issue with a person", () => {
       expect((yield* runToEnd(starting, fake, work)).status).toBe("failed");
       expect(claimsMade(fake).map((claim) => claim.withPerson)).toEqual([true]);
       expect(fake.refs.has(ISSUE_REF)).toBe(false);
-      expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
+      // Its in-progress label shows the claim (StatusLabels), so it goes too.
+      expect(fake.labelsOf(ISSUE)).toEqual([]);
 
       fake.author.closes = false;
       fake.existing.branch = true;
