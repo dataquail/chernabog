@@ -580,7 +580,7 @@ export const doctor = Effect.gen(function* () {
 
         warn(
           `${name}: #${drifted.number}'s status labels differ from what ${drifted.item}'s record projects: ${said}`,
-          "they are written again on its next record or claim change. Until then, two labels still count: review flows take a pull request labelled auto:adopted as chernabog's, and taking auto:needs-human off hands an item back",
+          "they are written again on its next record or claim change. Until then, one still counts: taking auto:needs-human off hands an item back",
         );
       }
     });

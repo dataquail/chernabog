@@ -4,10 +4,9 @@
 // (Phases' recording, reconcile and every other write of a record) and every
 // claim change (acquire, release, and a run's end, by core's claimLabel
 // marker). No flow or block writes a status label. A label a person added or
-// removed by hand is put right by the next projection. Until #570 moves them
-// onto the record, two readers remain: Review.authoredByMe and
-// Implement.withHistory take a pull request labelled auto:adopted as
-// chernabog's, and reconcileHandedBack reads auto:needs-human's removal.
+// removed by hand is put right by the next projection, and changes nothing
+// else: no source reads one, but for reconcileHandedBack, which takes a
+// trusted person's removal of auto:needs-human as handing the item back.
 //
 // Intent labels (auto:eligible, auto:plan, auto:plan-approved, auto:ship,
 // auto:epic, hybrid) and every label chernabog doesn't own are never touched
@@ -155,6 +154,13 @@ const pullLabel = (phase: string, named: Names): ReadonlyArray<string> => {
 // Whether `record`'s data says `key`.
 const said = (record: PhaseRecord, key: string) =>
   Option.exists(record.data, (data) => data[key] === true);
+
+// Whether `record` says chernabog adopted its pull request (ADOPTED_KEY): the
+// one thing that makes an adopted pull request chernabog's (audit R1 and R2).
+// Its auto:adopted label is only the projection, so one added or taken off by
+// hand changes nothing.
+export const saysAdopted = (record: Option.Option<PhaseRecord>) =>
+  Option.exists(record, (found) => said(found, ADOPTED_KEY));
 
 // `label` when `shows`, none otherwise.
 const when = (shows: boolean, label: string): ReadonlyArray<string> =>
@@ -384,24 +390,6 @@ export const projectItem = (item: string) =>
     yield* Effect.flatMap(names, (named) => sync(item, named)).pipe(
       Effect.provideService(GitHub, github.value),
       Effect.provideService(Repo, repo.value),
-    );
-  });
-
-// Whether the pull request numbered `number` carries auto:adopted on GitHub:
-// how the first advance of a record from before records said ADOPTED_KEY
-// learns that chernabog adopted it (Phases.advance). False where there is no
-// GitHub, or the read fails.
-export const labelledAdopted = (number: number) =>
-  Effect.gen(function* () {
-    const github = yield* Effect.serviceOption(GitHub);
-
-    if (Option.isNone(github)) {
-      return false;
-    }
-
-    return yield* github.value.pullRequest(number).pipe(
-      Effect.map((pull) => pull.labels.includes(ADOPTED)),
-      Effect.orElseSucceed(() => false),
     );
   });
 

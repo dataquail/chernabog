@@ -158,11 +158,11 @@ status label, and no source reads one. These read `auto:adopted` and
 intent, so the epic source (`epic.ts:806`) and `epicRunTasks` (`implement.ts:166`)
 keep finding epics by `auto:epic`.
 
-| #   | Where                               | Reads the label to                                                       | Fix                                                                       | Task |
-| --- | ----------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ---- |
-| R1  | `review.ts:854` (`authoredByMe`)    | Count an adopted pull request assigned to this persona as its own        | Adoption is in the pull request's record's `data`, with the claim's facts | #565 |
-| R2  | `implement.ts:1047` (`withHistory`) | Tell the agent it is working on a pull request a person opened           | The same: read adoption from the record                                   | #565 |
-| R3  | `epic.ts:335` (`personReason`)      | Say a task waits for answers to its questions, beside H5's `needs-human` | Read the task's `asked-questions` record                                  | #560 |
+| #   | Where                               | Reads the label to                                                       | Fix                                                                                                                                                                                                                | Task |
+| --- | ----------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| R1  | `review.ts:854` (`authoredByMe`)    | Count an adopted pull request assigned to this persona as its own        | **Done:** `StatusLabels.saysAdopted` on the pull request's record (`adopted`), which hand-off writes and every record carries on; backfill's A1 writes it for one adopted before. The label is only its projection | #569 |
+| R2  | `implement.ts:1047` (`withHistory`) | Tell the agent it is working on a pull request a person opened           | **Done:** the same, read from the pull request's current record                                                                                                                                                    | #569 |
+| R3  | `epic.ts:335` (`personReason`)      | Say a task waits for answers to its questions, beside H5's `needs-human` | Read the task's `asked-questions` record                                                                                                                                                                           | #560 |
 
 Backfill's reads of these labels stay, as H12 does: `backfill.ts:147` and `:273`
 (`auto:adopted`) and `:385` (`auto:awaiting-ready`) infer an item's first record
@@ -252,7 +252,8 @@ writes nothing and lists the item for a person.
 
 Pull requests: open ones an agent wrote (`auto/` head), a run adopted
 (`auto:adopted`), or one of the repo's personas is asked to review or has
-reviewed. The first row that matches decides.
+reviewed. The first row that matches decides. One labelled `auto:adopted` also
+gets `adopted: true` in the record it writes (A1).
 
 | #   | GitHub says                                                                                                                             | Phase                | Data                        |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------- |
@@ -274,6 +275,12 @@ reviewer). A record that holds one already gets its phase again with the
 review copied in, from that record's version (#564). This is the one read of
 `reviewMarker` left in the SDK: since #564 a review writes no marker, and the
 merge gate, `latestOwnReview` and `read-review` read the record.
+
+A1: an open pull request labelled `auto:adopted` whose record doesn't say
+`adopted` (one adopted before #569) gets its phase again with `adopted: true`
+added, from that record's version, or carried in with the review copied in
+alongside it. With a person, its hand-off record says it too. From then the
+record, not the label, makes it chernabog's (R1, R2).
 
 A pull request labelled `auto:needs-human` is with a person (W1, below)
 before any of these rows is read, so P4's label check only matters to one

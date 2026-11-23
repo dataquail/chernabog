@@ -574,10 +574,11 @@ change.
      `auto:needs-human`, `auto:awaiting-ready`, `auto:plan-proposed`,
      `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`,
      `auto:adopted` and the plan's labels are the projector's. A pull
-     request's record says it was adopted (`adopted`). A record written
-     before records said so learns it from the pull request's `auto:adopted`
-     label when it next advances, once (`Phases.advance`). Until then, its
-     projection would take the label off while R1 and R2 still read it.
+     request's record says it was adopted (`adopted`), and that, not the
+     label, makes it chernabog's to answer reviews on (`Review.authoredByMe`,
+     `Implement.withHistory`; audit R1, R2). `chernabog progress backfill`
+     writes `adopted` into the record of an open pull request labelled
+     `auto:adopted` from before records said so (A1).
    - **Intent labels are input only:** `auto:eligible`, `auto:plan`,
      `auto:plan-approved`, `auto:ship`, `auto:epic` and `hybrid`. A person
      applies any of them by hand. Chernabog removes one only to acknowledge

@@ -17,7 +17,7 @@ import {
   StepFailed,
   type WorkflowServices,
 } from "@chernabog/core";
-import { defineFlow, Phases, Plan, Review, Settings, StatusLabels } from "@chernabog/sdk";
+import { defineFlow, Phases, Plan, Settings, StatusLabels } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -217,69 +217,6 @@ describe("the projector writes exactly the projection", () => {
       yield* onFake(fake, StatusLabels.projectItem(ISSUE_ITEM));
 
       expect(fake.labelsOf(ISSUE)).toEqual([Plan.LABELS.epic, DEFAULT_LABELS.needsHuman]);
-    }),
-  );
-});
-
-// Reconciles the pull request from the record it holds to changes-asked, as
-// the review source does when it sees a person ask for changes.
-const changesAsked = (fake: Fake) =>
-  onFake(
-    fake,
-    Phases.reconcile(
-      PR_ITEM,
-      Option.fromUndefinedOr(fake.records().get(PR_ITEM)),
-      "changes-asked",
-      "observer:review.changesRequested",
-    ),
-  );
-
-const adoptedInRecord = (fake: Fake) =>
-  Option.exists(
-    Option.flatMap(Option.fromUndefinedOr(fake.records().get(PR_ITEM)), (found) => found.data),
-    (data) => data[StatusLabels.ADOPTED_KEY] === true,
-  );
-
-describe("a pull request adopted before its record said so", () => {
-  effect("keeps auto:adopted, and stays the persona's, after its next advance", () =>
-    Effect.gen(function* () {
-      const fake = makeFake("approve");
-      fake.authored.author = "a-person";
-      fake.people.pullAssigned = [fake.people.me];
-      // A record written before records said adopted, and the label that did.
-      fake.recordPhase(PR_ITEM, "review-asked");
-      fake.setLabels(PULL, [StatusLabels.ADOPTED]);
-      expect(adoptedInRecord(fake)).toBe(false);
-
-      yield* changesAsked(fake);
-
-      expect(statusOn(fake, PULL).toSorted()).toEqual(
-        [DEFAULT_LABELS.changesRequested, StatusLabels.ADOPTED].toSorted(),
-      );
-      expect(adoptedInRecord(fake)).toBe(true);
-      expect((yield* onFake(fake, Review.authoredByMe)).map((pull) => pull.number)).toEqual([PULL]);
-
-      // From then on the record is the source: a label taken off by hand
-      // comes back with the next projection.
-      fake.setLabels(PULL, []);
-      yield* onFake(fake, StatusLabels.projectItem(PR_ITEM));
-
-      expect(statusOn(fake, PULL).toSorted()).toEqual(
-        [DEFAULT_LABELS.changesRequested, StatusLabels.ADOPTED].toSorted(),
-      );
-    }),
-  );
-
-  effect("a pull request without the label isn't taken for adopted", () =>
-    Effect.gen(function* () {
-      const fake = makeFake("approve");
-      fake.recordPhase(PR_ITEM, "review-asked");
-      fake.setLabels(PULL, []);
-
-      yield* changesAsked(fake);
-
-      expect(statusOn(fake, PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
-      expect(adoptedInRecord(fake)).toBe(false);
     }),
   );
 });
