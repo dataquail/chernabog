@@ -928,6 +928,7 @@ const LabelEvents = Schema.Array(
     label: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
     // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
     actor: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+    created_at: Schema.optionalKey(Schema.String),
   }),
 );
 
@@ -941,14 +942,29 @@ const EVENTS_PAGE = 100;
 // is unknown, so nothing is handed back.
 const EVENTS_PAGES = 30;
 
-// Who last removed `label` from the issue or pull request, by all its
-// events, every page of them; none when GitHub lists no removal, or more
-// events than are read.
-const removedBy = (number: number, label: string) =>
+// What `label`'s events since `since` say of a removal: who removed it last,
+// and whether a persona put it back afterwards, as a projection does over a
+// hand-back the observer hasn't recorded yet (ADR 21, decision 8; #573). A
+// person putting it back takes the removal back. An event GitHub gives no
+// time for counts. None when GitHub lists no removal since, or more events
+// than are read.
+type Removal = { readonly by: string; readonly restored: boolean };
+
+const removalSince = (number: number, label: string, since: DateTime.Utc) =>
   Effect.gen(function* () {
-    const { slug } = yield* Repo;
+    const { personas, slug } = yield* Repo;
     const github = yield* GitHub;
-    let last = Option.none<string>();
+    let last = Option.none<Removal>();
+
+    const persona = (login: string) =>
+      personas.some((own) => own.toLowerCase() === login.toLowerCase());
+
+    // An event at or after `since`, or one GitHub gives no time for.
+    const counts = (at: Option.Option<string>) =>
+      Option.match(Option.flatMap(at, DateTime.make), {
+        onNone: () => true,
+        onSome: (when) => DateTime.isGreaterThanOrEqualTo(when, since),
+      });
 
     for (let page = 1; page <= EVENTS_PAGES; page++) {
       const listed = Option.getOrElse(
@@ -963,10 +979,21 @@ const removedBy = (number: number, label: string) =>
         () => [],
       );
 
-      for (const found of listed) {
-        // Stryker disable next-line OptionalChaining: GitHub's unlabeled events always carry their label
-        if (found.event === "unlabeled" && found.label?.name === label) {
-          last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
+      // Stryker disable next-line OptionalChaining: GitHub's label events always carry their label
+      for (const found of listed.filter((one) => one.label?.name === label)) {
+        if (!counts(Option.fromUndefinedOr(found.created_at))) {
+          continue;
+        }
+
+        const actor = Option.map(Option.fromNullishOr(found.actor), (one) => one.login);
+
+        if (found.event === "unlabeled") {
+          last = Option.map(actor, (by) => ({ by, restored: false }));
+        } else if (found.event === "labeled") {
+          last = Option.filter(
+            Option.map(last, (removal) => ({ ...removal, restored: true })),
+            () => Option.exists(actor, persona),
+          );
         }
       }
 
@@ -975,7 +1002,7 @@ const removedBy = (number: number, label: string) =>
       }
     }
 
-    return Option.none<string>();
+    return Option.none<Removal>();
   });
 
 // Whether `login` is one the repo trusts with intent: one of its personas,
@@ -1027,9 +1054,10 @@ const openLabels = (item: string) =>
 export type HandedBack = { readonly item: string; readonly record: PhaseRecord };
 
 // The open items whose record is with-person but whose needs-human label a
-// trusted person removed (ADR 21, decision 1): their intent to hand it back.
-// A label removed by anyone else, or that GitHub names no remover of, hands
-// nothing back.
+// trusted person removed since it was written (ADR 21, decision 1): their
+// intent to hand it back, even when a projection has put the label back
+// since. A label removed by anyone else, or that GitHub names no remover of,
+// hands nothing back.
 export const handedBack = Effect.gen(function* () {
   const labels = yield* Settings.labels;
   const found: Array<HandedBack> = [];
@@ -1044,14 +1072,21 @@ export const handedBack = Effect.gen(function* () {
     const back = yield* Effect.gen(function* () {
       const open = yield* openLabels(item);
 
-      if (Option.isNone(open) || open.value.includes(labels.needsHuman)) {
+      if (Option.isNone(open)) {
         return false;
       }
 
       const number = Option.getOrElse(numberOf(item), () => 0);
-      const remover = yield* removedBy(number, labels.needsHuman);
+      const removal = yield* removalSince(number, labels.needsHuman, held.at);
+      const shown = open.value.includes(labels.needsHuman);
 
-      return Option.isSome(remover) && (yield* trusted(remover.value));
+      // Still labelled counts only when a projection put the label back over
+      // the removal: the person's hand-back is never lost to one.
+      return (
+        Option.isSome(removal) &&
+        (!shown || removal.value.restored) &&
+        (yield* trusted(removal.value.by))
+      );
     }).pipe(
       Effect.catchTag("GitHubError", (failed) =>
         Effect.logWarning(
