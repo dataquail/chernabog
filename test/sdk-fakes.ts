@@ -426,7 +426,10 @@ export const makeFake = (
   };
 
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
-  const agent = { hangs: false };
+  // Whether an agent session never ends, and what happens in the world while
+  // the next one runs: each is called once, as a session starts, so a test
+  // can change GitHub in the middle of a phase.
+  const agent = { hangs: false, during: new Array<() => void>() };
   // The issue's Status on the repo's board, once a step moved it.
   const board = { status: Option.none<string>() };
   // Whether the issue's branch exists already, as an earlier run left it.
@@ -519,6 +522,15 @@ export const makeFake = (
     events: new Map<number, ReadonlyArray<Json>>(),
     permissions: new Map<string, string>(),
     failing: new Set<number>(),
+  };
+
+  // GitHub lists a label added or removed through the API as an event of
+  // the persona's.
+  const labelEvent = (number: number, event: string, label: string) => {
+    timeline.events.set(number, [
+      ...(timeline.events.get(number) ?? []),
+      { event, label: { name: label }, actor: { login: people.me } },
+    ]);
   };
 
   const EVENTS = new RegExp(
@@ -1153,9 +1165,11 @@ export const makeFake = (
           });
           people.requested = people.requested.filter((login) => login !== people.me);
         }),
+      // Each change GitHub lists in the item's events, as this persona's.
       addLabel: (number, label) =>
         Effect.sync(() => {
           labels.set(number, [...labelsOf(number).filter((name) => name !== label), label]);
+          labelEvent(number, "labeled", label);
         }),
       removeLabel: (number, label) =>
         Effect.sync(() => {
@@ -1163,6 +1177,7 @@ export const makeFake = (
             number,
             labelsOf(number).filter((name) => name !== label),
           );
+          labelEvent(number, "unlabeled", label);
         }),
     }),
     Layer.mock(Git)({
@@ -1247,6 +1262,10 @@ export const makeFake = (
           steps.push(yield* CurrentActivity);
           adapters.push(request.adapter);
           requests.push(request);
+
+          for (const happens of agent.during.splice(0)) {
+            happens();
+          }
 
           if (agent.hangs) {
             return yield* Effect.never;

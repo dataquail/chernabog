@@ -3,6 +3,7 @@
   "files": {
     "test/acceptance/composed-recipes.test.ts": 103461,
     "test/acceptance/launchers.test.ts": 99157,
+    "test/acceptance/world-sabotage.test.ts": 70370,
     "test/acceptance/ci-run.test.ts": 63554,
     "test/acceptance/rehearse.test.ts": 63471,
     "test/acceptance/review.test.ts": 60676,
