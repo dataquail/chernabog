@@ -1797,6 +1797,28 @@ tree:
           "lockfile.ts": {}
           "timings.json": {}
       "fakebin/": { layout: open }
+      # The behavior specs' runner, domain layer, step definitions and drivers
+      # (docs/adr/0022-behavior-specs-in-gherkin.md), and the runner's and
+      # drivers' own tests and toy features.
+      "features/":
+        children:
+          "*.test.ts":
+            surface: [{ use: test-exports-nothing }]
+          "*.ts": {}
+          "steps/":
+            children:
+              "*.ts": {}
+          "drivers/":
+            children:
+              "*.ts": {}
+      "gherkin/":
+        children:
+          "*.test.ts":
+            surface: [{ use: test-exports-nothing }]
+          "*.ts": {}
+          "fixtures/":
+            children:
+              "*.ts": {}
       "*.test.ts":
         surface: [{ use: test-exports-nothing }]
 
