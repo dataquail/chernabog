@@ -3,28 +3,27 @@
 //
 // A step that says something never happened, or is left as it is, first
 // lets the machine settle: what it would do next, it has done by then. A
-// step that says "again", "the fix" or "the same session" compares with what
-// was seen at an earlier step: when the pull request opened, and when the
-// review asking for changes was first seen.
+// step that says "again", "the fix", "the same session" or "pushes nothing"
+// compares by the world's one order of events (domain.ts' Sequenced): with
+// the review that asked for changes, or the fix, as an earlier step saw them,
+// and never with a world seen at an earlier step.
 
 import { expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { DomainFailed, type Login, type ReviewSeen, type World } from "../domain.ts";
+import { DomainFailed, type Login, type PushSeen, type ReviewSeen, type World } from "../domain.ts";
 import { defineSteps, type Scenario } from "./registry.ts";
 
 type ReviewLoop = {
   personas: ReadonlyArray<Login>;
   issue: Option.Option<number>;
   pullRequest: Option.Option<number>;
-  // What was seen when the pull request was first seen open.
-  opened: Option.Option<World>;
-  // The review that asked for changes, and what was seen when it was.
-  changes: Option.Option<{ readonly review: ReviewSeen; readonly world: World }>;
-  // The head the author's fix left.
-  fix: Option.Option<string>;
+  // The review that asked for changes: what the loop did before it, and after.
+  changes: Option.Option<ReviewSeen>;
+  // The author's fix: the push after that review.
+  fix: Option.Option<PushSeen>;
   // Whether the machine has settled since a step last acted on it.
   settled: boolean;
 };
@@ -62,18 +61,18 @@ const pullIn = (world: World, number: number) =>
 const sessionsOf = (world: World, pullRequest: number, persona: Login) =>
   world.sessions.filter((found) => found.pullRequest === pullRequest && found.persona === persona);
 
-// The persona's sessions on the pull request: those seen by `then`, and those
-// after, which must carry on the same one session.
+// The persona's sessions on the pull request: those before `review`, and
+// those after it, which must carry on the same one session.
 const carriedOn = (
-  then: World,
-  now: World,
-  pullRequest: number,
+  world: World,
+  review: ReviewSeen,
   persona: Login,
   what: string,
 ): Effect.Effect<void, DomainFailed> => {
-  const before = sessionsOf(then, pullRequest, persona);
-  const all = sessionsOf(now, pullRequest, persona);
-  const after = all.slice(before.length);
+  const { pullRequest } = review;
+  const all = sessionsOf(world, pullRequest, persona);
+  const before = all.filter((found) => found.sequence < review.sequence);
+  const after = all.filter((found) => found.sequence > review.sequence);
 
   return Effect.sync(() => {
     expect(before.length, `${persona}'s sessions on #${pullRequest} ${what}`).toBeGreaterThan(0);
@@ -89,7 +88,6 @@ export const reviewLoopSteps = defineSteps(
     personas: [],
     issue: Option.none(),
     pullRequest: Option.none(),
-    opened: Option.none(),
     changes: Option.none(),
     fix: Option.none(),
     settled: false,
@@ -132,11 +130,10 @@ export const reviewLoopSteps = defineSteps(
             Arr.findFirst(
               world.pullRequests,
               (pull) => pull.author === login && Option.contains(pull.issue, issue),
-            ).pipe(Option.map((pull) => ({ pull, world }))),
+            ),
         );
 
-        state.pullRequest = Option.some(opened.pull.number);
-        state.opened = Option.some(opened.world);
+        state.pullRequest = Option.some(opened.number);
       }),
     ),
 
@@ -153,11 +150,11 @@ export const reviewLoopSteps = defineSteps(
                 found.pullRequest === pullRequest &&
                 found.reviewer === reviewer &&
                 found.verdict === "changes-requested",
-            ).pipe(Option.map((review) => ({ review, world }))),
+            ),
         );
 
         state.changes = Option.some(asked);
-        expect(asked.review.lineComments).toBe(1);
+        expect(asked.lineComments).toBe(1);
       }),
     ),
 
@@ -166,10 +163,9 @@ export const reviewLoopSteps = defineSteps(
       ({ domain, state }, author) =>
         Effect.gen(function* () {
           const pullRequest = yield* thePullRequest(state);
-          const opened = yield* known(state.opened, "the pull request opening");
           const changes = yield* known(state.changes, "the review asking for changes");
 
-          // A fix moves the pull request off the commit the review was of.
+          // The fix: the author's push after the review that asked for it.
           const fix = yield* domain.waitUntil(
             `${author} to push a fix to #${pullRequest}`,
             (world) =>
@@ -178,12 +174,14 @@ export const reviewLoopSteps = defineSteps(
                 (push) =>
                   push.pullRequest === pullRequest &&
                   push.by === author &&
-                  push.head !== changes.review.head,
+                  push.sequence > changes.sequence,
               ),
           );
 
-          state.fix = Option.some(fix.head);
-          yield* carriedOn(opened, yield* domain.world, pullRequest, author, "as it opened");
+          state.fix = Option.some(fix);
+          // It moves the pull request off the commit the review was of.
+          expect(fix.head).not.toBe(changes.head);
+          yield* carriedOn(yield* domain.world, changes, author, "before the review");
         }),
     ),
 
@@ -201,17 +199,12 @@ export const reviewLoopSteps = defineSteps(
               (found) =>
                 found.pullRequest === pullRequest &&
                 found.reviewer === reviewer &&
-                found.head === fix,
+                found.head === fix.head &&
+                found.sequence > fix.sequence,
             ),
           );
 
-          yield* carriedOn(
-            changes.world,
-            yield* domain.world,
-            pullRequest,
-            reviewer,
-            "as it asked for changes",
-          );
+          yield* carriedOn(yield* domain.world, changes, reviewer, "before the review");
         }),
     ),
 
@@ -221,20 +214,28 @@ export const reviewLoopSteps = defineSteps(
         const fix = yield* known(state.fix, "the fix");
 
         const merged = yield* domain.waitUntil(`#${pullRequest} to be merged`, (world) =>
-          Arr.findFirst(
-            world.pullRequests,
-            (pull) => pull.number === pullRequest && Option.isSome(pull.mergedBy),
-          ).pipe(Option.map((pull) => ({ pull, world }))),
+          Arr.findFirst(world.merges, (merge) => merge.pullRequest === pullRequest).pipe(
+            Option.map((merge) => ({ merge, world })),
+          ),
         );
 
-        expect(merged.pull.mergedBy).toEqual(Option.some(reviewer));
-        expect(merged.pull.head).toBe(fix);
+        const { merge, world } = merged;
+
+        expect(merge.by).toBe(reviewer);
+        expect((yield* pullIn(world, pullRequest)).mergedBy).toEqual(Option.some(reviewer));
+        expect((yield* pullIn(world, pullRequest)).head).toBe(fix.head);
+        // The last review the reviewer gave before merging approved the fix.
         expect(
-          merged.world.reviews
-            .filter((found) => found.pullRequest === pullRequest && found.reviewer === reviewer)
+          world.reviews
+            .filter(
+              (found) =>
+                found.pullRequest === pullRequest &&
+                found.reviewer === reviewer &&
+                found.sequence < merge.sequence,
+            )
             .map((found) => ({ verdict: found.verdict, head: found.head }))
             .at(-1),
-        ).toEqual({ verdict: "approved", head: fix });
+        ).toEqual({ verdict: "approved", head: fix.head });
       }),
     ),
 
@@ -267,7 +268,6 @@ export const reviewLoopSteps = defineSteps(
         Effect.gen(function* () {
           const { domain, state } = scenario;
           const pullRequest = yield* thePullRequest(state);
-          const opened = yield* known(state.opened, "the pull request opening");
           const changes = yield* known(state.changes, "the review asking for changes");
 
           yield* domain.waitUntil(`${author} to answer the review with reasons`, (world) =>
@@ -282,12 +282,13 @@ export const reviewLoopSteps = defineSteps(
 
           const world = yield* settled(scenario);
 
-          const pushes = (seen: World) =>
-            seen.pushes.filter((push) => push.pullRequest === pullRequest);
-
-          // Nothing since it opened, and it is still the commit the review was of.
-          expect(pushes(world)).toEqual(pushes(opened));
-          expect((yield* pullIn(world, pullRequest)).head).toBe(changes.review.head);
+          // Nothing since the review, and it is still the commit the review was of.
+          expect(
+            world.pushes.filter(
+              (push) => push.pullRequest === pullRequest && push.sequence > changes.sequence,
+            ),
+          ).toEqual([]);
+          expect((yield* pullIn(world, pullRequest)).head).toBe(changes.head);
         }),
     ),
 
@@ -301,17 +302,18 @@ export const reviewLoopSteps = defineSteps(
       }),
     ),
 
-    // Again: after the review that asked for changes was seen.
+    // Again: after the review that asked for changes.
     Then("nobody is asked to review it again", (scenario) =>
       Effect.gen(function* () {
         const pullRequest = yield* thePullRequest(scenario.state);
         const changes = yield* known(scenario.state.changes, "the review asking for changes");
         const world = yield* settled(scenario);
 
-        const asked = (seen: World) =>
-          seen.reviewRequests.filter((found) => found.pullRequest === pullRequest);
-
-        expect(asked(world).slice(asked(changes.world).length)).toEqual([]);
+        expect(
+          world.reviewRequests.filter(
+            (found) => found.pullRequest === pullRequest && found.sequence > changes.sequence,
+          ),
+        ).toEqual([]);
       }),
     ),
 

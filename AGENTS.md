@@ -1104,7 +1104,13 @@ docs/adr/0022-behavior-specs-in-gherkin.md has the why.
   `Given`/`When`/`Then` with a string pattern (`{word}`, `{string}`, `{int}`
   captures, typed) or a RegExp, matched whatever the keyword. Their bodies
   get the domain layer (`test/features/domain.ts`) and the scenario's state,
-  nothing else. A new driver's name goes in the runner's `DRIVERS`. The
+  nothing else. A new driver's name goes in the runner's `DRIVERS`, which
+  already knows `ci` and `live`. A ci entry sits in `test/acceptance/`, like
+  a sandbox one. A live entry that isn't configured registers one visibly
+  skipped test, as `progress-live.test.ts` does: a whole driver that can't
+  run, never a skipped scenario. A step that compares with an earlier event
+  ("again", "the fix") compares the world's sequences (`Sequenced` in
+  `domain.ts`), never a world kept from an earlier step. The
   runner's own tests and toy features are in `test/gherkin/`, outside
   `test/features/`, so they aren't specs.
 - **What agents don't own.** A `.feature` file. Once a person has approved

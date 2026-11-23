@@ -215,6 +215,9 @@ const checksOf = (ci: CiState, headSha: string): CiChecks => {
 };
 
 // Whether a person closed the fake's issue, and closed or merged its pull request.
+// Where an act is in the one order of every act on a fake (`acts`).
+export type Sequenced = { readonly sequence: number };
+
 export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] };
 
 // The body of a request that unassigns people from an issue.
@@ -269,19 +272,38 @@ export const makeFake = (
   // submitted, with how many of their comments are on a line; the comments it
   // posted, and on what; each push, with the head it left; the reviews it asked for; the
   // merges it made; the labels it added; and each agent session it ran.
+  // Each has its sequence: where it is in the one order of every act here,
+  // which `next` hands out, so one that happened before another has a
+  // smaller one whatever kind each is.
+  const order = { last: 0 };
+
   const acts = {
-    reviews: new Array<{
-      readonly author: string;
-      readonly state: string;
-      readonly commitSha: string;
-      readonly lineComments: number;
-    }>(),
-    comments: new Array<{ readonly author: string; readonly on: number; readonly body: string }>(),
-    pushes: new Array<{ readonly by: string; readonly head: string }>(),
-    reviewRequests: new Array<{ readonly by: string; readonly reviewers: ReadonlyArray<string> }>(),
-    merges: new Array<{ readonly by: string; readonly pullRequest: number }>(),
-    labelled: new Array<{ readonly by: string; readonly number: number; readonly label: string }>(),
-    sessions: new Array<{ readonly persona: string; readonly sessionId: string }>(),
+    reviews: new Array<
+      {
+        readonly author: string;
+        readonly state: string;
+        readonly commitSha: string;
+        readonly lineComments: number;
+      } & Sequenced
+    >(),
+    comments: new Array<
+      { readonly author: string; readonly on: number; readonly body: string } & Sequenced
+    >(),
+    pushes: new Array<{ readonly by: string; readonly head: string } & Sequenced>(),
+    reviewRequests: new Array<
+      { readonly by: string; readonly reviewers: ReadonlyArray<string> } & Sequenced
+    >(),
+    merges: new Array<{ readonly by: string; readonly pullRequest: number } & Sequenced>(),
+    labelled: new Array<
+      { readonly by: string; readonly number: number; readonly label: string } & Sequenced
+    >(),
+    sessions: new Array<{ readonly persona: string; readonly sessionId: string } & Sequenced>(),
+    // The next act's sequence.
+    next: () => {
+      order.last += 1;
+
+      return order.last;
+    },
   };
 
   // The files each commit's tree holds, by its sha, as far as a test says:
@@ -971,7 +993,11 @@ export const makeFake = (
       reviews: () => Effect.sync(() => [...submitted]),
       requestReviewers: (_, logins) =>
         Effect.sync(() => {
-          acts.reviewRequests.push({ by: people.me, reviewers: [...logins] });
+          acts.reviewRequests.push({
+            by: people.me,
+            reviewers: [...logins],
+            sequence: acts.next(),
+          });
           people.requested = [
             ...people.requested.filter((login) => !logins.includes(login)),
             ...logins,
@@ -1040,7 +1066,7 @@ export const makeFake = (
                 }
               }
 
-              acts.merges.push({ by: people.me, pullRequest });
+              acts.merges.push({ by: people.me, pullRequest, sequence: acts.next() });
 
               // The one pull request merges too, and closes the issue it was opened for.
               if (pullRequest === PULL) {
@@ -1199,7 +1225,7 @@ export const makeFake = (
       comment: (on, body) =>
         Effect.sync(() => {
           comment(body);
-          acts.comments.push({ author: people.me, on, body });
+          acts.comments.push({ author: people.me, on, body, sequence: acts.next() });
         }),
       // As on GitHub, a review drops its author from the requested reviewers.
       review: (_, review) =>
@@ -1210,6 +1236,7 @@ export const makeFake = (
             state: STATE_OF[review.event ?? "COMMENT"],
             commitSha: review.commitSha,
             lineComments: review.comments.length,
+            sequence: acts.next(),
           });
           submitted.push({
             author: people.me,
@@ -1221,7 +1248,7 @@ export const makeFake = (
       // Each change GitHub lists in the item's events, as this persona's.
       addLabel: (number, label) =>
         Effect.sync(() => {
-          acts.labelled.push({ by: people.me, number, label });
+          acts.labelled.push({ by: people.me, number, label, sequence: acts.next() });
           labels.set(number, [...labelsOf(number).filter((name) => name !== label), label]);
           labelEvent(number, "labeled", label);
         }),
@@ -1291,7 +1318,7 @@ export const makeFake = (
             git.head = `fix${git.pushes}0000000`;
           }
 
-          acts.pushes.push({ by: people.me, head: git.head });
+          acts.pushes.push({ by: people.me, head: git.head, sequence: acts.next() });
 
           // A push starts CI on the new head, as a test that sets it says.
           for (const started of Option.toArray(merge.afterPush)) {
@@ -1318,7 +1345,11 @@ export const makeFake = (
           steps.push(yield* CurrentActivity);
           adapters.push(request.adapter);
           requests.push(request);
-          acts.sessions.push({ persona: people.me, sessionId: request.sessionId });
+          acts.sessions.push({
+            persona: people.me,
+            sessionId: request.sessionId,
+            sequence: acts.next(),
+          });
 
           for (const happens of agent.during.splice(0)) {
             happens();

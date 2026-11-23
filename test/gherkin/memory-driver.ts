@@ -19,6 +19,7 @@ const EMPTY: World = {
   reviewRequests: [],
   handOffs: [],
   sessions: [],
+  merges: [],
 };
 
 const nextNumber = (world: World) => world.issues.length + world.pullRequests.length + 1;
@@ -60,7 +61,13 @@ const domainOver = (world: Ref.Ref<World>): Domain => ({
       }),
       reviewRequests: [
         ...now.reviewRequests,
-        ...reviewers.map((reviewer) => ({ pullRequest, reviewer, by: "a person" })),
+        // One request, so one sequence: after every event before it.
+        ...reviewers.map((reviewer) => ({
+          pullRequest,
+          reviewer,
+          by: "a person",
+          sequence: now.reviewRequests.length + 1,
+        })),
       ],
     })),
   world: Ref.get(world),

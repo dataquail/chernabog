@@ -42,7 +42,13 @@ export type PullRequestSeen = {
   readonly mergedBy: Option.Option<Login>;
 };
 
-export type ReviewSeen = {
+// Where an event is in the world's one order of events: one that happened
+// before another has a smaller sequence, whatever kind each is, so a step can
+// say "since" or "again" by comparing them. Events that overlapped may be in
+// either order.
+export type Sequenced = { readonly sequence: number };
+
+export type ReviewSeen = Sequenced & {
   readonly pullRequest: number;
   readonly reviewer: Login;
   readonly verdict: Verdict;
@@ -53,7 +59,7 @@ export type ReviewSeen = {
 };
 
 // A comment that answers a review, rather than reviewing.
-export type ReplySeen = {
+export type ReplySeen = Sequenced & {
   readonly pullRequest: number;
   readonly author: Login;
   // The author's reasons for not making the changes the review asks for,
@@ -61,25 +67,25 @@ export type ReplySeen = {
   readonly reasons: Option.Option<string>;
 };
 
-export type PushSeen = {
+export type PushSeen = Sequenced & {
   readonly pullRequest: number;
   readonly by: Login;
   readonly head: string;
 };
 
-export type ReviewRequestSeen = {
+export type ReviewRequestSeen = Sequenced & {
   readonly pullRequest: number;
   readonly reviewer: Login;
   readonly by: Login;
 };
 
-export type HandOffSeen = {
+export type HandOffSeen = Sequenced & {
   readonly pullRequest: number;
 };
 
 // One stretch of an agent's work on a pull request, in the agent session it
 // ran in: two with the same session are the same conversation carried on.
-export type SessionSeen = {
+export type SessionSeen = Sequenced & {
   readonly pullRequest: number;
   readonly persona: Login;
   readonly session: string;
@@ -87,8 +93,14 @@ export type SessionSeen = {
   readonly resumed: boolean;
 };
 
-// Everything a scenario can observe. The lists are histories, oldest first,
-// so a step can say "never" as well as "now".
+export type MergeSeen = Sequenced & {
+  readonly pullRequest: number;
+  readonly by: Login;
+};
+
+// Everything a scenario can observe. The lists after pullRequests are
+// histories, each in the world's one order of events (Sequenced), so a step
+// can say "never" and "since" as well as "now".
 export type World = {
   readonly issues: ReadonlyArray<IssueSeen>;
   readonly pullRequests: ReadonlyArray<PullRequestSeen>;
@@ -98,6 +110,7 @@ export type World = {
   readonly reviewRequests: ReadonlyArray<ReviewRequestSeen>;
   readonly handOffs: ReadonlyArray<HandOffSeen>;
   readonly sessions: ReadonlyArray<SessionSeen>;
+  readonly merges: ReadonlyArray<MergeSeen>;
 };
 
 export type Domain = {

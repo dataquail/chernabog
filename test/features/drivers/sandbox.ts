@@ -14,7 +14,10 @@
 // What it sees is the fake GitHub's records, the pushes the bare repo took
 // (by the persona whose token pushed), and the fake agents' calls (by the
 // persona whose token they ran with, and the branch or commit they worked
-// on), read into the domain's terms by the rules in cast.ts. A wait
+// on), read into the domain's terms by the rules in cast.ts. Each is in the
+// sandbox's one order of events, its event log, which the fake GitHub, the
+// bare repo and the fake agents each append to as things happen: an event's
+// sequence is its line there (test/acceptance/sandbox.ts). A wait
 // looks again every POLL_MS for up to WAIT_MS; settling waits until the
 // daemon, asked for its status, has nothing running or queued and each of
 // its flows has ticked IDLE_TICKS times with no run starting or ending.
@@ -35,6 +38,7 @@ import {
   type Login,
   type PullRequestSeen,
   type PushSeen,
+  type Sequenced,
   type World,
 } from "../domain.ts";
 import type { Driver } from "../runner.ts";
@@ -213,47 +217,75 @@ const pullRequestSeen = (github: GitHub, pull: FakePull): PullRequestSeen => ({
 const pullOn = (pulls: ReadonlyArray<FakePull>, branch: string) =>
   Arr.findLast(pulls, (pull) => pull.head === branch);
 
-const reviewsSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>) =>
-  Arr.sort(
-    pulls.flatMap((pull) => github.reviewsOf(pull.number).map((found) => ({ pull, found }))),
-    Order.mapInput(
-      Order.Number,
-      ({ found }: { readonly found: { readonly id: number } }) => found.id,
-    ),
-  ).map(({ found, pull }) => ({
-    pullRequest: pull.number,
-    reviewer: found.author,
-    verdict: verdictOf(found.state),
-    head: found.commit_id,
-    lineComments: found.comments.length,
-  }));
+const bySequence = Order.mapInput(Order.Number, (event: Sequenced) => event.sequence);
 
-const repliesSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>) =>
+// Where each of the fake GitHub's records is in the event log, by what it
+// said it recorded (fake-github.ts' Recorded).
+type Sequences = ReadonlyMap<string, number>;
+
+type Logged = ReturnType<Sandbox["events"]>;
+
+// The records the event log has a place for, in its order: one it doesn't
+// have yet was made as the log was read, and the next look sees it.
+const sequenced = <A>(
+  sequences: Sequences,
+  found: ReadonlyArray<{ readonly recorded: string; readonly seen: A }>,
+): ReadonlyArray<A & Sequenced> =>
   Arr.sort(
+    found.flatMap(({ recorded, seen }) =>
+      Option.toArray(Option.fromUndefinedOr(sequences.get(recorded))).map((sequence) => ({
+        ...seen,
+        sequence,
+      })),
+    ),
+    bySequence,
+  );
+
+const reviewsSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>, sequences: Sequences) =>
+  sequenced(
+    sequences,
+    pulls.flatMap((pull) =>
+      github.reviewsOf(pull.number).map((found) => ({
+        recorded: `review ${found.id}`,
+        seen: {
+          pullRequest: pull.number,
+          reviewer: found.author,
+          verdict: verdictOf(found.state),
+          head: found.commit_id,
+          lineComments: found.comments.length,
+        },
+      })),
+    ),
+  );
+
+const repliesSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>, sequences: Sequences) =>
+  sequenced(
+    sequences,
     pulls.flatMap((pull) =>
       github
         .commentsOn(pull.number)
         .filter((comment) => answersAReview(comment.body))
         .map((comment) => ({
-          id: comment.id,
-          pullRequest: pull.number,
-          author: comment.user.login,
-          reasons: reasonsOf(comment.body),
+          recorded: `comment ${comment.id}`,
+          seen: {
+            pullRequest: pull.number,
+            author: comment.user.login,
+            reasons: reasonsOf(comment.body),
+          },
         })),
     ),
-    Order.mapInput(Order.Number, (reply: { readonly id: number }) => reply.id),
-  ).map(({ author, pullRequest, reasons }) => ({ pullRequest, author, reasons }));
+  );
 
 // Each push to a pull request's branch, before it opened too.
-const pushesSeen = (sandbox: Sandbox, pulls: ReadonlyArray<FakePull>) =>
-  sandbox
-    .pushes()
+const pushesSeen = (logged: Logged, pulls: ReadonlyArray<FakePull>) =>
+  logged.pushes
     .filter((push) => push.ref.startsWith("refs/heads/") && !NO_COMMIT.test(push.after))
     .flatMap((push) =>
       Option.toArray(pullOn(pulls, push.ref.slice("refs/heads/".length))).map((pull) => ({
         pullRequest: pull.number,
         by: Option.getOrElse(push.by, () => A_PERSON),
         head: push.after,
+        sequence: push.sequence,
       })),
     );
 
@@ -277,10 +309,11 @@ const pullOfCall = (
 // Each agent call made as a persona on a pull request, before it opened too.
 const sessionsSeen = (
   sandbox: Sandbox,
+  logged: Logged,
   pulls: ReadonlyArray<FakePull>,
   pushes: ReadonlyArray<PushSeen>,
 ) =>
-  sandbox.agentSessions().flatMap((call) =>
+  logged.agentSessions.flatMap((call) =>
     Option.toArray(
       Option.all({
         persona: call.persona,
@@ -291,6 +324,7 @@ const sessionsSeen = (
           persona,
           session: call.session,
           resumed: call.call === "resume",
+          sequence: call.sequence,
         })),
       ),
     ),
@@ -298,9 +332,14 @@ const sessionsSeen = (
 
 const worldOf = ({ sandbox }: Running): World => {
   const { github } = sandbox;
+  // The log first, and once: what it has is a prefix of the order, and a
+  // record made after it is left for the next look rather than seen out of
+  // its order.
+  const logged = sandbox.events();
+  const sequences = logged.records;
   const pulls = pullsOf(github);
   const numbers = new Set(pulls.map((pull) => pull.number));
-  const pushes = pushesSeen(sandbox, pulls);
+  const pushes = pushesSeen(logged, pulls);
 
   return {
     issues: Arr.sort(
@@ -308,20 +347,37 @@ const worldOf = ({ sandbox }: Running): World => {
       Order.mapInput(Order.Number, (issue: { readonly number: number }) => issue.number),
     ).map((issue) => ({ number: issue.number, labels: [...issue.labels] })),
     pullRequests: pulls.map((pull) => pullRequestSeen(github, pull)),
-    reviews: reviewsSeen(github, pulls),
-    replies: repliesSeen(github, pulls),
+    reviews: reviewsSeen(github, pulls, sequences),
+    replies: repliesSeen(github, pulls, sequences),
     pushes,
-    reviewRequests: github.reviewRequests.flatMap((asked) =>
-      asked.reviewers.map((reviewer) => ({
-        pullRequest: asked.number,
-        reviewer,
-        by: asked.by,
+    reviewRequests: sequenced(
+      sequences,
+      github.reviewRequests.flatMap((asked, index) =>
+        asked.reviewers.map((reviewer) => ({
+          recorded: `review-request ${index}`,
+          seen: { pullRequest: asked.number, reviewer, by: asked.by },
+        })),
+      ),
+    ),
+    handOffs: sequenced(
+      sequences,
+      github.labelled.flatMap((found, index) =>
+        Option.toArray(
+          Option.liftPredicate(
+            { recorded: `label ${index}`, seen: { pullRequest: found.number } },
+            () => numbers.has(found.number) && handsOff(found.label),
+          ),
+        ),
+      ),
+    ),
+    sessions: sessionsSeen(sandbox, logged, pulls, pushes),
+    merges: sequenced(
+      sequences,
+      github.merges.map((found, index) => ({
+        recorded: `merge ${index}`,
+        seen: { pullRequest: found.number, by: found.by },
       })),
     ),
-    handOffs: github.labelled
-      .filter((found) => numbers.has(found.number) && handsOff(found.label))
-      .map((found) => ({ pullRequest: found.number })),
-    sessions: sessionsSeen(sandbox, pulls, pushes),
   };
 };
 

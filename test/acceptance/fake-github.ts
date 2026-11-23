@@ -349,7 +349,28 @@ export type CreatePullHook = (pull: {
 // How long the fake asks a poller to wait between polls, in seconds.
 const POLL_INTERVAL = 1;
 
-export const startFakeGitHub = (options: { slug: string; bare: string; checks?: Checks }) => {
+// What the fake says it recorded, as it records it, for a test that orders
+// it among other things that happen (test/acceptance/sandbox.ts' event log):
+// a review or comment by its id, or a review request, label or merge by where
+// it is in reviewRequests, labelled or merges.
+export type Recorded =
+  | `review ${number}`
+  | `comment ${number}`
+  | `review-request ${number}`
+  | `label ${number}`
+  | `merge ${number}`;
+
+export const startFakeGitHub = (options: {
+  slug: string;
+  bare: string;
+  checks?: Checks;
+  // Told of each record as the fake makes it, before it answers.
+  recorded?: (what: Recorded) => void;
+}) => {
+  const recorded = (what: Recorded) => {
+    options.recorded?.(what);
+  };
+
   const issues = new Map<number, FakeIssue>();
   const comments = new Map<number, Array<FakeComment>>();
   const pulls = new Map<number, FakePull>();
@@ -933,6 +954,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     };
 
     comments.set(number, [...(comments.get(number) ?? []), comment]);
+    recorded(`comment ${comment.id}`);
 
     return json(comment, 201);
   });
@@ -1013,6 +1035,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     for (const label of body.labels) {
       if (!labels.includes(label)) {
         labels.push(label);
+        recorded(`label ${labelled.length}`);
         labelled.push({ number: numberParam(args), label, by: args.login });
       }
     }
@@ -1176,6 +1199,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     };
 
     reviews.set(number, [...(reviews.get(number) ?? []), review]);
+    recorded(`review ${review.id}`);
 
     for (const found of Option.toArray(pull)) {
       notify(found.author, "author", number, args.login);
@@ -1191,6 +1215,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       ...pull.reviewers.filter((login) => !reviewers.includes(login)),
       ...reviewers,
     ];
+    recorded(`review-request ${reviewRequests.length}`);
     reviewRequests.push({ number: pull.number, reviewers: [...reviewers], by });
 
     for (const login of reviewers) {
@@ -1236,6 +1261,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
           }
         }
 
+        recorded(`merge ${merges.length}`);
         merges.push({ number: pull.number, method: body.merge_method, by: args.login });
 
         return json({ sha: body.sha, merged: true });
@@ -1768,10 +1794,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     ) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
 
+      const id = takeCommentId();
+
       reviews.set(number, [
         ...(reviews.get(number) ?? []),
         {
-          id: takeCommentId(),
+          id,
           body,
           commit_id: Option.getOrElse(refSha(pull.head), () => ""),
           comments: [],
@@ -1779,6 +1807,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
           state,
         },
       ]);
+      recorded(`review ${id}`);
       pull.reviewers = pull.reviewers.filter((reviewer) => reviewer !== login);
       notify(pull.author, "author", number, login);
     },
