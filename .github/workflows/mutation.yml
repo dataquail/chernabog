@@ -1,0 +1,73 @@
+name: Mutation
+# Mutation testing of the domain and concurrency core (#574), one job per
+# module in stryker/. It runs nightly and by hand, never on a pull request, so
+# it blocks nothing; survivors are work, not a red build, and a job fails only
+# when Stryker itself does.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A dispatch while the nightly run is going waits for it, rather than racing it
+# for the same incremental state.
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+jobs:
+  # The modules, one per stryker/<module>.conf.mjs, so a config added there runs
+  # without editing this file.
+  modules:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.list.outputs.modules }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: list
+        run: |
+          modules=$(ls stryker/*.conf.mjs | sed -E 's#^stryker/(.*)\.conf\.mjs$#"\1"#' | paste -sd, -)
+          echo "modules=[$modules]" >> "$GITHUB_OUTPUT"
+
+  mutation:
+    needs: modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One module's failure leaves the others to finish.
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      # The stryker CLI runs on Node.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      # The last night's results, so only mutants whose code or tests changed
+      # run again.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: reports/mutation/${{ matrix.module }}/stryker-incremental.json
+          key: mutation-${{ matrix.module }}-${{ github.run_id }}
+          restore-keys: mutation-${{ matrix.module }}-
+      - run: bun run mutation ${{ matrix.module }}
+      # Saved even when the run failed, so the next night keeps what finished.
+      - if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: reports/mutation/${{ matrix.module }}/stryker-incremental.json
+          key: mutation-${{ matrix.module }}-${{ github.run_id }}
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-${{ matrix.module }}
+          path: |
+            reports/mutation/${{ matrix.module }}/mutation.json
+            reports/mutation/${{ matrix.module }}/mutation.html
