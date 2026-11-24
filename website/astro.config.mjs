@@ -116,6 +116,10 @@ export default defineConfig({
           label: "Reference",
           items: [{ slug: "reference/configuration" }],
         },
+        {
+          label: "Contribute",
+          items: [{ slug: "contribute/mutation-testing" }],
+        },
       ],
     }),
   ],

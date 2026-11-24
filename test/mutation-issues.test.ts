@@ -151,7 +151,7 @@ A static mutant runs the module's whole test selection, so a Timeout on one can 
 
 ---
 
-\`scripts/mutation-issues.ts\` rewrites this body after each nightly run. Kill a survivor with a test that fails on the mutated code, written against the behaviour; mark an equivalent one \`// Stryker disable next-line <mutator>: <reason>\`.
+\`scripts/mutation-issues.ts\` rewrites this body after each nightly run. Kill a survivor with a test that fails on the mutated code, written against the behaviour; mark an equivalent one \`// Stryker disable next-line <mutator>: <reason>\`. [How to act on this issue](https://dataquail.github.io/chernabog/contribute/mutation-testing/).
 `;
 
 const TITLE = "Surviving mutants in example";

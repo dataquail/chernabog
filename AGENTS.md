@@ -1069,8 +1069,45 @@ disabling the rule.
   `codex` on the PATH: `gh auth token --user <login>` answers `token-<login>`,
   and the agents log the token they saw. Extend these rather than mocking
   modules (module mocking is a lint error).
-- **Mutation runs** (`bun run mutation <module>`, configs in `stryker/`) rewrite the tree in
-  place while they run, so don't edit files until one ends.
+
+### Mutation testing (#574)
+
+A nightly run mutates the domain and concurrency core and files one issue per
+module, "Surviving mutants in _module_", that lists the mutants no test
+noticed. website/src/content/docs/contribute/mutation-testing.md is the long
+form; docs/testing/mutation-baseline.md and docs/testing/mutation-spike.md
+have the history.
+
+- **In scope** are the modules with a config in `stryker/`: progress, phase,
+  phase-announcer, phases, ledger, progress-anomalies, ci-wake and claims.
+  Each names what it mutates and an explicit `testFiles`. The CLI, the
+  dashboard, the website and `test/acceptance/` are out of scope; never add
+  an acceptance test to a selection.
+- **Reproduce** with `bun run mutation <module>` and open
+  `reports/mutation/<module>/mutation.html`. Add `--mutate 'file.ts:L-L'` to
+  mutate only some lines. Or apply the mutant by hand, run the config's
+  `testFiles` with `bun test`, and put the line back.
+- **A run rewrites the tree in place** and restores it from `.stryker-tmp/`
+  when it ends, so don't edit files or run other tests until it does.
+- **Killing a mutant** takes a test that fails with the mutant applied,
+  passes without it, and asserts on behaviour a caller or person would see.
+  Reject, in your own work and in review:
+  - a test that imports the constant it pins (`THREADS`, `PHASE_EVENT`):
+    it passes on `""` too, so write the literal the outside world relies on;
+  - a test that restates the code, recomputing the answer the way the
+    implementation does;
+  - a test that spies on internals or counts calls.
+- **An equivalent mutant** is one no caller can tell apart. Mark it on the
+  line before with `// Stryker disable next-line <mutator>: <reason>`, or a
+  `// Stryker disable <mutator>: <reason>` and `// Stryker restore <mutator>`
+  pair where a comment can't sit on its own line. The reason says why no
+  caller can tell; "no test notices" is not a reason. A mark that would also
+  hide a killed mutant of the same mutator on the line is wrong: leave that
+  survivor listed.
+- **A Timeout on a static mutant is unverified**, not killed: a static
+  mutant runs the whole selection, and a slow test under load times out
+  too. Rerun it with a larger `timeoutMS`. A Timeout on any other mutant is
+  a kill.
 
 ## Behavior specs (#576)
 

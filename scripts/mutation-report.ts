@@ -197,6 +197,9 @@ export const findingsOf = (report: MutationReport): Findings => {
   return { survivors: of(["survived", "uncovered"]), unverified: of(["unverified"]) };
 };
 
+// The page on reading a survivor issue and killing its mutants.
+const MUTATION_DOCS = "https://dataquail.github.io/chernabog/contribute/mutation-testing/";
+
 const MAX_TEXT = 80;
 
 // Code as the issue shows it: its first line, and at most MAX_TEXT characters.
@@ -332,7 +335,7 @@ export const renderIssue = (
     ],
   });
 
-  const footer = `${code("scripts/mutation-issues.ts")} rewrites this body after each nightly run. Kill a survivor with a test that fails on the mutated code, written against the behaviour; mark an equivalent one ${code("// Stryker disable next-line <mutator>: <reason>")}.`;
+  const footer = `${code("scripts/mutation-issues.ts")} rewrites this body after each nightly run. Kill a survivor with a test that fails on the mutated code, written against the behaviour; mark an equivalent one ${code("// Stryker disable next-line <mutator>: <reason>")}. [How to act on this issue](${MUTATION_DOCS}).`;
 
   const sections = [...opening, report, ...survived, ...unchecked, "---", footer];
 
