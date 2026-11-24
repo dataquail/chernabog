@@ -133,6 +133,8 @@ graph:
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
         - "scripts/release-pr-check.ts"
+        # The nightly mutation workflow runs it after each module's run (#593).
+        - "scripts/mutation-issues.ts"
         - "scripts/dashboard-dev.ts"
         # The acceptance sandbox runs it as a child process, for a lockfile.
         - "test/acceptance/lockfile.ts"
@@ -1851,6 +1853,15 @@ tree:
           external: [typescript]
       "core-api.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
+      # A mutation report's survivors as the module's issue, over TypeScript's own parse of each
+      # mutated source for the function a mutant is in; mutation-issues.ts files it.
+      "mutation-report.ts":
+        members: [{ use: no-talking }]
+        imports:
+          message: >-
+            The survivor issue names each mutant's function from TypeScript's parse of its
+            source, and names effect beside it.
+          external: [typescript]
       # The dashboard's page with Bun's hot reload, over the installed daemon's API.
       "dashboard-dev.ts":
         imports:
