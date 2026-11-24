@@ -239,6 +239,13 @@ const StateBody = Schema.Struct({
   base: Schema.optionalKey(Schema.String),
 });
 
+// An issue's edit: any of its state, title and body, as GitHub's PATCH takes them.
+const IssueEditBody = Schema.Struct({
+  state: Schema.optionalKey(Schema.Literals(["open", "closed"])),
+  title: Schema.optionalKey(Schema.String),
+  body: Schema.optionalKey(Schema.String),
+});
+
 const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
@@ -818,11 +825,17 @@ export const startFakeGitHub = (options: {
     return json(issueJson(issue), 201);
   });
 
-  const editIssue = withBody(StateBody, (body, args) =>
+  // As on GitHub, an edit changes only what it names.
+  const editIssue = withBody(IssueEditBody, (body, args) =>
     Option.match(Option.fromUndefinedOr(issues.get(numberParam(args))), {
       onNone: notFound,
       onSome: (issue) => {
-        issue.closed = body.state === "closed";
+        issue.closed = Option.getOrElse(
+          Option.map(Option.fromUndefinedOr(body.state), (state) => state === "closed"),
+          () => issue.closed,
+        );
+        issue.title = body.title ?? issue.title;
+        issue.body = body.body ?? issue.body;
 
         return json(issueJson(issue));
       },
