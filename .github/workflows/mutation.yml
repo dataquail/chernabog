@@ -35,6 +35,10 @@ jobs:
     needs: modules
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # issues: write lets the last step file each module's survivors.
+    permissions:
+      contents: read
+      issues: write
     strategy:
       # One module's failure leaves the others to finish.
       fail-fast: false
@@ -71,3 +75,11 @@ jobs:
           path: |
             reports/mutation/${{ matrix.module }}/mutation.json
             reports/mutation/${{ matrix.module }}/mutation.html
+      # One issue per module holds its surviving mutants: filed, rewritten, or
+      # closed once none is left. It runs only when Stryker wrote a report.
+      - if: always() && hashFiles(format('reports/mutation/{0}/mutation.json', matrix.module)) != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODULE: ${{ matrix.module }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bun scripts/mutation-issues.ts "$MODULE" --run-url "$RUN_URL"
