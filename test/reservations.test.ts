@@ -171,7 +171,17 @@ describe("a run taking its reservation over", () => {
         );
 
         expect(taken).toEqual({ acquired: false, holder: Option.some(winner) });
-        expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
+        // Reading moves nothing: the winner's move is the winner's to finish,
+        // or the next writer's.
+        expect(
+          Option.map(
+            Claims.holderOf(fake.commits.get(fake.refs.get(ISSUE_REF) ?? "") ?? ""),
+            (named) => named.runId,
+          ),
+        ).toEqual(Option.some(PLAN.runId));
+        expect(
+          fake.refs.get(`refs/chernabog/leases/${CLAIM}/${fake.refs.get(ISSUE_REF) ?? ""}`),
+        ).toBe("taken000");
       }),
   );
 
