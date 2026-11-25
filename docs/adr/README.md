@@ -28,3 +28,4 @@ supersedes it.
 - [21. One ledger per repo holds an item's progress; the forge is input and projection](0021-one-ledger-the-forge-is-input.md)
 - [22. Behavior specs in Gherkin, owned by a person, run through drivers](0022-behavior-specs-in-gherkin.md)
 - [23. Runs execute in spokes, and the daemon is a hub that can end one](0023-runs-execute-in-spokes.md)
+- [24. Local agent sessions run in a Docker or Podman sandbox, and reach the hub through a session API](0024-local-sessions-run-in-a-sandbox.md)
