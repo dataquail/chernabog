@@ -9,7 +9,7 @@ token. Everything here was observed on
 
 ## Verdict
 
-**The design holds, with one change and three details for the build.**
+**The design holds, with one change and four details for the build.**
 An installation token's pull requests and pushes start the repo's CI. A run
 job can take its environment, and so its one App key, from its matrix entry.
 The reviewer environment's branch limit holds for runs on the default
