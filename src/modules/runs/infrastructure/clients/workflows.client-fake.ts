@@ -9,6 +9,7 @@ import {
   type WorkflowOutcome,
   WorkflowsClient,
 } from "../../domain/ports/clients/workflows.client.ts";
+import { type SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts";
 
 // What a test's workflow engine did and was told: the runs it executed, the
 // executions it resumed and interrupted, the deferreds it woke and the lines it noted, and
@@ -26,6 +27,10 @@ export type FakeEngine = {
   // and those discarded, in order.
   readonly journals: Array<RunId>;
   readonly discarded: Array<RunId>;
+  // The runs whose workflows execute in a spoke, not in this process.
+  readonly inSpokes: Array<RunId>;
+  // The endings each run's spoke reported, in order.
+  readonly reports: Map<RunId, Array<SpokeEnding>>;
 };
 
 export const fakeEngine = (): FakeEngine => ({
@@ -38,6 +43,8 @@ export const fakeEngine = (): FakeEngine => ({
   unloaded: [],
   journals: [],
   discarded: [],
+  inSpokes: [],
+  reports: new Map(),
 });
 
 // The core the fake engine's workflows run under.
@@ -54,6 +61,7 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
       coreVersion: FAKE_CORE,
       treeOf: () => Option.some(FAKE_TREE),
       runs: (flow) => !engine.unloaded.includes(`${flow.repo}/${flow.flow}`),
+      executionIdOf: (_flow, runId) => Effect.succeed(`execution-${runId}`),
       execute: (_flow, runId) =>
         Effect.sync(() => {
           engine.executed.push(runId);
@@ -85,6 +93,13 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
           }
         }),
       journals: Effect.sync(() => [...engine.journals]),
+      executing: (runId) => Effect.sync(() => !engine.inSpokes.includes(runId)),
+      reportEnded: (runId, ending) =>
+        Effect.sync(() => {
+          engine.reports.set(runId, [...(engine.reports.get(runId) ?? []), ending]);
+        }),
+      reportedEnding: (runId) =>
+        Effect.sync(() => Option.fromUndefinedOr((engine.reports.get(runId) ?? []).at(-1))),
       wake: (deferred) =>
         Effect.sync(() => {
           engine.woken.push(deferred);

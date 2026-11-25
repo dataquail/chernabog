@@ -70,7 +70,8 @@ const noteOf = (ended: RunRoot) => {
   if (
     ended.status === "superseded" ||
     ended.status === "lost" ||
-    ended.status === "ended-at-park"
+    ended.status === "ended-at-park" ||
+    ended.status === "interrupted"
   ) {
     return `${ended.status}: ${summary}`;
   }
@@ -317,7 +318,9 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   for (const executionId of Option.toArray(found.executionId)) {
     yield* workflows.interrupt(flow, executionId);
 
-    if (workflows.runs(flow)) {
+    // A workflow in a spoke stops with its spoke, which the hub ends once
+    // the run has (ADR 23): only one executing here is waited for.
+    if (workflows.runs(flow) && (yield* workflows.executing(found.id))) {
       stopped = yield* stopping(found, executionId);
     }
   }
@@ -329,10 +332,15 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   // A run that lost its item leaves everything on it, worktree included, to
   // the run that took it over, and for a person to look at. One that ended at
   // a park leaves the same to the run that takes it up from its record, but
-  // lets go of its claim ref, so that run may be on any machine or in CI.
-  if (cancelled.status === "lost" || cancelled.status === "ended-at-park") {
+  // lets go of its claim ref, so that run may be on any machine or in CI; so
+  // does one interrupted by its hub's stop, for the run that repeats its phase.
+  if (
+    cancelled.status === "lost" ||
+    cancelled.status === "ended-at-park" ||
+    cancelled.status === "interrupted"
+  ) {
     const releasedClaims = yield* Option.match(
-      Option.liftPredicate(cancelled, (run) => run.status === "ended-at-park"),
+      Option.liftPredicate(cancelled, (run) => run.status !== "lost"),
       {
         onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
         onSome: (run) => releaseClaimRefs(run, leftForPerson),

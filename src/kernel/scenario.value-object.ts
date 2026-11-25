@@ -60,6 +60,7 @@ export type Given = typeof Given.Type;
 // `superseded`: its work item went while it was in flight. `lost`: another
 // run took its work item over once its claim's lease expired. `ended-at-park`:
 // it waited on a person or another system, which ends a run (ADR 0021).
+// `interrupted`: the hub it ran under stopped (ADR 23, decision 7).
 export const Ending = Schema.Literals([
   "done",
   "needs-human",
@@ -69,6 +70,7 @@ export const Ending = Schema.Literals([
   "superseded",
   "lost",
   "ended-at-park",
+  "interrupted",
   "running",
 ]);
 

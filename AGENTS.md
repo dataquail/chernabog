@@ -811,8 +811,9 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
 #361's storage test and #362's map of every recipe's handoffs.
 
 - **A run that parks ends there**, on a daemon as in a CI job (ADR 21,
-  decision 4): the daemon's validity loop (`endParked`) ends every parked
-  run with `CancelRunCommand` `endAs ended-at-park`. That status keeps every
+  decision 4): its spoke reports `ended-at-park` and exits, and the hub ends
+  the run with `CancelRunCommand` `endAs ended-at-park`; the validity loop
+  (`endParked`) does the same for a parked run with no live spoke. That status keeps every
   marker, worktree and session for the run that takes the item up from its
   record, as `lost` does (`RunMarkerRootOps.keptOn`), and releases the claim
   ref. A test that needs a run to stay in flight uses a durable `sleep`, not
@@ -994,16 +995,40 @@ How a CI run differs from a daemon run:
   while `ANTHROPIC_API_KEY` is set, and seeds `~/.claude.json` so `claude`
   starts at its prompt.
 - **On a machine, `ci run --run` is a spoke** (ADR 23, #658). A hub has
-  recorded the run (`StartRunCommand`) and hands it over:
-  `ci run --run <id> --repo --flow --persona --item <key> --work-item-file <path>`
-  (or `--work-item <json>`). It runs in the machine's own home, writes no
-  machine config, takes no `state.db.lock`, doesn't ask the trigger again,
-  and runs the repo as the machine does (no `asCiJob`). `ExecuteRunCommand`
-  executes the recorded run in its own journal; a park ends it
-  `ended-at-park` and a lost claim `lost`. It stops as on SIGTERM when its
-  stdin closes. Until #659/#661 it writes `state.db` itself beside the
-  daemon (WAL, `STATE_DB_BUSY_TIMEOUT`) and renews its own lease; then the
-  hub folds its journal's reports and renews for it.
+  recorded the run and attached its execution (`StartSpokeRunCommand`) and
+  hands it over:
+  `ci run --run <id> --repo --flow [--persona] --item <key> --work-item-file <path> [--tree <sha>]`
+  (or `--work-item <json>`; no `--persona` is the implicit one; `--tree` is
+  the `.chernabog/` tree the hub trusted). It runs in the machine's own home,
+  writes no machine config, takes no `state.db.lock`, doesn't ask the
+  trigger again, and runs the repo as the machine does (no `asCiJob`).
+  `ExecuteRunCommand` executes the recorded run in its own journal, and the
+  spoke follows it (`PollExecutionQuery`) to its boundary, ending nothing in
+  state.db: it reports how its run ended (`ReportRunEndedCommand`, a
+  `RunEnded` row in the journal's `spoke_reports`), and a park as
+  `ended-at-park`. It stops as on SIGTERM when its stdin closes. Until #661
+  it writes its steps, lanes, markers and the rest to `state.db` itself
+  beside the daemon (WAL, `STATE_DB_BUSY_TIMEOUT`); then the hub folds its
+  journal's reports.
+- **The daemon is the hub** (ADR 23, #659): it executes no flow itself. A
+  tick records each run with `StartSpokeRunCommand` (the run and its
+  execution, keyed by the run, in one unit of work, so only that tick starts
+  a spoke) and spawns its own executable as the spoke, leading a process
+  group of its own (`src/platform/process-group.ts`), with the item in
+  `spokes/<run>.item.json` and a stdin pipe it holds
+  (`src/interface/daemon/spokes.server.ts`). When the spoke exits, the hub
+  reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
+  (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
+  said nothing ends `failed`, with how it exited. The run's ending releases
+  its markers and deletes its journal, in the hub. A run the hub ends while
+  its spoke lives (lost, superseded, cancelled) stops the spoke: SIGTERM to
+  its group, SIGKILL after 10 seconds. `concurrency` counts running runs,
+  which are the live spokes; the hub renews their leases; a reload or a
+  drain starts no spoke and waits for none to be live. A hub that stops
+  SIGTERMs every spoke and waits for none; the next one ends every run it
+  finds running as `interrupted` (it keeps its markers and lets go of its
+  claim ref, so the phase repeats in a new run) before its first tick.
+  `RecoverRunsCommand` resumes nothing from a journal.
 
 ## Versions (#123, #163)
 

@@ -12,14 +12,10 @@ import { RunView } from "../domain/run/run-view.value-object.ts";
 import { WorkItem } from "../domain/run/work-item.value-object.ts";
 
 // Executes a run another process recorded (ADR 23, decision 2): the hub
-// records the run, and its spoke executes its workflow, in a journal of the
-// run's own, for the item the hub handed it, and attaches the execution. A
-// run that ended, or already has an execution (another spoke's), is refused,
-// as is one whose flow this process didn't load.
-//
-// Interim, until #659: the spoke attaches the execution in state.db itself.
-// Once the hub attaches it (an execution is keyed by its run), this keeps
-// only the execute.
+// records the run and attaches its execution, which is keyed by the run, and
+// its spoke executes its workflow, in a journal of the run's own, for the item
+// the hub handed it. A run that ended, or already has a journal (another
+// spoke's), is refused, as is one whose flow this process didn't load.
 export const ExecuteRunCommand = Command.make("ExecuteRunCommand", {
   payload: { runId: RunId, item: WorkItem },
   success: RunView,

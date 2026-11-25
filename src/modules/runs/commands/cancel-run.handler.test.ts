@@ -708,6 +708,18 @@ describe("cancelRunHandler", () => {
     }).pipe(Effect.provide(runtime(unloaded, fakeHoldings(), { runs: [run("a")] }))),
   );
 
+  const spoked = fakeEngine();
+  spoked.inSpokes.push(RunId.make("a"));
+
+  effect("a run whose workflow is in a spoke is interrupted without waiting on it", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunHandler({ target: byId("a"), ...asAlice });
+
+      expect(cancelled.run.status).toBe("cancelled");
+      expect([cancelled.stopped, spoked.interrupted]).toEqual([false, ["execution-a"]]);
+    }).pipe(Effect.provide(runtime(spoked, fakeHoldings(), { runs: [run("a")] }))),
+  );
+
   const unexecuted = fakeEngine();
 
   effect("a run with no execution yet is cancelled with nothing to interrupt", () =>

@@ -54,6 +54,8 @@ import { ReleaseMarkersCommand } from "./commands/release-markers.command.ts";
 import { releaseMarkersHandler } from "./commands/release-markers.handler.ts";
 import { ReleaseRunWaitCommand } from "./commands/release-run-wait.command.ts";
 import { releaseRunWaitHandler } from "./commands/release-run-wait.handler.ts";
+import { ReportRunEndedCommand } from "./commands/report-run-ended.command.ts";
+import { reportRunEndedHandler } from "./commands/report-run-ended.handler.ts";
 import { ResumeRunCommand } from "./commands/resume-run.command.ts";
 import { resumeRunHandler } from "./commands/resume-run.handler.ts";
 import { SaveRunPlanCommand } from "./commands/save-run-plan.command.ts";
@@ -62,6 +64,8 @@ import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
 import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
+import { StartSpokeRunCommand } from "./commands/start-spoke-run.command.ts";
+import { startSpokeRunHandler } from "./commands/start-spoke-run.handler.ts";
 import {
   runFlowsCommandSpanAttributes,
   runsCommandSpanAttributes,
@@ -152,8 +156,10 @@ export const runFlowsCommandGroup = Command.group(
   PollRunCommand,
   RecoverRunsCommand,
   ReleaseMarkersCommand,
+  ReportRunEndedCommand,
   ResumeRunCommand,
   StartFlowRunCommand,
+  StartSpokeRunCommand,
 );
 
 const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
@@ -166,8 +172,10 @@ const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
   PollRunCommand: (payload) => pollRunHandler(payload),
   RecoverRunsCommand: () => recoverRunsHandler(),
   ReleaseMarkersCommand: () => releaseMarkersHandler(),
+  ReportRunEndedCommand: (payload) => reportRunEndedHandler(payload),
   ResumeRunCommand: (payload) => resumeRunHandler(payload),
   StartFlowRunCommand: (payload) => startFlowRunHandler(payload),
+  StartSpokeRunCommand: (payload) => startSpokeRunHandler(payload),
 });
 
 // The runs module's slice of the write side over the loaded flows, which the

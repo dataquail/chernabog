@@ -3,16 +3,20 @@
 // chernabog home, created when the run executes and deleted when it ends.
 // state.db keeps the machine's own records and holds no engine tables.
 //
-// A process may run several runs at once (the daemon, until its runs move
-// into spokes, #659), so the one WorkflowEngine it provides routes each
-// execution to an engine of its own: a cluster engine over a single runner
-// over that run's journal. A spoke, which runs one run, gets exactly one.
+// A process may hold several journals at once (the in-process path the daemon
+// no longer takes, until #665 deletes it), so the one WorkflowEngine it
+// provides routes each execution to an engine of its own: a cluster engine
+// over a single runner over that run's journal. A spoke, which runs one run,
+// gets exactly one. A spoke also writes its reports here (`spoke_reports`),
+// so far only its last, how its run ended, which the hub reads once the
+// spoke has exited.
 
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -23,10 +27,12 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
 import type * as Workflow from "effect/workflow/Workflow";
 import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { homePaths } from "../../../../platform/home.ts";
+import { SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts";
 
 // The files SQLite keeps for one journal: the database, and beside it while
 // it's open its write-ahead log and shared memory, or, outside WAL mode, its
@@ -34,6 +40,36 @@ import { homePaths } from "../../../../platform/home.ts";
 const SQLITE_SIDECARS = ["", "-wal", "-shm", "-journal"];
 
 const JOURNAL = ".db";
+
+// `spoke_reports` (ADR 23, decision 3): an append-only table of what a run's
+// spoke tells the machine, each report its tag and its payload as JSON, in
+// the order it was written. So far only its last report, how its run ended
+// (`RunEnded`); the reports of its steps come with the hub's fold (#661).
+const SPOKE_REPORTS = `CREATE TABLE IF NOT EXISTS spoke_reports (
+  seq INTEGER PRIMARY KEY,
+  at TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  payload TEXT NOT NULL
+)`;
+
+const RUN_ENDED = "RunEnded";
+
+const EndedPayload = Schema.fromJsonString(SpokeEnding);
+const encodeEnded = Schema.encodeSync(EndedPayload);
+const decodeEnded = Schema.decodeUnknownOption(EndedPayload);
+
+const PayloadRows = Schema.Array(Schema.Struct({ payload: Schema.String }));
+
+// `use` over its own connection to a journal, closed after.
+const inJournal = <A, E>(
+  filename: string,
+  use: (sql: SqlClient.SqlClient) => Effect.Effect<A, E>,
+) =>
+  Effect.scoped(
+    Layer.build(SqliteClient.layer({ filename })).pipe(
+      Effect.flatMap((built) => use(Context.get(built, SqlClient.SqlClient))),
+    ),
+  );
 
 // The run a payload is for: every flow's payload names it (FlowPayload).
 const RunOfPayload = Schema.Struct({ runId: Schema.String });
@@ -56,6 +92,16 @@ export class RunJournals extends Context.Service<
     readonly discard: (runId: string) => Effect.Effect<void>;
     // The runs that have a journal on this machine.
     readonly list: Effect.Effect<ReadonlyArray<string>>;
+    // Whether this process has the run's journal open: whether its workflow
+    // executes here rather than in a spoke.
+    readonly isOpen: (runId: string) => Effect.Effect<boolean>;
+    // Appends the spoke's last report to its run's journal: how the run
+    // ended. Nothing for a run whose journal is gone.
+    readonly reportEnded: (runId: string, ending: SpokeEnding) => Effect.Effect<void>;
+    // The last ending a run's spoke reported in its journal; none for a run
+    // with no journal, or a spoke that exited before it said. Reading makes
+    // no journal.
+    readonly reportedEnding: (runId: string) => Effect.Effect<Option.Option<SpokeEnding>>;
   }
 >()("RunJournals") {}
 
@@ -220,6 +266,42 @@ const journalsMade = (root: string) =>
 
           yield* removeFiles(runId);
         }),
+      // A journal the hub already deleted, as when it ended the run first, is
+      // never made again by a late report.
+      isOpen: (runId) => Effect.sync(() => opened.has(runId)),
+      reportEnded: (runId, ending) =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(paths.journal(runId)))) {
+            return;
+          }
+
+          const at = DateTime.formatIso(yield* DateTime.now);
+
+          yield* inJournal(paths.journal(runId), (sql) =>
+            Effect.gen(function* () {
+              yield* sql.unsafe(SPOKE_REPORTS);
+              yield* sql`INSERT INTO spoke_reports (at, tag, payload)
+                VALUES (${at}, ${RUN_ENDED}, ${encodeEnded(ending)})`;
+            }),
+          );
+        }).pipe(Effect.orDie),
+      reportedEnding: (runId) =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(paths.journal(runId)))) {
+            return Option.none<SpokeEnding>();
+          }
+
+          const rows = yield* inJournal(paths.journal(runId), (sql) =>
+            Effect.gen(function* () {
+              yield* sql.unsafe(SPOKE_REPORTS);
+
+              return yield* sql`SELECT payload FROM spoke_reports
+                WHERE tag = ${RUN_ENDED} ORDER BY seq DESC LIMIT 1`;
+            }),
+          ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(PayloadRows)));
+
+          return Option.flatMap(Option.fromUndefinedOr(rows[0]), (row) => decodeEnded(row.payload));
+        }).pipe(Effect.orDie),
       list: fs.readDirectory(paths.journals).pipe(
         Effect.map((names) =>
           names

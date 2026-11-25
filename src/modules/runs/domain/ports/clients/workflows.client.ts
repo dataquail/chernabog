@@ -4,6 +4,7 @@ import type * as Option from "effect/Option";
 
 import { type RunId } from "../../../../../kernel/run-id.id.ts";
 import { type RunEnding } from "../../run/run-status.value-object.ts";
+import { type SpokeEnding } from "../../run/spoke-ending.value-object.ts";
 import { type FlowRef, type WorkItem } from "../../run/work-item.value-object.ts";
 
 // How a workflow ended.
@@ -22,6 +23,9 @@ export type WorkflowsClientService = {
   // Whether this engine runs the flow's workflow; a process runs only the
   // flows it loaded.
   readonly runs: (flow: FlowRef) => boolean;
+  // The id of a run's execution, which is keyed by the run: what a hub
+  // attaches to a run before its spoke executes it (ADR 23, decision 2).
+  readonly executionIdOf: (flow: FlowRef, runId: RunId, item: WorkItem) => Effect.Effect<string>;
   // Starts a run's workflow, in a journal of its own; the id of its execution.
   readonly execute: (flow: FlowRef, runId: RunId, item: WorkItem) => Effect.Effect<string>;
   // How an execution ended; none while it runs, or for a flow this engine
@@ -44,6 +48,15 @@ export type WorkflowsClientService = {
   readonly discard: (runId: RunId) => Effect.Effect<void>;
   // The runs with a journal on this machine.
   readonly journals: Effect.Effect<ReadonlyArray<RunId>>;
+  // Whether the run's workflow executes in this process, rather than in a
+  // spoke of its own (ADR 23): only then can this process wait for it to stop.
+  readonly executing: (runId: RunId) => Effect.Effect<boolean>;
+  // A spoke's last report, in its run's journal: how the run ended, for the
+  // hub to end it with once the spoke has exited (ADR 23, decisions 2 and 3).
+  readonly reportEnded: (runId: RunId, ending: SpokeEnding) => Effect.Effect<void>;
+  // The last ending a run's spoke reported; none for a run with no journal,
+  // or a spoke that exited before it said.
+  readonly reportedEnding: (runId: RunId) => Effect.Effect<Option.Option<SpokeEnding>>;
   // Completes a durable deferred a run waits on, waking it.
   readonly wake: (deferred: string, token: string) => Effect.Effect<void>;
   // Adds a line to a run's log.

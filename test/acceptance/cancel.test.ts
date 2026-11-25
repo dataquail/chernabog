@@ -1,6 +1,7 @@
 // Cancelling a run in flight, end to end: with the daemon running and with it
-// stopped, a parked run ends as cancelled, its worktree and claim go, and it
-// stays cancelled across a restart.
+// stopped, a run in a long step ends as cancelled, its worktree and claim go,
+// and it stays cancelled across a restart. A run that parks no longer stays in
+// flight to be cancelled: its spoke ends it at its park (ADR 23).
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -15,7 +16,7 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // Claims an eligible issue, prepares its worktree, and waits on a signal no
 // trigger reports, as a run waiting on a person would.
-const PARKED = `import { awaitSignal, defineFlow, GitHub, Implement, Repo, reportAs } from "@chernabog/sdk";
+const PARKED = `import { activity, defineFlow, GitHub, Implement, Repo, reportAs } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 
 export default defineFlow({
@@ -30,7 +31,7 @@ export default defineFlow({
       const issue = yield* Implement.issueOf(item);
       const { branch } = yield* Implement.claim(issue);
       yield* Implement.prepareWorktree(branch);
-      yield* awaitSignal(["never"], { id: "park", timeout: "1 day" });
+      yield* activity("working", Effect.sleep("1 day"));
 
       return "woke";
     }),
@@ -69,8 +70,8 @@ describe("chernabog cancel", () => {
       JSON.parse((await sandbox.runCli(["status", "--json"])).output),
     );
 
-  // The run in flight for an issue, once it's parked on its signal.
-  const parkedOn = async (issue: number) => {
+  // The run in flight for an issue, once it's in its long step.
+  const inFlightOn = async (issue: number) => {
     const deadline = Date.now() + 45_000;
 
     while (Date.now() < deadline) {
@@ -79,7 +80,10 @@ describe("chernabog cancel", () => {
 
       const parked = Option.flatMap(now, (found) =>
         Option.fromUndefinedOr(
-          found.active.find((run) => run.itemKey === `issue-${issue}` && run.parked),
+          found.active.find(
+            (run) =>
+              run.itemKey === `issue-${issue}` && Option.contains(run.currentStep, "working"),
+          ),
         ),
       );
 
@@ -90,7 +94,7 @@ describe("chernabog cancel", () => {
       await Bun.sleep(250);
     }
 
-    throw new Error(`timed out waiting for the run for #${issue} to park`);
+    throw new Error(`timed out waiting for the run for #${issue} to be in its long step`);
   };
 
   const worktree = (issue: number) =>
@@ -113,10 +117,10 @@ describe("chernabog cancel", () => {
     await sandbox.github.stop();
   });
 
-  test("with the daemon running, ends a parked run and releases what it held", async () => {
-    const issue = sandbox.github.addIssue("Park me", ["auto:eligible"]);
+  test("with the daemon running, ends a run in flight and releases what it held", async () => {
+    const issue = sandbox.github.addIssue("Hold me", ["auto:eligible"]);
     await startDaemon();
-    const runId = await parkedOn(issue);
+    const runId = await inFlightOn(issue);
 
     expect(sandbox.github.issue(issue).labels).toContain("auto:in-progress");
     expect(existsSync(worktree(issue))).toBe(true);
@@ -125,7 +129,12 @@ describe("chernabog cancel", () => {
 
     expect(code).toBe(0);
     expect(output).toContain(`cancelled ${runId}`);
-    expect(output).toContain("its workflow stopped in the engine");
+    // Its workflow is in its spoke, which the daemon ends once the run has.
+    expect(output).toContain("its workflow is interrupted in the engine");
+    await waitFor(
+      () => sandbox.daemonLog().includes(`spoke for ${runId.slice(0, 8)} `),
+      "the run's spoke to exit",
+    );
     expect(output).toContain(
       `released the claim on #${issue} and deleted branch auto/issue-${issue}`,
     );
@@ -160,8 +169,8 @@ describe("chernabog cancel", () => {
   }, 30_000);
 
   test("with the daemon stopped, cancels by item, and the run stays cancelled when it starts", async () => {
-    const issue = sandbox.github.addIssue("Park me too", ["auto:eligible"]);
-    const runId = await parkedOn(issue);
+    const issue = sandbox.github.addIssue("Hold me too", ["auto:eligible"]);
+    const runId = await inFlightOn(issue);
     await stopDaemon();
 
     const { code, output } = await sandbox.runCli(["cancel", "dataquail/demo", `issue-${issue}`]);

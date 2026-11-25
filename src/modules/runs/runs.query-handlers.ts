@@ -26,6 +26,8 @@ import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.
 import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
 import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
 import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
+import { pollExecutionHandler } from "./queries/poll-execution.handler.ts";
+import { PollExecutionQuery } from "./queries/poll-execution.query.ts";
 import { pollNotificationsHandler } from "./queries/poll-notifications.handler.ts";
 import { PollNotificationsQuery } from "./queries/poll-notifications.query.ts";
 import { readFlowPlanHandler } from "./queries/read-flow-plan.handler.ts";
@@ -38,6 +40,8 @@ import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
 import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
 import { readRunUsageHandler } from "./queries/read-run-usage.handler.ts";
 import { ReadRunUsageQuery } from "./queries/read-run-usage.query.ts";
+import { readSpokeEndingHandler } from "./queries/read-spoke-ending.handler.ts";
+import { ReadSpokeEndingQuery } from "./queries/read-spoke-ending.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { readTokenUsageCursorHandler } from "./queries/read-token-usage-cursor.handler.ts";
@@ -108,10 +112,16 @@ export const RunsQueriesLive = Layer.effect(
 // state.db. The flows are built inside the engine, over those stores, so
 // this group is the daemon's to provide over its runtime, as the runs'
 // commands are, apart from the queries the engine itself asks.
-export const runFlowsQueryGroup = Query.group(CheckRunValidityQuery);
+export const runFlowsQueryGroup = Query.group(
+  CheckRunValidityQuery,
+  PollExecutionQuery,
+  ReadSpokeEndingQuery,
+);
 
 const RunFlowsQueryHandlersLive = Query.handlersOf(runFlowsQueryGroup, {
   CheckRunValidityQuery: (payload) => checkRunValidityHandler(payload),
+  PollExecutionQuery: (payload) => pollExecutionHandler(payload),
+  ReadSpokeEndingQuery: (payload) => readSpokeEndingHandler(payload),
 });
 
 // The runs module's slice of the read side over the loaded flows, which the

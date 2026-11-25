@@ -268,7 +268,10 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
         Flag.withDescription("The flow, as the plan's entry names it"),
       ),
       persona: Flag.String("persona").pipe(
-        Flag.withDescription("The GitHub login the run acts as, as the plan's entry names it"),
+        Flag.withDescription(
+          "The GitHub login the run acts as, as the plan's entry names it; left out, the repo's implicit persona, as a hub hands over its run",
+        ),
+        Flag.optional,
       ),
       item: Flag.String("item").pipe(
         Flag.withDescription(
@@ -298,6 +301,12 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
           "Read the working copy's .chernabog/, rather than the default branch's",
         ),
         Flag.withDefault(false),
+      ),
+      tree: Flag.String("tree").pipe(
+        Flag.withDescription(
+          "Read .chernabog/ from this tree's snapshot, rather than the default branch's: a hub passes the tree it trusted and loaded",
+        ),
+        Flag.optional,
       ),
       run: Flag.String("run").pipe(
         Flag.withDescription(
@@ -333,6 +342,7 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             persona: options.persona,
             item: options.item,
             fromCheckout: options.fromCheckout,
+            tree: options.tree,
             leaseTtl: Duration.seconds(options.leaseSeconds),
             stopAfter: Duration.seconds(options.stopAfterSeconds),
             repo,

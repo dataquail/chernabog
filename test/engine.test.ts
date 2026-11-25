@@ -787,62 +787,26 @@ describe("a run's journal", () => {
     }),
   );
 
-  effect("a run in flight at a restart resumes from its journal in the next process", () =>
+  effect("a restart resumes no run from its journal, and sweeps an ended run's journal", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-journal-" });
+      const paths = homePaths(home);
 
       const run = yield* processAt(home, started(item("wait")).pipe(Effect.tap(waiting)));
 
-      const { ended, recovered } = yield* processAt(
-        home,
-        Effect.gen(function* () {
-          const recovery = yield* recoverRunsHandler();
-          yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
+      // As for a journal a crash kept the run's ending from deleting.
+      yield* fs.writeFileString(paths.journal("ended-long-ago"), "");
 
-          return { ended: yield* toEnd(run), recovered: recovery };
-        }),
-      );
+      const recovered = yield* processAt(home, recoverRunsHandler());
 
-      expect(recovered.resumed.map((found) => String(found.id))).toEqual([String(run.id)]);
-      expect(recovered.repeated).toEqual([]);
-      expect([ended.status, summaryOf(ended)]).toEqual(["done", "woke by pushed"]);
-      expect(yield* gone(homePaths(home).journal(run.id))).toBe(false);
+      expect(recovered.executed).toEqual([]);
+      expect(recovered.swept).toEqual(["ended-long-ago"]);
+      // The running run's journal stays for the hub to end the run with.
+      expect(
+        (yield* fs.readDirectory(paths.journals)).filter((name) => name.endsWith(".db")),
+      ).toEqual([`${run.id}.db`]);
     }),
-  );
-
-  effect(
-    "a run whose journal is gone at a restart starts its phase again, and an ended run's journal is swept",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-journal-" });
-        const paths = homePaths(home);
-
-        const run = yield* processAt(home, started(item("wait")).pipe(Effect.tap(waiting)));
-
-        // As for a run journaled in state.db before journals were per run.
-        yield* fs.remove(paths.journal(run.id));
-        // As for a journal a crash kept the run's ending from deleting.
-        yield* fs.writeFileString(paths.journal("ended-long-ago"), "");
-
-        const { ended, recovered } = yield* processAt(
-          home,
-          Effect.gen(function* () {
-            const recovery = yield* recoverRunsHandler();
-            yield* waiting(run);
-            yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
-
-            return { ended: yield* toEnd(run), recovered: recovery };
-          }),
-        );
-
-        expect(recovered.repeated.map((found) => String(found.id))).toEqual([String(run.id)]);
-        expect(recovered.resumed).toEqual([]);
-        expect(recovered.swept).toEqual(["ended-long-ago"]);
-        expect(ended.status).toBe("done");
-        expect(yield* fs.readDirectory(paths.journals)).toEqual([]);
-      }),
   );
 });
 

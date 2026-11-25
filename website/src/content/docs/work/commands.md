@@ -33,7 +33,7 @@ description: Every chernabog command and flag.
 | `recipes compile [documents…]` | Compile this repo's [flow documents](/chernabog/flows/documents/) to flow files with the SDK it pins, all when none is named, and report each problem at its line in the document. `--check` writes nothing and fails if a flow file is out of date; `--json` gives the same result to read. Experimental |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
-| `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
+| `start`, `stop`                   | Start or stop the daemon; stopping it ends the runs in flight, which end `interrupted` when it starts again and repeat their phases in new runs. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
 | `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
 | `ci run --flow <flow> --persona <login> --item <item>` | The run job: one item on one runner, to the next phase boundary; see [below](#ci-run) |

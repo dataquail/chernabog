@@ -44,9 +44,20 @@ export const executeRunHandler = Effect.fn("executeRunHandler")(function* ({
     return yield* new RunAlreadyFinished({ runId, status: run.status });
   }
 
-  // An execution keyed by this run is already going, in another spoke's
-  // journal: a second would replay the same run beside it.
-  if (Option.isNone(RunRootOps.unexecuted(run))) {
+  // Only a run a hub recorded is handed over: the hub attaches its
+  // execution with it, in the one unit of work that takes the item
+  // (StartSpokeRunCommand), so a run without one is no hub's to give.
+  if (Option.isNone(run.executionId)) {
+    return yield* new FlowFailed({
+      message: `run ${runId} has no execution: a hub records one with the run before it hands it over`,
+    });
+  }
+
+  // A run with a journal already has its spoke: a second would replay the
+  // same run beside it. The hub records and attaches a run in one unit of
+  // work and spawns one spoke for it (StartSpokeRunCommand), so this guards
+  // only a hand-over made twice.
+  if ((yield* workflows.journals).includes(runId)) {
     return yield* new RunAlreadyActive({ runId });
   }
 
@@ -58,24 +69,9 @@ export const executeRunHandler = Effect.fn("executeRunHandler")(function* ({
     });
   }
 
-  const executionId = yield* workflows.execute(flow, runId, item);
+  // Its execution is keyed by the run, which the hub attached when it
+  // recorded the run: executing it writes nothing to state.db.
+  yield* workflows.execute(flow, runId, item);
 
-  // Ended meanwhile (a cancel), the run keeps its ending: the execution
-  // isn't attached, and nothing polls it.
-  const attached = yield* Effect.gen(function* () {
-    const now = yield* runs.findOne(RunSpecifications.withId(runId));
-
-    const changed = yield* Effect.fromResult(
-      RunRootOps.attachExecution(
-        Option.getOrElse(now, () => run),
-        executionId,
-      ),
-    );
-
-    yield* runs.upsertOne(changed);
-
-    return changed;
-  }).pipe(inUnitOfWork);
-
-  return RunView.make({ ...attached });
+  return RunView.make({ ...run });
 });
