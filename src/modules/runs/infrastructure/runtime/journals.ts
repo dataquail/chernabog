@@ -13,6 +13,7 @@ import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Context from "effect/Context";
 import type * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -70,11 +71,22 @@ type Opened = {
   readonly executions: Set<string>;
 };
 
+// How long closing a run's engine waits for what still runs in it before
+// interrupting it. A journal is discarded only once its run has ended, so
+// nothing in it has work left to finish; the cluster's default, 15 seconds,
+// would only hold up the run's ending.
+const TERMINATION = Duration.seconds(1);
+
 // The engine over one journal. Its runner keeps nothing of its own: the
 // journal is the run's alone, and no other process reads it.
 const engineOver = (filename: string) =>
   ClusterWorkflowEngine.layer.pipe(
-    Layer.provideMerge(SingleRunner.layer({ runnerStorage: "memory" })),
+    Layer.provideMerge(
+      SingleRunner.layer({
+        runnerStorage: "memory",
+        shardingConfig: { entityTerminationTimeout: TERMINATION },
+      }),
+    ),
     Layer.provide(SqliteClient.layer({ filename })),
   );
 
@@ -180,22 +192,33 @@ const journalsMade = (root: string) =>
 
           return true;
         }).pipe(lock.withPermits(1)),
+      // The run's engine leaves the maps under the lock, so no new call
+      // reaches it; it closes outside the lock, so another run's start never
+      // waits on it.
       discard: (runId) =>
         Effect.gen(function* () {
-          for (const found of Option.toArray(Option.fromUndefinedOr(opened.get(runId)))) {
-            opened.delete(runId);
+          const found = yield* Effect.sync(() => {
+            const one = Option.fromUndefinedOr(opened.get(runId));
 
-            for (const executionId of found.executions) {
-              runOf.delete(executionId);
+            for (const gone of Option.toArray(one)) {
+              opened.delete(runId);
+
+              for (const executionId of gone.executions) {
+                runOf.delete(executionId);
+              }
             }
 
-            // Closing the engine's scope interrupts what still runs in it and
-            // closes the journal's connection, before its files go.
-            yield* Scope.close(found.scope, Exit.void);
+            return one;
+          }).pipe(lock.withPermits(1));
+
+          // Closing the engine's scope interrupts what still runs in it and
+          // closes the journal's connection, before its files go.
+          for (const gone of Option.toArray(found)) {
+            yield* Scope.close(gone.scope, Exit.void);
           }
 
           yield* removeFiles(runId);
-        }).pipe(lock.withPermits(1)),
+        }),
       list: fs.readDirectory(paths.journals).pipe(
         Effect.map((names) =>
           names
