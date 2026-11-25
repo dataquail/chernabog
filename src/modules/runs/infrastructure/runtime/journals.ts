@@ -7,9 +7,10 @@
 // no longer takes, until #665 deletes it), so the one WorkflowEngine it
 // provides routes each execution to an engine of its own: a cluster engine
 // over a single runner over that run's journal. A spoke, which runs one run,
-// gets exactly one. A spoke also writes its reports here (`spoke_reports`),
-// so far only its last, how its run ended, which the hub reads once the
-// spoke has exited.
+// gets exactly one. A spoke also writes its reports here (`spoke_reports`):
+// each record of its run that state.db keeps, which the hub tails and folds
+// into state.db as the only writer there, and last how its run ended,
+// which the hub reads once the spoke has exited.
 
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
@@ -33,6 +34,7 @@ import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { homePaths } from "../../../../platform/home.ts";
 import { SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts";
+import { SpokeReport } from "../../domain/run/spoke-report.value-object.ts";
 
 // The files SQLite keeps for one journal: the database, and beside it while
 // it's open its write-ahead log and shared memory, or, outside WAL mode, its
@@ -43,8 +45,9 @@ const JOURNAL = ".db";
 
 // `spoke_reports` (ADR 23, decision 3): an append-only table of what a run's
 // spoke tells the machine, each report its tag and its payload as JSON, in
-// the order it was written. So far only its last report, how its run ended
-// (`RunEnded`); the reports of its steps come with the hub's fold (#661).
+// the order it was written: the runs' commands its run would have dispatched
+// against state.db, by their tags, which the hub folds there, and
+// last how its run ended (`RunEnded`), which the hub reads apart.
 const SPOKE_REPORTS = `CREATE TABLE IF NOT EXISTS spoke_reports (
   seq INTEGER PRIMARY KEY,
   at TEXT NOT NULL,
@@ -59,6 +62,10 @@ const encodeEnded = Schema.encodeSync(EndedPayload);
 const decodeEnded = Schema.decodeUnknownOption(EndedPayload);
 
 const PayloadRows = Schema.Array(Schema.Struct({ payload: Schema.String }));
+
+const ReportRows = Schema.Array(SpokeReport);
+
+const decodeReports = Schema.decodeUnknownEffect(ReportRows);
 
 // `use` over its own connection to a journal, closed after.
 const inJournal = <A, E>(
@@ -102,6 +109,14 @@ export class RunJournals extends Context.Service<
     // with no journal, or a spoke that exited before it said. Reading makes
     // no journal.
     readonly reportedEnding: (runId: string) => Effect.Effect<Option.Option<SpokeEnding>>;
+    // Appends a report to the run's journal, a runs' command by its tag and
+    // its payload encoded as JSON, in order after those before it. Nothing
+    // for a run whose journal is gone.
+    readonly append: (runId: string, tag: string, payload: string) => Effect.Effect<void>;
+    // The reports in the run's journal after `after`, in order, `RunEnded`
+    // among them; none for a run with no journal. Reading makes no journal,
+    // and writes nothing to one.
+    readonly reports: (runId: string, after: number) => Effect.Effect<ReadonlyArray<SpokeReport>>;
   }
 >()("RunJournals") {}
 
@@ -114,6 +129,9 @@ type Registration = (engine: Engine, scope: Scope.Scope) => Effect.Effect<void>;
 // One run's engine, open over its journal until the run ends or the process stops.
 type Opened = {
   readonly engine: Engine;
+  // The run's own connection to its journal for its reports, apart from the
+  // engine's, so a report is never part of a transaction of the engine's.
+  readonly reports: SqlClient.SqlClient;
   readonly scope: Scope.Closeable;
   readonly executions: Set<string>;
 };
@@ -178,9 +196,19 @@ const journalsMade = (root: string) =>
 
         const engine = Context.get(built, WorkflowEngine.WorkflowEngine);
 
+        const reports = Context.get(
+          yield* Layer.buildWithScope(
+            SqliteClient.layer({ filename: paths.journal(runId) }),
+            own,
+          ).pipe(Effect.orDie),
+          SqlClient.SqlClient,
+        );
+
+        yield* reports.unsafe(SPOKE_REPORTS).pipe(Effect.orDie);
+
         yield* registration(engine, own);
 
-        const made: Opened = { engine, scope: own, executions: new Set() };
+        const made: Opened = { engine, reports, scope: own, executions: new Set() };
         opened.set(runId, made);
 
         return made;
@@ -301,6 +329,53 @@ const journalsMade = (root: string) =>
           ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(PayloadRows)));
 
           return Option.flatMap(Option.fromUndefinedOr(rows[0]), (row) => decodeEnded(row.payload));
+        }).pipe(Effect.orDie),
+      append: (runId, tag, payload) =>
+        Effect.gen(function* () {
+          const at = DateTime.formatIso(yield* DateTime.now);
+
+          const insert = (sql: SqlClient.SqlClient) =>
+            Effect.gen(function* () {
+              yield* sql.unsafe(SPOKE_REPORTS);
+              yield* sql`INSERT INTO spoke_reports (at, tag, payload)
+                VALUES (${at}, ${tag}, ${payload})`;
+            });
+
+          const found = Option.fromUndefinedOr(opened.get(runId));
+
+          if (Option.isSome(found)) {
+            return yield* insert(found.value.reports);
+          }
+
+          if (yield* fs.exists(paths.journal(runId))) {
+            yield* inJournal(paths.journal(runId), insert);
+          }
+        }).pipe(Effect.orDie),
+      reports: (runId, after) =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(paths.journal(runId)))) {
+            return [];
+          }
+
+          const read = (sql: SqlClient.SqlClient) =>
+            Effect.gen(function* () {
+              const tables = yield* sql`SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name = 'spoke_reports'`;
+
+              if (tables.length === 0) {
+                return [];
+              }
+
+              return yield* sql`SELECT seq, at, tag, payload FROM spoke_reports
+                WHERE seq > ${after} ORDER BY seq`.pipe(Effect.flatMap(decodeReports));
+            });
+
+          // The process that writes the journal reads it over its own
+          // connection; any other opens one for the read.
+          return yield* Option.match(Option.fromUndefinedOr(opened.get(runId)), {
+            onSome: (found) => read(found.reports),
+            onNone: () => inJournal(paths.journal(runId), read),
+          });
         }).pipe(Effect.orDie),
       list: fs.readDirectory(paths.journals).pipe(
         Effect.map((names) =>

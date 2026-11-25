@@ -2,6 +2,8 @@ import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { AdoptImplicitRunsCommand } from "./commands/adopt-implicit-runs.command.ts";
@@ -119,6 +121,50 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   SaveRunPlanCommand: (payload) => saveRunPlanHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
 });
+
+// The runs' commands a spoke reports in its journal rather than dispatching
+// (ADR 23, decision 3): what its run records, each encoded with its own
+// schema, which the hub folds into state.db by dispatching it on its bus.
+export const SpokeReportCommand = {
+  DeclareLaneCommand,
+  EnterStepCommand,
+  FinishStepCommand,
+  ForgetMarkerCommand,
+  HoldMarkerCommand,
+  NameSubjectCommand,
+  ParkRunCommand,
+  RecordCreatedIssueCommand,
+  RecordNodeCommand,
+  RecordTokenUsageCommand,
+  SaveRunPlanCommand,
+} as const;
+
+// The same, as a list: not a group, since each is in runsCommandGroup already.
+export const spokeReportCommands = Object.values(SpokeReportCommand);
+
+// A report's payload as its journal holds it, JSON, coded with its command's
+// own payload schema: what the spoke writes and the hub reads back. A
+// group keeps its messages' schemas erased, so it is rebuilt from the AST.
+export const spokeReportPayloadJson = <M extends Command.Any>(command: M) =>
+  Schema.fromJsonString(
+    Schema.toCodecJson(
+      Schema.make<Schema.Codec<Command.Payload<M>, unknown>>(command.schemas.payload.ast),
+    ),
+  );
+
+// A report's payload, encoded as its journal holds it.
+export const encodeSpokeReport = <M extends Command.Any>(command: M, payload: Command.Payload<M>) =>
+  Schema.encodeSync(spokeReportPayloadJson(command))(payload);
+
+// A report's payload decoded as `command`'s, or none for one that isn't.
+export const decodeSpokeReport = <M extends Command.Any>(
+  command: M,
+  report: { readonly tag: string; readonly payload: string },
+) =>
+  Option.flatMap(
+    Option.liftPredicate(report, (one) => one.tag === command.tag),
+    (one) => Schema.decodeOption(spokeReportPayloadJson(command))(one.payload),
+  );
 
 // The runs module's slice of the write side over state.db, which the engine
 // dispatches as a run takes its steps, parks on a signal, holds and forgets

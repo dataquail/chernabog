@@ -42,6 +42,8 @@ import { readRunUsageHandler } from "./queries/read-run-usage.handler.ts";
 import { ReadRunUsageQuery } from "./queries/read-run-usage.query.ts";
 import { readSpokeEndingHandler } from "./queries/read-spoke-ending.handler.ts";
 import { ReadSpokeEndingQuery } from "./queries/read-spoke-ending.query.ts";
+import { readSpokeReportsHandler } from "./queries/read-spoke-reports.handler.ts";
+import { ReadSpokeReportsQuery } from "./queries/read-spoke-reports.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { readTokenUsageCursorHandler } from "./queries/read-token-usage-cursor.handler.ts";
@@ -116,12 +118,14 @@ export const runFlowsQueryGroup = Query.group(
   CheckRunValidityQuery,
   PollExecutionQuery,
   ReadSpokeEndingQuery,
+  ReadSpokeReportsQuery,
 );
 
 const RunFlowsQueryHandlersLive = Query.handlersOf(runFlowsQueryGroup, {
   CheckRunValidityQuery: (payload) => checkRunValidityHandler(payload),
   PollExecutionQuery: (payload) => pollExecutionHandler(payload),
   ReadSpokeEndingQuery: (payload) => readSpokeEndingHandler(payload),
+  ReadSpokeReportsQuery: (payload) => readSpokeReportsHandler(payload),
 });
 
 // The runs module's slice of the read side over the loaded flows, which the

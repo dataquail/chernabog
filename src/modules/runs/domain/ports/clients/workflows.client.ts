@@ -5,6 +5,7 @@ import type * as Option from "effect/Option";
 import { type RunId } from "../../../../../kernel/run-id.id.ts";
 import { type RunEnding } from "../../run/run-status.value-object.ts";
 import { type SpokeEnding } from "../../run/spoke-ending.value-object.ts";
+import { type SpokeReport } from "../../run/spoke-report.value-object.ts";
 import { type FlowRef, type WorkItem } from "../../run/work-item.value-object.ts";
 
 // How a workflow ended.
@@ -57,6 +58,10 @@ export type WorkflowsClientService = {
   // The last ending a run's spoke reported; none for a run with no journal,
   // or a spoke that exited before it said.
   readonly reportedEnding: (runId: RunId) => Effect.Effect<Option.Option<SpokeEnding>>;
+  // The reports a run's spoke wrote in its journal after `after`, in order,
+  // for the hub to fold into state.db (ADR 23, decisions 3 and 8); none for a
+  // run with no journal.
+  readonly reports: (runId: RunId, after: number) => Effect.Effect<ReadonlyArray<SpokeReport>>;
   // Completes a durable deferred a run waits on, waking it.
   readonly wake: (deferred: string, token: string) => Effect.Effect<void>;
   // Adds a line to a run's log.

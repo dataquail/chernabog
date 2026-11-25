@@ -8,6 +8,7 @@ import { item, makeFake, repo, runToEnd, runUntil } from "../../../../../test/sd
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { flowHandle } from "../runtime/engine.ts";
+import { RunJournals } from "../runtime/journals.ts";
 
 // A flow whose workflow logs a line and ends with what its item says.
 const flow = defineFlow({
@@ -82,6 +83,41 @@ describe("WorkflowsClientLive", () => {
         Option.none(),
         Option.some({ status: "done", summary: "did pr-1" }),
         Option.none(),
+      ]);
+    }),
+  );
+
+  effect("reads back a spoke's reports in its run's journal, in order, after the one asked", () =>
+    Effect.gen(function* () {
+      const handle = flowHandle(repo, "demo", flow);
+      const read: Array<unknown> = [];
+
+      yield* runUntil(handle, makeFake("approve"), item("pr-1"), (run) =>
+        Effect.gen(function* () {
+          const journals = yield* RunJournals;
+          const workflows = yield* WorkflowsClient;
+          yield* journals.append(run.id, "EnterStepCommand", '{"step":"claim"}');
+          yield* journals.append(run.id, "FinishStepCommand", '{"step":"claim"}');
+
+          const reports = (after: number) =>
+            Effect.map(workflows.reports(run.id, after), (found) =>
+              found.map((report) => [report.seq, report.tag, report.payload]),
+            );
+
+          read.push(yield* reports(0), yield* reports(1));
+          read.push(yield* workflows.reports(RunId.make("no-journal"), 0));
+
+          return true;
+        }),
+      );
+
+      expect(read).toEqual([
+        [
+          [1, "EnterStepCommand", '{"step":"claim"}'],
+          [2, "FinishStepCommand", '{"step":"claim"}'],
+        ],
+        [[2, "FinishStepCommand", '{"step":"claim"}']],
+        [],
       ]);
     }),
   );

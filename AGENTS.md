@@ -1001,9 +1001,10 @@ How a CI run differs from a daemon run:
 - **On a machine, `ci run --run` is a spoke** (ADR 23, #658). A hub has
   recorded the run and attached its execution (`StartSpokeRunCommand`) and
   hands it over:
-  `ci run --run <id> --repo --flow [--persona] --item <key> --work-item-file <path> [--tree <sha>]`
-  (or `--work-item <json>`; no `--persona` is the implicit one; `--tree` is
-  the `.chernabog/` tree the hub trusted). It runs in the machine's own home,
+  `ci run --run <id> --repo --flow [--persona] --item <key> --hand-over-file <path> [--tree <sha>]`
+  (or `--hand-over <json>`: a `SpokeHandOver`, the run as the hub recorded
+  it and its item; no `--persona` is the implicit one; `--tree` is the
+  `.chernabog/` tree the hub trusted). It runs in the machine's own home,
   writes no machine config, takes no `state.db.lock`, doesn't ask the
   trigger again, and runs the repo as the machine does (no `asCiJob`).
   `ExecuteRunCommand` executes the recorded run in its own journal, and the
@@ -1011,17 +1012,32 @@ How a CI run differs from a daemon run:
   state.db: it reports how its run ended (`ReportRunEndedCommand`, a
   `RunEnded` row in the journal's `spoke_reports`), and a park as
   `ended-at-park`, which it hears from its own engine (`flowLayer`'s
-  `onParked`, once the wait is recorded), not from state.db. It stops as on SIGTERM when its stdin closes. Until #661
-  it writes its steps, lanes, markers and the rest to `state.db` itself
-  beside the daemon (WAL, `STATE_DB_BUSY_TIMEOUT`); then the hub folds its
-  journal's reports.
+  `onParked`, once the wait is recorded), not from state.db. It stops as on
+  SIGTERM when its stdin closes. **It writes nothing to `state.db`** (#661):
+  `flowLayer` keeps a run's records through `RunRecords`
+  (`infrastructure/runtime/run-records.ts`), which a spoke provides over its
+  journal (`SpokeEngineAt`): each record is a row in `spoke_reports`, the
+  runs' command it would have dispatched (`spokeReportCommands`), encoded
+  with that command's own schema. It reads its run from the hand-over, the
+  markers it holds from its own reports, and a session's token cursor from
+  its own reports or, failing those, `state.db` read-only and query-only:
+  the one read a spoke makes there. Its runs module stands over an empty
+  store in memory. Elsewhere (`run`, `rehearse`, `ci run` under Actions)
+  `RunRecords` dispatches each record at once, until #665.
 - **The daemon is the hub** (ADR 23, #659): it executes no flow itself. A
   tick records each run with `StartSpokeRunCommand` (the run and its
   execution, keyed by the run, in one unit of work, so only that tick starts
   a spoke) and spawns its own executable as the spoke, leading a process
-  group of its own (`src/platform/process-group.ts`), with the item in
-  `spokes/<run>.item.json` and a stdin pipe it holds
-  (`src/interface/daemon/spokes.server.ts`). When the spoke exits, the hub
+  group of its own (`src/platform/process-group.ts`), with its hand-over in
+  `spokes/<run>.hand-over.json` and a stdin pipe it holds
+  (`src/interface/daemon/spokes.server.ts`). While the spoke lives the hub
+  tails its journal (ADR 23 d8; a watch of `journals/`, a poll every 2
+  seconds): it folds each new report (`ReadSpokeReportsQuery`) by
+  dispatching its command on the hub's `CommandBus`, so status, `/events`
+  and the dashboard see a spoke's steps as they'd see the hub's own; a
+  report it can't read or refuses goes to the run log and is skipped. The
+  fold position is the hub's memory until #664 keeps it in `om_spokes`.
+  When the spoke exits, the hub folds what's left, then
   reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
   (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
   said nothing ends `failed`, with how it exited. The run's ending releases

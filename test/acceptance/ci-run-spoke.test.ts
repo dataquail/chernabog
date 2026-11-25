@@ -1,14 +1,15 @@
 // `chernabog ci run` as a spoke on a machine (ADR 23, #658), through the real
 // CLI against the fake GitHub: the hub has recorded a run in the machine's
-// state.db, and hands it over with `--run` and the item. The spoke runs it in
-// the machine's own home, in a journal of the run's own, to its next phase
-// boundary: it takes the item's claim, records the phase, lets the claim go,
-// and reports how its run ended in its journal, for the hub to end the run
-// with once it has exited (#659). Its stdin is a pipe the hub holds, and it
-// stops when that closes.
+// state.db, and hands it over with `--run` and the run as recorded, with its
+// item. The spoke runs it in the machine's own home, in a journal of the
+// run's own, to its next phase boundary: it takes the item's claim, records
+// the phase, lets the claim go, and reports its steps and how its run ended
+// in its journal, for the hub to fold into state.db (#661) and end the run
+// with once it has exited (#659). It writes nothing to state.db. Its stdin
+// is a pipe the hub holds, and it stops when that closes.
 
 import { type ChildProcess } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Database } from "bun:sqlite";
@@ -20,7 +21,8 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // Takes the issue's claim, says on the issue which run holds it, and records
 // the issue's phase. An issue titled "park ..." then parks on `go`; one
-// titled "hold ..." holds the run in a long step, so a test can stop it.
+// titled "hold ..." holds the run in a long step, so a test can stop it; one
+// titled "agent ..." has an agent work on it first.
 const SPOKE = `import { activity, awaitSignal, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -35,7 +37,12 @@ export default defineFlow({
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
-      yield* Implement.claim(issue);
+      const { base, branch } = yield* Implement.claim(issue);
+
+      if ((item.title ?? "").startsWith("agent")) {
+        const worktree = yield* Implement.prepareWorktree(branch, { base });
+        yield* Implement.implementWithAgent(issue, worktree, { base });
+      }
 
       const holder = yield* activity(
         "holder",
@@ -84,16 +91,18 @@ describe("chernabog ci run as a spoke on a machine", () => {
     data: { issue },
   });
 
-  // What the hub does: records the run, writes its item to a file, and starts
-  // the spoke with a pipe on its stdin.
-  const startSpoke = async (title: string) => {
+  // What the hub does: records the run, writes its hand-over to a file, and
+  // starts the spoke with a pipe on its stdin. `before` runs once the run is
+  // recorded, before the spoke starts.
+  const startSpoke = async (title: string, before: () => void = () => {}) => {
     const issue = sandbox.github.addIssue(title, ["spoke"]);
     const item = itemOf(issue, title);
 
-    const runId = sandbox.recordRun("spoke", item);
+    const { handOver, runId } = sandbox.recordRun("spoke", item);
 
-    const itemFile = join(sandbox.root, `item-${runId}.json`);
-    writeFileSync(itemFile, JSON.stringify(item));
+    const handOverFile = join(sandbox.root, `hand-over-${runId}.json`);
+    writeFileSync(handOverFile, handOver);
+    before();
 
     const child = sandbox.spokeCli([
       "ci",
@@ -108,8 +117,8 @@ describe("chernabog ci run as a spoke on a machine", () => {
       "chernabog-bot",
       "--item",
       item.key,
-      "--work-item-file",
-      itemFile,
+      "--hand-over-file",
+      handOverFile,
     ]);
 
     let output = "";
@@ -146,6 +155,34 @@ describe("chernabog ci run as a spoke on a machine", () => {
   };
 
   const journalOf = (runId: string) => join(sandbox.home, "journals", `${runId}.db`);
+
+  // The tags of the reports the spoke wrote in its run's journal, in order.
+  const reportTagsOf = (runId: string) => {
+    const db = new Database(journalOf(runId), { readonly: true });
+
+    const rows = db.query<{ tag: string }, []>("SELECT tag FROM spoke_reports ORDER BY seq").all();
+
+    db.close();
+
+    return rows.map((row) => row.tag);
+  };
+
+  // What state.db's files hold, to tell whether anything wrote them. An empty
+  // write-ahead log is none: SQLite leaves one behind a read-only connection
+  // to a database in WAL mode, which writes nothing to it.
+  const stateFiles = () =>
+    ["state.db", "state.db-wal"].map((name) =>
+      Option.match(
+        Option.filter(
+          Option.liftPredicate(join(sandbox.home, name), existsSync),
+          (found) => readFileSync(found).length > 0,
+        ),
+        {
+          onNone: () => "none",
+          onSome: (found) => Bun.hash(readFileSync(found)).toString(),
+        },
+      ),
+    );
 
   // The last ending the spoke reported in its run's journal.
   const reportedOf = (runId: string) => {
@@ -210,42 +247,29 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
   }, 120_000);
 
-  test("another process writing state.db meanwhile only makes the spoke wait", async () => {
-    // The daemon's side, for as long as the spoke runs: a write lock taken
-    // every 50 ms and held for 200 of them.
-    const db = new Database(join(sandbox.home, "state.db"));
-    db.run("PRAGMA busy_timeout = 30000");
-    db.run("CREATE TABLE IF NOT EXISTS test_second_writer (at TEXT)");
-    let writing = true;
-    let writes = 0;
+  test("writes nothing to state.db: its records are reports in its journal, for the hub", async () => {
+    let before: Array<string> = [];
 
-    const write = () => {
-      if (!writing) {
-        return;
-      }
+    // An agent call reads its session's token cursor, the one read a spoke
+    // makes of state.db, read-only.
+    const { runId, spoke } = await startSpoke("agent works on it", () => {
+      before = stateFiles();
+    });
 
-      db.run("BEGIN IMMEDIATE");
-      db.run("INSERT INTO test_second_writer (at) VALUES (?)", [new Date().toISOString()]);
-      writes += 1;
-
-      setTimeout(() => {
-        db.run("COMMIT");
-        setTimeout(write, 50);
-      }, 200);
-    };
-
-    const { issue, runId, spoke } = await startSpoke("done beside another writer");
-    write();
     const { code, output } = await spoke.exited;
-    writing = false;
-    await waitFor(() => !db.inTransaction, "the second writer to commit", 5_000);
-    db.close();
 
     expect(output).toContain("done: phase recorded");
     expect(code).toBe(0);
-    expect(writes).toBeGreaterThan(1);
-    expect(phasesOf(issue)).toEqual(["handed-off"]);
-    expect(reportedOf(runId)).toEqual(Option.some({ status: "done", summary: "phase recorded" }));
+    expect(stateFiles()).toEqual(before);
+    // What the hub folds: the steps the run took, the claim it held and what
+    // the agent call spent, then how the run ended.
+    const tags = reportTagsOf(runId);
+    expect(tags).toContain("EnterStepCommand");
+    expect(tags).toContain("FinishStepCommand");
+    expect(tags).toContain("HoldMarkerCommand");
+    expect(tags).toContain("RecordTokenUsageCommand");
+    expect(tags.at(-1)).toBe("RunEnded");
+    expect(statusOf(runId)).toEqual(Option.some("running"));
   }, 120_000);
 
   test("a spoke whose stdin closes stops, letting go of its claim", async () => {
@@ -270,7 +294,7 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
   }, 120_000);
 
-  test("refuses a run handed over with no item, or an item that isn't the one named", async () => {
+  test("refuses a run handed over with no hand-over, or one that isn't of the run or item named", async () => {
     const missing = await sandbox.runCli([
       "ci",
       "run",
@@ -287,26 +311,36 @@ describe("chernabog ci run as a spoke on a machine", () => {
     ]);
 
     expect(missing.code).not.toBe(0);
-    expect(missing.output).toContain("needs the item it is for");
+    expect(missing.output).toContain("needs the hub's hand-over");
 
-    const mismatched = await sandbox.runCli([
-      "ci",
-      "run",
-      "--run",
-      "00000000-0000-4000-8000-000000000000",
-      "--repo",
-      "demo",
-      "--flow",
-      "spoke",
-      "--persona",
-      "chernabog-bot",
-      "--item",
-      "issue-1",
-      "--work-item",
-      JSON.stringify(itemOf(2, "another")),
-    ]);
+    const { handOver, runId } = sandbox.recordRun("spoke", itemOf(900, "never started"));
 
-    expect(mismatched.code).not.toBe(0);
-    expect(mismatched.output).toContain("isn't the item handed over");
+    const handedOver = (run: string, item: string) =>
+      sandbox.runCli([
+        "ci",
+        "run",
+        "--run",
+        run,
+        "--repo",
+        "demo",
+        "--flow",
+        "spoke",
+        "--persona",
+        "chernabog-bot",
+        "--item",
+        item,
+        "--hand-over",
+        handOver,
+      ]);
+
+    const otherItem = await handedOver(runId, "issue-1");
+
+    expect(otherItem.code).not.toBe(0);
+    expect(otherItem.output).toContain("isn't the item handed over");
+
+    const otherRun = await handedOver("00000000-0000-4000-8000-000000000000", "issue-900");
+
+    expect(otherRun.code).not.toBe(0);
+    expect(otherRun.output).toContain("isn't the run handed over");
   }, 60_000);
 });

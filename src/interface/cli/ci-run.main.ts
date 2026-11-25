@@ -44,6 +44,7 @@ import {
   type FlowRef,
   noHooks,
   openRepo,
+  recordsOfRun,
   type RepoContext,
   RunFlowsCommands,
   RunFlowsQueries,
@@ -51,9 +52,12 @@ import {
   RunsQueries,
   servicesFrom,
   SpokeEnding,
+  SpokeEngineLive,
+  type SpokeHandOver,
+  SpokeHandOverJson,
   withRepo,
   withRepoReservedFor,
-  WorkItem,
+  type WorkItem,
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
 import { type Environment, HostEnvironment } from "../../platform/environment.ts";
@@ -199,31 +203,30 @@ export type CiRunOptions = {
   // reserved the item for it (#519); none outside Actions.
   readonly workflowRun: Option.Option<string>;
   // The hub's hand-over, which makes this a spoke on a machine: the run it
-  // recorded, and the item, as JSON inline or in a file. None in a CI job.
+  // recorded, as it recorded it, and the item, as JSON inline or in a file.
+  // None in a CI job.
   readonly run: Option.Option<string>;
-  readonly workItem: Option.Option<string>;
-  readonly workItemFile: Option.Option<string>;
+  readonly handOver: Option.Option<string>;
+  readonly handOverFile: Option.Option<string>;
 };
 
 // The run a hub recorded and handed to this spoke, with the item it is for.
-export type HandedOver = { readonly runId: RunId; readonly item: WorkItem };
+export type HandedOver = SpokeHandOver;
 
-const WorkItemJson = Schema.fromJsonString(WorkItem);
-
-// The hub's hand-over, from the item's JSON as given: none for a CI job,
-// which is given neither. Refused when only half of it is given, or the item
-// isn't the one `--item` names.
+// The hub's hand-over, from its JSON as given: none for a CI job, which is
+// given neither. Refused when only half of it is given, or when the run or
+// the item isn't the one `--run` or `--item` names.
 export const handedOverFrom = (
   options: Pick<CiRunOptions, "run" | "item">,
-  itemJson: Option.Option<string>,
+  handOverJson: Option.Option<string>,
 ): Effect.Effect<Option.Option<HandedOver>, ConfigError> => {
   if (Option.isNone(options.run)) {
-    return Option.match(itemJson, {
+    return Option.match(handOverJson, {
       onNone: () => Effect.succeedNone,
       onSome: () =>
         Effect.fail(
           new ConfigError({
-            message: "--work-item and --work-item-file are a hub's hand-over: give --run with them",
+            message: "--hand-over and --hand-over-file are a hub's hand-over: give --run with them",
           }),
         ),
     });
@@ -231,53 +234,60 @@ export const handedOverFrom = (
 
   const runId = RunId.make(options.run.value);
 
-  return Option.match(itemJson, {
+  return Option.match(handOverJson, {
     onNone: () =>
       Effect.fail(
         new ConfigError({
-          message: `--run ${runId} needs the item it is for: --work-item-file, or --work-item`,
+          message: `--run ${runId} needs the hub's hand-over: --hand-over-file, or --hand-over`,
         }),
       ),
     onSome: (text) =>
-      Schema.decodeEffect(WorkItemJson)(text).pipe(
+      Schema.decodeEffect(SpokeHandOverJson)(text).pipe(
         Effect.mapError(
           (issue) =>
-            new ConfigError({ message: `the work item for ${runId} isn't one: ${issue.message}` }),
+            new ConfigError({ message: `the hand-over of ${runId} isn't one: ${issue.message}` }),
         ),
         Effect.filterOrFail(
-          (item) => item.key === options.item,
-          (item) =>
+          (handed) => handed.run.id === runId,
+          (handed) =>
             new ConfigError({
-              message: `--item ${options.item} isn't the item handed over with ${runId}, ${item.key}`,
+              message: `--run ${runId} isn't the run handed over, ${handed.run.id}`,
             }),
         ),
-        Effect.map((item) => Option.some<HandedOver>({ runId, item })),
+        Effect.filterOrFail(
+          (handed) => handed.item.key === options.item,
+          (handed) =>
+            new ConfigError({
+              message: `--item ${options.item} isn't the item handed over with ${runId}, ${handed.item.key}`,
+            }),
+        ),
+        Effect.asSome,
       ),
   });
 };
 
-// The item's JSON as the hub gave it: inline, or in a file, never both.
-const itemJsonOf = (options: CiRunOptions) =>
+// The hand-over's JSON as the hub gave it: inline, or in a file, never both.
+const handOverJsonOf = (options: CiRunOptions) =>
   Effect.gen(function* () {
-    if (Option.isSome(options.workItem) && Option.isSome(options.workItemFile)) {
+    if (Option.isSome(options.handOver) && Option.isSome(options.handOverFile)) {
       return yield* new ConfigError({
-        message: "give the work item once: --work-item or --work-item-file",
+        message: "give the hand-over once: --hand-over or --hand-over-file",
       });
     }
 
-    for (const path of Option.toArray(options.workItemFile)) {
+    for (const path of Option.toArray(options.handOverFile)) {
       return Option.some(
         yield* (yield* FileSystem.FileSystem)
           .readFileString(path)
           .pipe(
             Effect.mapError(
-              (error) => new ConfigError({ message: `reading the work item: ${error.message}` }),
+              (error) => new ConfigError({ message: `reading the hand-over: ${error.message}` }),
             ),
           ),
       );
     }
 
-    return options.workItem;
+    return options.handOver;
   });
 
 const JsonText = Schema.fromJsonString(Schema.Json);
@@ -495,16 +505,15 @@ const followToBoundary = (runId: RunId, leaseTtl: Duration.Duration, stopAt: num
 
 const ClaimArgs = Schema.Struct({ item: Schema.String, runId: Schema.String });
 
-// Lets go of the claims a run holds, which a run that ended has let go already.
+// Lets go of the claims a run holds, which a run that ended has let go
+// already: those its records say it holds, which a spoke reads from its own
+// journal.
 const releaseClaims = (runId: RunId, context: RepoContext) =>
   Effect.gen(function* () {
-    const held = yield* (yield* RunsQueries).ListRunMarkersQuery({
-      runId,
-      name: Option.some(Claims.refMarker.name),
-    });
+    const held = yield* (yield* recordsOfRun).held(runId, Claims.refMarker.name);
 
-    for (const marker of held.markers) {
-      for (const args of Option.toArray(Schema.decodeUnknownOption(ClaimArgs)(marker.args))) {
+    for (const marker of held) {
+      for (const args of Option.toArray(Schema.decodeUnknownOption(ClaimArgs)(marker))) {
         const released = yield* withRepo(context, Claims.releaseFor(args.item, args.runId)).pipe(
           Effect.orElseSucceed(() => false),
         );
@@ -713,13 +722,13 @@ const followSpoke = (
     const flows = yield* RunFlowsQueries;
 
     for (;;) {
-      const polled = yield* flows.PollExecutionQuery({ runId: over.runId, executionId, flow });
+      const polled = yield* flows.PollExecutionQuery({ runId: over.run.id, executionId, flow });
 
       for (const ended of Option.toArray(polled.ended)) {
         return { kind: "ended", status: ended.status, summary: ended.summary };
       }
 
-      if (parked.has(over.runId)) {
+      if (parked.has(over.run.id)) {
         return { kind: "parked" } satisfies CiRunEnding;
       }
 
@@ -743,10 +752,10 @@ const spokeProgram = (
 ) =>
   Effect.gen(function* () {
     const run = yield* (yield* RunFlowsCommands)
-      .ExecuteRunCommand({ runId: over.runId, item: over.item })
+      .ExecuteRunCommand({ run: over.run, item: over.item })
       .pipe(
         Effect.mapError(
-          (error) => new ConfigError({ message: `executing ${over.runId}: ${error.message}` }),
+          (error) => new ConfigError({ message: `executing ${over.run.id}: ${error.message}` }),
         ),
       );
 
@@ -763,6 +772,21 @@ const spokeProgram = (
     return yield* followSpoke(over, executionId, flow, stopAt, parked);
   });
 
+// The engine a run executes in: a spoke's journal, with its records there
+// for the hub to fold (ADR 23, decision 3), or a job's, which is its own hub
+// and records into its own state.db.
+const engineOf = (
+  handedOver: Option.Option<SpokeHandOver>,
+): Layer.Layer<
+  Layer.Success<typeof EngineLive>,
+  Layer.Error<typeof EngineLive>,
+  Layer.Services<typeof EngineLive>
+> =>
+  Option.match(handedOver, {
+    onNone: () => EngineLive,
+    onSome: SpokeEngineLive,
+  });
+
 // One item on one runner, to the next phase boundary. Fails only for a run
 // that failed or ran out of the job's time, so the workflow keeps its logs.
 // Handed a run (`--run`), it is a spoke on a machine instead: the run the hub
@@ -774,7 +798,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     const variables = (yield* HostEnvironment).variables;
     const paths = homePaths(home.root);
 
-    const handedOver = yield* handedOverFrom(options, yield* itemJsonOf(options));
+    const handedOver = yield* handedOverFrom(options, yield* handOverJsonOf(options));
     const spoke = Option.isSome(handedOver);
 
     // A spoke runs in the machine's own home, which holds its state.db.
@@ -975,7 +999,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
             }),
           ),
         ],
-        engine: EngineLive,
+        engine: engineOf(handedOver),
       }),
     );
 

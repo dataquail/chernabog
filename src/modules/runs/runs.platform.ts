@@ -22,6 +22,8 @@ export {
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { SpokeEnding } from "./domain/run/spoke-ending.value-object.ts";
+export { SpokeHandOver, SpokeHandOverJson } from "./domain/run/spoke-hand-over.value-object.ts";
+export { type SpokeReport } from "./domain/run/spoke-report.value-object.ts";
 export { type FlowRef, WorkItem } from "./domain/run/work-item.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { MarkerReleases, RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
@@ -50,7 +52,13 @@ export {
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
 export { LoggedAt, RunLog } from "./queries/read-run-log.query.ts";
-export { RunFlowsCommands, RunsCommands } from "./runs.command-handlers.ts";
+export {
+  RunFlowsCommands,
+  RunsCommands,
+  SpokeReportCommand,
+  spokeReportCommands,
+  spokeReportPayloadJson,
+} from "./runs.command-handlers.ts";
 export { RunsModule } from "./runs.module.ts";
 export {
   NotificationsQueries,
@@ -64,7 +72,13 @@ export {
 // registry of the flows that root loaded, which RunsModule.runtime runs. And
 // what the runs' events say on their spans, for the one bus the shared runtime
 // builds.
-export { EngineAt, EngineLive } from "./infrastructure/runtime/engine.ts";
+export {
+  EngineAt,
+  EngineLive,
+  recordsOfRun,
+  SpokeEngineAt,
+  SpokeEngineLive,
+} from "./infrastructure/runtime/engine.ts";
 export { type FlowRegistry } from "./infrastructure/runtime/flow-registry.ts";
 export { runEventSpanAttributes } from "./runs.event-span-attributes.ts";
 
@@ -115,6 +129,7 @@ export {
   flowHandle,
   flowLayer,
   runLogFile,
+  runLogFor,
 } from "./infrastructure/runtime/engine.ts";
 export { type LabelDrift, labelDrift } from "./infrastructure/runtime/label-drift.ts";
 export {
