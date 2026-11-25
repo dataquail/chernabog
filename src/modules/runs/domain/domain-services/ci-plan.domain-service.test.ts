@@ -99,6 +99,21 @@ describe("which items an event concerns", () => {
     expect(CiPlan.concerns({ kind: "item", name: "pr-7" }, "pr-7-changes-asked-1a2b")).toBe(true);
     expect(CiPlan.concerns({ kind: "item", name: "epic-4" }, "epic-4")).toBe(true);
     expect(CiPlan.concerns({ kind: "item", name: "issue-4" }, "issue-5")).toBe(false);
+    expect(
+      CiPlan.concerns({ kind: "item", name: "pr-7-changes-asked-1a2b" }, "pr-7-changes-asked-1a2b"),
+    ).toBe(true);
+  });
+
+  test("an event that names no one item concerns every item", () => {
+    expect(CiPlan.concerns({ kind: "repo" }, "issue-3")).toBe(true);
+    expect(CiPlan.concerns({ kind: "repo" }, "pr-7-changes-2")).toBe(true);
+  });
+
+  test("a branch or a CI run concerns no item until it is resolved to what it names", () => {
+    expect(CiPlan.concerns({ kind: "branch", name: "issue-3" }, "issue-3")).toBe(false);
+    expect(CiPlan.concerns({ kind: "ci-run", sha: "c0ffee", pullRequests: [7] }, "pr-7")).toBe(
+      false,
+    );
   });
 
   test("a branch is resolved to its pull request, and an issue's work branch to the issue", () => {
@@ -110,6 +125,11 @@ describe("which items an event concerns", () => {
       { kind: "issue", number: 12 },
     ]);
     expect(CiPlan.resolveBranch("feature", Option.none())).toEqual([]);
+  });
+
+  test("only a branch named exactly as an issue's work branch names the issue", () => {
+    expect(CiPlan.resolveBranch("fork/auto/issue-12", Option.none())).toEqual([]);
+    expect(CiPlan.resolveBranch("auto/issue-12-retry", Option.none())).toEqual([]);
   });
 });
 
@@ -230,6 +250,31 @@ describe("the plan", () => {
     expect(planned.start).toEqual([{ flow: "implement", persona: "bot", item: "issue-2" }]);
   });
 
+  test("an event that names several items starts each of them its trigger reports", () => {
+    const planned = CiPlan.plan(
+      [
+        findings(
+          {
+            flow: "implement",
+            persona: "bot",
+            only: Option.some([
+              { kind: "issue", number: 2 },
+              { kind: "issue", number: 5 },
+            ]),
+          },
+          [item("issue-1"), item("issue-2"), item("issue-5")],
+          { concurrency: 3 },
+        ),
+      ],
+      [],
+    );
+
+    expect(planned.start).toEqual([
+      { flow: "implement", persona: "bot", item: "issue-2" },
+      { flow: "implement", persona: "bot", item: "issue-5" },
+    ]);
+  });
+
   test("an event's item its trigger doesn't report starts nothing, and says so", () => {
     const planned = CiPlan.plan(
       [
@@ -256,6 +301,38 @@ describe("the plan", () => {
 
     expect(planned.start).toEqual([{ flow: "implement", persona: "bot", item: "issue-3" }]);
     expect(planned.notes).toEqual(["review as bot: issue-3 is planned for implement as bot"]);
+  });
+
+  test("another flow's items of this plan don't keep a flow from its own", () => {
+    const planned = CiPlan.plan(
+      [
+        findings(every("implement", "bot"), [item("issue-3")]),
+        findings(every("review", "bot"), [item("pr-4")]),
+      ],
+      [],
+    );
+
+    expect(planned.start).toEqual([
+      { flow: "implement", persona: "bot", item: "issue-3" },
+      { flow: "review", persona: "bot", item: "pr-4" },
+    ]);
+    expect(planned.notes).toEqual([]);
+  });
+
+  test("a gate holding back a flow with nothing it could start says nothing of the gate", () => {
+    const planned = CiPlan.plan(
+      [
+        findings(every("implement", "bot"), [item("issue-3")], {
+          held: Option.some("usage gate: weekly headroom 0.010 is below the 0.050 task estimate"),
+        }),
+      ],
+      [claim("issue-3", "implement", "bot")],
+    );
+
+    expect(planned.start).toEqual([]);
+    expect(planned.notes).toEqual([
+      "implement as bot: issue-3 has a run already (run-issue-3, implement as bot)",
+    ]);
   });
 
   test("a flow whose gate holds it back, the usage gate among them, starts nothing, and says why", () => {

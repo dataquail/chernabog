@@ -161,6 +161,12 @@ describe("the catalogue's events", () => {
     expect(declaring("workflow_run")).toBe(true);
   });
 
+  test("a declaration may name the item by its claim's name", () => {
+    expect(
+      Events.on("issues", ["labeled"], { kind: "item", path: "client_payload.item" }).item,
+    ).toEqual({ kind: "item", path: "client_payload.item" });
+  });
+
   test("the guards are on unless a declaration opts out", () => {
     const declared = Events.on("issues", ["labeled"], { kind: "issue", path: "issue.number" });
 
@@ -203,6 +209,24 @@ describe("a flow's events", () => {
     );
     // Not among its keys, which stay those of a recipe written in TypeScript.
     expect(Object.keys(flow)).not.toContain("events");
+  });
+
+  test("a flow declared again carries what it was declared with last", () => {
+    const assembled = Blocks.assemble({
+      subject: "pull-request",
+      sources: [Blocks.sources["review.requested"].find()],
+      blocks: ["review.round"],
+      workflow: () => Effect.void,
+    });
+
+    const redeclared = Events.declare(assembled, {
+      events: [Events.issueLabelled],
+      readsPhases: false,
+    });
+
+    expect(Option.map(Events.of(redeclared), (declared) => kinds(declared.events))).toEqual(
+      Option.some(["issues: labeled"]),
+    );
   });
 
   test("each recipe written in TypeScript declares its own through the SDK", () => {
@@ -438,5 +462,143 @@ describe("from an event to the items it concerns", () => {
     expect(Events.wokenBy(routes, "issues", { action: "labeled", issue: { number: "7" } })).toEqual(
       [],
     );
+  });
+
+  test("a CI run whose payload names no head branch wakes nothing on its branch", () => {
+    expect(
+      Events.wokenBy(routes, "workflow_run", {
+        action: "completed",
+        workflow_run: { head_branch: "" },
+        sender: { login: "maintainer" },
+      }),
+    ).toEqual([]);
+  });
+});
+
+// Routes for one flow, run as `bot`, that declares just these events.
+const routesOf = (events: ReadonlyArray<Events.WakingEvent>) =>
+  Events.workflowOn(
+    [{ flow: "flow", personas: ["bot"], declared: { events, readsPhases: false } }],
+    {
+      ciWorkflows: ["CI"],
+    },
+  ).routes;
+
+describe("each declaration's guards", () => {
+  const pullRequestBy = (action: string, association: string) => ({
+    action,
+    pull_request: { number: 12, author_association: association },
+    sender: { login: "someone" },
+  });
+
+  const woken: ReadonlyArray<Events.Woken> = [
+    { flow: "flow", persona: "bot", item: { kind: "pull-request", number: 12 } },
+  ];
+
+  test("a review asked, or asked again, wakes only for a pull request whose author the repo trusts", () => {
+    for (const declared of [Events.reviewRequested, Events.reviewRequestedAgain]) {
+      const routes = routesOf([declared]);
+
+      expect(
+        Events.wokenBy(routes, "pull_request", pullRequestBy("review_requested", "MEMBER")),
+      ).toEqual(woken);
+      expect(
+        Events.wokenBy(routes, "pull_request", pullRequestBy("review_requested", "NONE")),
+      ).toEqual([]);
+    }
+  });
+
+  test("a draft marked ready wakes only when the repo trusts its author", () => {
+    const routes = routesOf([Events.readyForReview]);
+
+    expect(
+      Events.wokenBy(routes, "pull_request", pullRequestBy("ready_for_review", "OWNER")),
+    ).toEqual(woken);
+    expect(
+      Events.wokenBy(routes, "pull_request", pullRequestBy("ready_for_review", "CONTRIBUTOR")),
+    ).toEqual([]);
+  });
+
+  test("a comment wakes only when the repo trusts its author", () => {
+    const routes = routesOf([Events.commentCreated]);
+
+    const comment = (association: string) =>
+      Events.wokenBy(routes, "issue_comment", {
+        action: "created",
+        issue: { number: 3 },
+        comment: { author_association: association },
+        sender: { login: "someone" },
+      });
+
+    expect(comment("COLLABORATOR")).toEqual([
+      { flow: "flow", persona: "bot", item: { kind: "issue", number: 3 } },
+    ]);
+    expect(comment("NONE")).toEqual([]);
+  });
+
+  test("the persona's own merge wakes what waits on a pull request closing", () => {
+    expect(
+      Events.wokenBy(routesOf([Events.pullRequestClosed]), "pull_request", {
+        action: "closed",
+        pull_request: { number: 12 },
+        sender: { login: "bot" },
+      }),
+    ).toEqual(woken);
+  });
+
+  test("a merge wakes what it may have moved the base under on every item, and an issue closed doesn't", () => {
+    const routes = routesOf([Events.baseMoved]);
+
+    expect(
+      Events.wokenBy(routes, "pull_request", {
+        action: "closed",
+        pull_request: { number: 12 },
+        sender: { login: "maintainer" },
+      }),
+    ).toEqual([{ flow: "flow", persona: "bot", item: { kind: "repo" } }]);
+    expect(
+      Events.wokenBy(routes, "issues", {
+        action: "closed",
+        issue: { number: 3 },
+        sender: { login: "maintainer" },
+      }),
+    ).toEqual([]);
+  });
+
+  test("a merge commit's CI is a push's on the default branch, never a pull request's from a branch of that name", () => {
+    const routes = routesOf([Events.mergeCiCompleted]);
+
+    const run = (event: string) =>
+      Events.wokenBy(routes, "workflow_run", {
+        action: "completed",
+        workflow_run: { event, head_branch: "main", head_sha: "c0ffee", pull_requests: [] },
+        repository: { default_branch: "main" },
+        sender: { login: "maintainer" },
+      });
+
+    expect(run("push")).toEqual([
+      { flow: "flow", persona: "bot", item: { kind: "ci-run", sha: "c0ffee", pullRequests: [] } },
+    ]);
+    expect(run("pull_request")).toEqual([]);
+  });
+});
+
+describe("what a finished CI run settles", () => {
+  const run = { sha: "c0ffee", pullRequests: [7, 8] };
+
+  test("a record naming one of its pull requests among others it waits on", () => {
+    expect(
+      Events.parkedOn(
+        [
+          ["epic-4", { tasks: { ci: [{ pullRequest: 3 }, { pullRequest: 8 }] } }],
+          ["epic-5", { tasks: { ci: [] } }],
+        ],
+        run,
+      ),
+    ).toEqual(["epic-4"]);
+  });
+
+  test("a number that isn't a pull request's, though it equals one, names nothing", () => {
+    expect(Events.parkedOn([["issue-7", { issue: 7, round: 8 }]], run)).toEqual([]);
   });
 });
