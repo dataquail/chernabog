@@ -97,24 +97,6 @@ export const specChangesSteps = defineSteps(story, (keywords) => {
         }),
     ),
 
-    // Since the review that asked for changes, the author pushed nothing.
-    Then("{word} does not fix it", (scenario, author) =>
-      Effect.gen(function* () {
-        const pullRequest = yield* thePullRequest(scenario.state);
-        const changes = yield* known(scenario.state.changes, "the review asking for changes");
-        const world = yield* settled(scenario);
-
-        expect(
-          world.pushes.filter(
-            (push) =>
-              push.pullRequest === pullRequest &&
-              push.by === author &&
-              push.sequence > changes.sequence,
-          ),
-        ).toEqual([]);
-      }),
-    ),
-
     Then("it is handed to a person again", ({ domain, state }) =>
       Effect.gen(function* () {
         const pullRequest = yield* thePullRequest(state);

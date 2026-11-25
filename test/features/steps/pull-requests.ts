@@ -237,6 +237,15 @@ export const pullRequestSteps = ({
     }),
   ),
 
+  When("{word} is asked to review it", ({ domain, state }, reviewer) =>
+    Effect.gen(function* () {
+      const pullRequest = yield* thePullRequest(state);
+
+      yield* domain.askToReview(pullRequest, [reviewer]);
+      acted(state);
+    }),
+  ),
+
   Then("{word} reviews it", ({ domain, state }, reviewer) =>
     Effect.gen(function* () {
       const pullRequest = yield* thePullRequest(state);
