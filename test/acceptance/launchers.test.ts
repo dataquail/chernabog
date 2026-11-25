@@ -166,13 +166,12 @@ describe("doctor", () => {
 });
 
 describe("an interactive session outliving its run", () => {
-  test("a rerun after the CLI is killed waits on the running session instead of starting another", async () => {
+  test("a rerun after the CLI is killed closes the session it left, then runs once", async () => {
     const sandbox = sandboxFor({}, { launcher: "tmux" });
     sandbox.github.addIssue("Outlive the CLI", ["auto:eligible"]);
     const hold = join(sandbox.root, "hold");
     writeFileSync(hold, "");
-    const extra = { FAKE_CLAUDE_HOLD: hold };
-    const first = sandbox.cli(["run", "implement", "--repo", "demo"], extra);
+    const first = sandbox.cli(["run", "implement", "--repo", "demo"], { FAKE_CLAUDE_HOLD: hold });
     await waitFor(
       () => sandbox.claudeCalls().length === 1 && launchRecorded(sandbox),
       "the session to start",
@@ -180,35 +179,31 @@ describe("an interactive session outliving its run", () => {
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
 
-    // The session is released only once the rerun says it waits on it, not
-    // after a fixed sleep a loaded machine can outrun.
-    const rerun = sandbox.cli(["run", "implement", "--repo", "demo"], extra);
-    let output = "";
+    // The run it left ends interrupted, which puts its queue label back, so
+    // the trigger offers the issue again. Its agent is still held in its
+    // session, which nobody watches now.
 
-    const collect = (chunk: Buffer) => {
-      output += chunk.toString();
-    };
+    const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
 
-    rerun.stdout.on("data", collect);
-    rerun.stderr.on("data", collect);
-
-    const exited = new Promise<number>((resolve) => {
-      rerun.on("close", (exit) => {
-        resolve(exit ?? -1);
-      });
-    });
-
-    await waitFor(
-      () => output.includes("is still running in tmux; waiting on it"),
-      "the rerun to wait on the session",
-    );
-    rmSync(hold);
-    const code = await exited;
-    expect(output).toContain("is still running in tmux; waiting on it");
+    expect(output).toContain("as interrupted");
+    expect(output).toContain("closed its tmux session");
     expect(output).toContain("done: #1:");
     expect(code).toBe(0);
-    expect(sandbox.claudeCalls()).toHaveLength(1);
-    expect(sandbox.tmuxCalls().filter((call) => call.startsWith("new-session"))).toHaveLength(1);
+    // The left session was closed before the new run started its own, so only
+    // one agent worked the issue at a time; the new run closed its own as it
+    // ended.
+    const calls = sandbox.tmuxCalls();
+    const started = calls.filter((call) => call.startsWith("new-session"));
+    const killed = calls.filter((call) => call.startsWith("kill-session"));
+
+    const nameOf = (call: string, flag: string) =>
+      call.split(" ")[call.split(" ").indexOf(flag) + 1];
+
+    expect(started).toHaveLength(2);
+    expect(killed.map((call) => nameOf(call, "-t").replace(/^=/, ""))).toEqual(
+      started.map((call) => nameOf(call, "-s")),
+    );
+    expect(calls.indexOf(killed[0] ?? "")).toBeLessThan(calls.indexOf(started[1] ?? ""));
   }, 90_000);
 
   test("a session the launcher wrongly says ended is waited on, not resumed into a second agent", async () => {

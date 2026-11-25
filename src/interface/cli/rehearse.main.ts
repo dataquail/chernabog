@@ -29,7 +29,7 @@ import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
-import { runLabel } from "../../kernel/run-id.id.ts";
+import { type RunId, runLabel } from "../../kernel/run-id.id.ts";
 import { type Ending } from "../../kernel/scenario.value-object.ts";
 import { EnrollmentCommands } from "../../modules/enrollment/enrollment.platform.ts";
 import {
@@ -43,12 +43,12 @@ import {
   type FlowHandle,
   flowHandle,
   flowLayer,
+  noHooks,
   openRepo,
   REHEARSAL,
   type RepoContext,
   Routing,
   runAnswers,
-  RunFlowsCommands,
   runLogFile,
   RunLogsQueries,
   RunsQueries,
@@ -78,6 +78,7 @@ import {
 } from "../../repo-config.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import { fail } from "./cli.output.ts";
+import { followOwnRun, startOwnRun } from "./own-hub.main.ts";
 import { repoFlag } from "./repo.arguments.ts";
 import { choosePersona, tailer } from "./run.main.ts";
 
@@ -129,8 +130,6 @@ type Scratch = {
   readonly checkout: string;
   readonly base: string;
 };
-
-const SIGNAL_EVERY_MS = 15_000;
 
 // The repo's settings as a rehearsal runs them: on the scenario's repo and
 // its clone, with the scenario's install and local gate, no board (seeding puts nothing
@@ -362,45 +361,24 @@ const pickSeeded = (
     return picked.item;
   });
 
-// Follows a run's log until it ends, or `timeout` passes, delivering the
-// signals the trigger sees (a push, a review) as `chernabog run` does.
-const follow = (
-  handle: FlowHandle,
-  persona: Persona,
-  started: RunView,
-  context: RepoContext,
-  timeout: Duration.Duration,
-) =>
+// Follows a run's log to its boundary, or until `timeout` passes, which
+// leaves it running: the rehearsal is its own hub (ADR 23, decision 9), so
+// the run ends where it parks, as under the daemon.
+const follow = (started: RunView, parked: ReadonlySet<RunId>, timeout: Duration.Duration) =>
   Effect.gen(function* () {
     const tail = tailer(yield* runLogFile(started.id));
-    const ref = { repo: handle.repo.settings.name, flow: handle.name, persona };
     const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(timeout);
-    let current = started;
-    let lastSignals = yield* Clock.currentTimeMillis;
 
-    while (current.status === "running" && (yield* Clock.currentTimeMillis) < deadline) {
-      yield* tail;
-      yield* Effect.sleep("1 second");
-      current = Option.getOrElse(
-        (yield* (yield* RunFlowsCommands).PollRunCommand({ runId: current.id })).run,
-        () => current,
-      );
-      const now = yield* Clock.currentTimeMillis;
+    const timedOut = Effect.map(Clock.currentTimeMillis, (now) =>
+      Option.liftPredicate(true, () => now >= deadline),
+    );
 
-      if (now - lastSignals > SIGNAL_EVERY_MS) {
-        lastSignals = now;
+    yield* followOwnRun(started, parked, timedOut, tail);
 
-        const items = yield* withRepo(context, triggerOf(handle.flow)).pipe(
-          Effect.orElseSucceed(() => []),
-        );
-
-        yield* (yield* RunFlowsCommands).DeliverSignalsCommand({ flow: ref, items });
-      }
-    }
-
-    yield* tail;
-
-    return current;
+    return Option.getOrElse(
+      (yield* (yield* RunsQueries).FindRunQuery({ runId: started.id })).run,
+      () => started,
+    );
   });
 
 // Whether this machine acts as the login: one of its personas, as GitHub compares logins.
@@ -460,6 +438,9 @@ const runRehearsal = (
       Effect.orDie,
     );
 
+    // The runs this process's engine parked, as it tells them.
+    const parked = new Set<RunId>();
+
     // The modules a process with an engine adds, and the flow it rehearses, over
     // the rehearsal's own runtime and an engine in the scratch's state.db.
     const engine = yield* Layer.build(
@@ -468,7 +449,13 @@ const runRehearsal = (
           handles: [handle],
           services: (_repo, one) => servicesFrom(contexts)(one),
         },
-        flows: [flowLayer(handle, servicesFrom(contexts))],
+        flows: [
+          flowLayer(handle, servicesFrom(contexts), noHooks, (runId) =>
+            Effect.sync(() => {
+              parked.add(runId);
+            }),
+          ),
+        ],
         engine: EngineAt(scratch.root),
       }),
     );
@@ -480,10 +467,10 @@ const runRehearsal = (
         return Option.none<RunView>();
       }
 
-      const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
-        flow: { repo: handle.repo.settings.name, flow: handle.name, persona },
-        item: item.value,
-      });
+      const run = yield* startOwnRun(
+        { repo: handle.repo.settings.name, flow: handle.name, persona },
+        item.value,
+      );
 
       if (Option.isNone(run)) {
         return Option.none<RunView>();
@@ -499,9 +486,7 @@ const runRehearsal = (
       });
 
       return Option.some(
-        yield* follow(handle, persona, run.value, context, options.timeout).pipe(
-          Effect.ensuring(journaled),
-        ),
+        yield* follow(run.value, parked, options.timeout).pipe(Effect.ensuring(journaled)),
       );
     });
 

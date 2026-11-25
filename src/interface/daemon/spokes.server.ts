@@ -39,9 +39,7 @@
 // for it as for a spoke it ended, so its run ends as the hub before meant it
 // to, or as interrupted, and its phase repeats in a new run.
 
-import type { Command } from "@effect-server-utils/cqrs";
 import * as Clock from "effect/Clock";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -73,8 +71,6 @@ import {
   type SpokeEndRequest,
   SpokeHandOverJson,
   type SpokeReport,
-  spokeReportCommands,
-  spokeReportPayloadJson,
   type WorkItem,
 } from "../../modules/runs/runs.platform.ts";
 import { homePaths } from "../../platform/home.ts";
@@ -92,6 +88,7 @@ import {
   stopGroup,
 } from "../../platform/process-group.ts";
 import { selfCommand } from "../../platform/self.ts";
+import { foldSpoke, ReportFold, reportFold } from "./report-fold.server.ts";
 
 // A run the hub recorded, to hand to a spoke: its id, the run as recorded,
 // the repo, flow and persona's login (none for the implicit persona), the
@@ -247,81 +244,6 @@ export const spokeArgs = (handOver: SpokeHandOver, handOverFile: string, bounds:
   ...Option.match(handOver.tree, { onNone: () => [], onSome: (tree) => ["--tree", tree] }),
   ...boundArgs(bounds),
 ];
-
-// What folding a report does: dispatch one of the runs' commands with its
-// payload, skip it saying why, keep an agent session the spoke opened on the
-// live spoke, or nothing, for the spoke's ending, which the hub reads apart
-// once the spoke has exited.
-export type ReportFold = Data.TaggedEnum<{
-  Dispatch: {
-    readonly command: Command.Any;
-    readonly payload: unknown;
-  };
-  Skip: { readonly why: string };
-  Session: { readonly opened: AgentSessionOpened };
-  Ending: Record<never, never>;
-}>;
-
-export const ReportFold = Data.taggedEnum<ReportFold>();
-
-// A report as the runs' command it carries, decoded with that command's own
-// schema; one the hub doesn't fold, or can't read, is skipped.
-export const reportFold = (report: SpokeReport): ReportFold => {
-  if (report.tag === "RunEnded") {
-    return ReportFold.Ending();
-  }
-
-  if (report.tag === "AgentSessionOpened") {
-    return Option.match(sessionOpenedIn(report), {
-      onNone: () =>
-        ReportFold.Skip({ why: `the hub skipped a ${report.tag} whose payload it couldn't read` }),
-      onSome: (opened) => ReportFold.Session({ opened }),
-    });
-  }
-
-  return Option.match(
-    Option.fromUndefinedOr(spokeReportCommands.find((known) => known.tag === report.tag)),
-    {
-      onNone: () =>
-        ReportFold.Skip({ why: `the hub skipped a report it doesn't fold: ${report.tag}` }),
-      onSome: (command) =>
-        Option.match(Schema.decodeOption(spokeReportPayloadJson(command))(report.payload), {
-          onNone: () =>
-            ReportFold.Skip({
-              why: `the hub skipped a ${report.tag} whose payload it couldn't read`,
-            }),
-          onSome: (payload) => ReportFold.Dispatch({ command, payload }),
-        }),
-    },
-  );
-};
-
-// Folds a spoke's reports after `folded` into state.db, in order. Each report
-// and the position past it move together, uninterruptibly, so a tail stopped
-// midway leaves no report folded that the next fold takes again.
-export const foldSpoke = <R>(
-  runId: RunId,
-  folded: Ref.Ref<number>,
-  reports: (runId: RunId, after: number) => Effect.Effect<ReadonlyArray<SpokeReport>, never, R>,
-  apply: (runId: RunId, report: SpokeReport) => Effect.Effect<void, never, R>,
-) =>
-  Effect.gen(function* () {
-    for (const report of yield* reports(runId, yield* Ref.get(folded))) {
-      yield* Effect.uninterruptible(
-        apply(runId, report).pipe(Effect.andThen(Ref.set(folded, report.seq))),
-      );
-    }
-  });
-
-// Folds one report into state.db and moves the fold position past it, in
-// one unit of work (ADR 23, decision 3): the runs' commands each join it, so
-// the report and the position commit together or not at all, and a report
-// takes effect once however the hub stops.
-export const foldInUnitOfWork = <E, R, F>(
-  inOneUnitOfWork: (effect: Effect.Effect<void, E, R>) => Effect.Effect<void, F, R>,
-  report: Effect.Effect<void, E, R>,
-  advance: Effect.Effect<void, E, R>,
-) => inOneUnitOfWork(Effect.andThen(report, advance));
 
 // The next change to anything under `dir`, as a file watch says: `next`
 // waits for it, for as long as the scope lasts. A watch that fails says

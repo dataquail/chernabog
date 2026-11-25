@@ -22,11 +22,13 @@ export type ReleasedClaim = {
   readonly kept: Option.Option<string>;
 };
 
-// An agent session a run opened that is still open, under its launcher.
+// An agent session a run opened that is still open, under its launcher, and
+// whether a person works in it.
 export type OpenSession = {
   readonly sessionId: string;
   readonly launcher: string;
   readonly handle: string;
+  readonly withPerson: boolean;
 };
 
 // What a run holds outside state.db, for cancelling it as a run that finishes

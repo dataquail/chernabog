@@ -2,8 +2,8 @@
 // program and waits for its finalizers, however long they take, and ignores
 // a second signal. A person who pressed Ctrl-C won't wait long, and launchd
 // and systemd follow SIGTERM with SIGKILL anyway. Correctness doesn't depend on
-// a clean stop: a run's workflow is journaled and an interrupted start is
-// recovered at the next startup (RecoverRunsCommand). So a stop gets a
+// a clean stop: a run that a stop cuts short is ended as interrupted by the
+// next hub, and its phase repeats in a new run (ADR 23). So a stop gets a
 // deadline, after which the process exits, and a second Ctrl-C exits at once.
 
 import * as Duration from "effect/Duration";

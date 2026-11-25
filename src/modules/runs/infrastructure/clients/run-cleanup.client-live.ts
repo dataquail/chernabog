@@ -144,7 +144,11 @@ const workOnBranch = (branch: string, base: string) =>
 type Platform = Exec | Home | FileSystem.FileSystem;
 
 // A session's launcher, and the handle it runs under there.
-type LaunchOf = Option.Option<{ readonly launcher: Launcher; readonly handle: string }>;
+type LaunchOf = Option.Option<{
+  readonly launcher: Launcher;
+  readonly handle: string;
+  readonly withPerson: boolean;
+}>;
 
 export const RunCleanupClientLive = (services: CleanupServicesFor) =>
   Layer.effect(
@@ -181,6 +185,7 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
             Option.map(launcherFor(launch.launcher), (launcher) => ({
               launcher,
               handle: launch.handle,
+              withPerson: launch.withPerson === true,
             })),
           ),
         );
@@ -194,9 +199,14 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
       // The session, under its launcher, while the launcher says it's open.
       const stillOpen = (sessionId: string, launch: Effect.Effect<LaunchOf, never, Platform>) =>
         Effect.gen(function* () {
-          for (const { handle, launcher } of Option.toArray(yield* launch)) {
+          for (const { handle, launcher, withPerson } of Option.toArray(yield* launch)) {
             if (yield* launcher.alive(handle).pipe(Effect.orElseSucceed(() => false))) {
-              return Option.some<OpenSession>({ sessionId, launcher: launcher.name, handle });
+              return Option.some<OpenSession>({
+                sessionId,
+                launcher: launcher.name,
+                handle,
+                withPerson,
+              });
             }
           }
 

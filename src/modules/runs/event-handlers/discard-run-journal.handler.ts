@@ -7,7 +7,7 @@ import { type RunFinished } from "../domain/run/run.events.ts";
 // included (ADR 23, decision 3): its execution is interrupted and its engine
 // closed first, so nothing writes the file once it's gone. A repeat of the
 // event finds no journal and deletes nothing; a journal a crash kept this
-// reaction from deleting is RecoverRunsCommand's to sweep.
+// reaction from deleting is SweepJournalsCommand's to sweep.
 export const discardRunJournalHandler = Effect.fn("discardRunJournalHandler")(function* (
   event: RunFinished,
 ) {

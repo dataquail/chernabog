@@ -59,15 +59,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
+import { busesOver } from "../src/interface/application-runtime.ts";
+import { endAsSaid, foldReport, foldSpoke } from "../src/interface/daemon/report-fold.server.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
-import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
-import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
+import { type RunId } from "../src/kernel/run-id.id.ts";
+import { executeRunHandler } from "../src/modules/runs/commands/execute-run.handler.ts";
 import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
-import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
+import { startSpokeRunHandler } from "../src/modules/runs/commands/start-spoke-run.handler.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
@@ -94,10 +97,16 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
 import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
-import { RunsModule } from "../src/modules/runs/runs.platform.ts";
+import {
+  RunFlowsQueries,
+  RunsModule,
+  RunsQueries,
+  SpokeEnding,
+} from "../src/modules/runs/runs.platform.ts";
 import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
+import { wakeParkedRuns } from "./wake-signals.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -1480,9 +1489,10 @@ export const StateAt = (home: string) =>
 export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 
 // The engine over one flow, as the composition roots build it: the modules a
-// process with an engine adds, from the one list every root merges, and the
-// flow, which takes its runs' steps through them, over the test's runtime and
-// a state.db in `home`.
+// process with an engine adds, from the one list every root merges, the
+// runs' buses, which a run's hub folds its journal through, and the flow,
+// which keeps its runs' records in their journals, over the test's runtime
+// and a state.db in `home`.
 export const engineOver = <R>(
   handle: FlowHandle,
   registry: FlowRegistry,
@@ -1492,6 +1502,7 @@ export const engineOver = <R>(
 ) =>
   Layer.mergeAll(
     applicationModules.engine,
+    busesOver(RunsModule.engineRoutes).pipe(Layer.provide(applicationModules.engine)),
     flowLayer(handle, servicesFor, noHooks, onParked).pipe(
       Layer.provide(applicationModules.engine),
     ),
@@ -1512,23 +1523,109 @@ const refOf = (handle: FlowHandle, persona: Persona) => ({
   persona,
 });
 
-// Starting, polling and waking runs as the daemon does, through the runs module.
+// Starting and polling a run as a process that is its own hub does (ADR 23,
+// decision 9): recorded with its execution attached, executed in a journal
+// of its own, and its journal folded into state.db as it goes. A second start
+// for an item gets the run that has it.
 export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
-  startFlowRunHandler({ flow: refOf(handle, persona), item: work });
+  Effect.gen(function* () {
+    const started = yield* startSpokeRunHandler({ flow: refOf(handle, persona), item: work });
 
+    for (const run of Option.toArray(Option.filter(started.run, () => started.started))) {
+      yield* executeRunHandler({ run, item: work });
+    }
+
+    return started;
+  });
+
+// How far each run's journal is folded, by run.
+const folded = new Map<string, Ref.Ref<number>>();
+
+const foldedOf = (runId: RunId) =>
+  Effect.gen(function* () {
+    const known = Option.fromUndefinedOr(folded.get(runId));
+
+    if (Option.isSome(known)) {
+      return known.value;
+    }
+
+    const made = yield* Ref.make(0);
+    folded.set(runId, made);
+
+    return made;
+  });
+
+// Folds a run's journal into state.db, from where its last fold left off.
+export const foldRun = (runId: RunId) =>
+  Effect.gen(function* () {
+    const queries = yield* RunFlowsQueries;
+
+    yield* foldSpoke(
+      runId,
+      yield* foldedOf(runId),
+      (asked, after) =>
+        queries.ReadSpokeReportsQuery({ runId: asked, after }).pipe(
+          Effect.map((found) => found.reports),
+          Effect.orDie,
+        ),
+      foldReport,
+    );
+  });
+
+// Folds a run's journal, and ends the run once its workflow has: a park keeps
+// it running here, for a test to wake (wake-signals.ts).
 export const pollRun = (run: EngineRun) =>
-  pollRunHandler({ runId: run.id }).pipe(
-    Effect.map((found): EngineRun => Option.getOrElse(found.run, () => run)),
-  );
+  Effect.gen(function* () {
+    yield* foldRun(run.id);
 
+    const found = (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run;
+
+    for (const current of Option.toArray(Option.filter(found, (one) => one.status === "running"))) {
+      for (const executionId of Option.toArray(current.executionId)) {
+        const outcome = yield* (yield* RunFlowsQueries).PollExecutionQuery({
+          runId: run.id,
+          executionId,
+          flow: { repo: current.repo, flow: current.flow, persona: current.persona },
+        });
+
+        for (const ended of Option.toArray(outcome.ended)) {
+          yield* endAsSaid(run.id, Schema.decodeOption(SpokeEnding)(ended), () => ({
+            status: "failed",
+            summary: ended.summary,
+          }));
+        }
+      }
+    }
+
+    return Option.getOrElse(
+      Option.map(
+        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
+        (current): EngineRun => current,
+      ),
+      () => run,
+    );
+  }).pipe(Effect.orDie);
+
+// Wakes the runs parked on the signals `items` carry, in the test's engine,
+// once their journals are folded: a test-only wake (wake-signals.ts).
 export const deliverSignals = (
   handle: FlowHandle,
   persona: Persona,
   items: ReadonlyArray<WorkItem>,
 ) =>
-  deliverSignalsHandler({ flow: refOf(handle, persona), items }).pipe(
-    Effect.map(({ count }) => count),
-  );
+  Effect.gen(function* () {
+    const running = yield* (yield* RunsQueries).ListActiveRunsQuery({
+      repo: Option.none(),
+      persona: Option.none(),
+      flow: Option.none(),
+    });
+
+    for (const run of running.runs) {
+      yield* foldRun(run.id);
+    }
+
+    return yield* wakeParkedRuns(refOf(handle, persona), items);
+  });
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(

@@ -279,7 +279,7 @@ describe("cancelRunHandler", () => {
       },
     },
     claims: { i: { branch: "auto/issue-7", kept: Option.none() } },
-    sessions: { i: [{ sessionId: "s", launcher: "orca", handle: "term-1" }] },
+    sessions: { i: [{ sessionId: "s", launcher: "orca", handle: "term-1", withPerson: false }] },
   });
 
   effect("releases an issue's claim and removes worktrees, leaving sessions open", () =>
@@ -344,7 +344,7 @@ describe("cancelRunHandler", () => {
   const goneHoldings = fakeHoldings({
     claimRefs: { g: ["issue-7"] },
     claims: { g: { branch: "auto/issue-7", kept: Option.some("it has 1 commit not on main") } },
-    sessions: { g: [{ sessionId: "s", launcher: "orca", handle: "term-1" }] },
+    sessions: { g: [{ sessionId: "s", launcher: "orca", handle: "term-1", withPerson: false }] },
   });
 
   effect(
@@ -443,7 +443,7 @@ describe("cancelRunHandler", () => {
     claims: {
       i: { branch: "auto/issue-7", kept: Option.some("it has 2 commits not on main") },
     },
-    sessions: { i: [{ sessionId: "s", launcher: "orca", handle: "term-1" }] },
+    sessions: { i: [{ sessionId: "s", launcher: "orca", handle: "term-1", withPerson: false }] },
   });
 
   effect("closes sessions only when asked, and keeps a branch with work on it", () =>
@@ -789,7 +789,9 @@ describe("cancelRunHandler", () => {
   const spokeSeen: Array<string> = [];
 
   const spokeHoldings = fakeHoldings({
-    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false }],
+    },
   });
 
   effect(
@@ -811,14 +813,16 @@ describe("cancelRunHandler", () => {
         expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RunFinished"]);
         // Without --close-session, the session its spoke reported is left open.
         expect(cancelled.openSessions).toEqual([
-          { sessionId: "s1", launcher: "orca", handle: "term-1" },
+          { sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false },
         ]);
         expect(spokeHoldings.closed).toEqual([]);
       }).pipe(Effect.provide(inSpoke(spokeEngine, spokeHoldings, spokeSeen))),
   );
 
   const closingSpokeHoldings = fakeHoldings({
-    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false }],
+    },
   });
 
   effect("with --close-session, closes the sessions its spoke reported by their handles", () =>
@@ -832,16 +836,81 @@ describe("cancelRunHandler", () => {
 
       expect(closingSpokeHoldings.closed).toEqual(["term-1"]);
       expect(cancelled.closedSessions).toEqual([
-        { sessionId: "s1", launcher: "orca", handle: "term-1" },
+        { sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false },
       ]);
       expect(cancelled.openSessions).toEqual([]);
     }).pipe(Effect.provide(inSpoke(fakeEngine(), closingSpokeHoldings, []))),
   );
 
+  // A run a stopped process left, ended as the foreground run's takeover and
+  // the hub's reap end one: closing its sessions, sparing a person's.
+  const endLeftRun = (held: FakeHoldings) =>
+    cancelRunHandler({
+      target: byId("a"),
+      by: "chernabog",
+      closeSessions: true,
+      sparePersonSessions: true,
+      endAs: Option.some({ ending: "interrupted", reason: "its process stopped" }),
+    }).pipe(Effect.provide(inSpoke(fakeEngine(), held, [])));
+
+  const agentHoldings = fakeHoldings({
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false }],
+    },
+  });
+
+  effect("a run a stopped process left, ended as interrupted, closes its agent's session", () =>
+    Effect.gen(function* () {
+      const ended = yield* endLeftRun(agentHoldings);
+
+      expect(ended.run.status).toBe("interrupted");
+      expect(agentHoldings.closed).toEqual(["term-1"]);
+      expect(ended.openSessions).toEqual([]);
+    }),
+  );
+
+  const personHoldings = fakeHoldings({
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-2", withPerson: true }],
+    },
+  });
+
+  effect("a run a stopped process left, ended as interrupted, leaves a person's session open", () =>
+    Effect.gen(function* () {
+      const ended = yield* endLeftRun(personHoldings);
+
+      expect(ended.run.status).toBe("interrupted");
+      expect(personHoldings.closed).toEqual([]);
+      expect(ended.openSessions.map((session) => session.handle)).toEqual(["term-2"]);
+      expect(ended.leftForPerson).toContain("left orca session term-2 open: a person works in it");
+    }),
+  );
+
+  const askedHoldings = fakeHoldings({
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-2", withPerson: true }],
+    },
+  });
+
+  effect("a person's --close-session closes even a session a person works in", () =>
+    Effect.gen(function* () {
+      yield* cancelRunHandler({
+        target: byId("a"),
+        by: "alice",
+        closeSessions: true,
+        endAs: Option.none(),
+      });
+
+      expect(askedHoldings.closed).toEqual(["term-2"]);
+    }).pipe(Effect.provide(inSpoke(fakeEngine(), askedHoldings, []))),
+  );
+
   const lostSeen: Array<string> = [];
 
   const lostHoldings = fakeHoldings({
-    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false }],
+    },
   });
 
   effect("a run lost while its spoke lives ends the spoke as lost, and keeps its sessions", () =>
@@ -865,7 +934,9 @@ describe("cancelRunHandler", () => {
   const boundSeen: Array<string> = [];
 
   const boundHoldings = fakeHoldings({
-    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+    sessions: {
+      earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1", withPerson: false }],
+    },
   });
 
   effect(

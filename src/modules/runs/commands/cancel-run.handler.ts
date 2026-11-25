@@ -299,6 +299,43 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const spokes = yield* RunSpokesClient;
   const found = yield* named(target);
 
+  // Closes the sessions asked, by their handles: none without closeSessions,
+  // and not a person's when asked to spare those. What it couldn't close, and
+  // what it spared, are left for a person, and said.
+  const closeSessionsLeft = (sessions: ReadonlyArray<OpenSession>, leftForPerson: Array<string>) =>
+    Effect.gen(function* () {
+      const closedSessions: Array<OpenSession> = [];
+      const openSessions: Array<OpenSession> = [];
+
+      for (const session of sessions) {
+        if (!options.closeSessions) {
+          openSessions.push(session);
+          continue;
+        }
+
+        if (options.sparePersonSessions === true && session.withPerson) {
+          openSessions.push(session);
+          leftForPerson.push(
+            `left ${session.launcher} session ${session.handle} open: a person works in it`,
+          );
+          continue;
+        }
+
+        const closing = yield* cleanup.closeSession(session).pipe(Effect.result);
+
+        if (Result.isSuccess(closing)) {
+          closedSessions.push(session);
+        } else {
+          openSessions.push(session);
+          leftForPerson.push(
+            `closing ${session.launcher} session ${session.handle} failed: ${closing.failure.message}`,
+          );
+        }
+      }
+
+      return { closedSessions, openSessions };
+    });
+
   if (found.status !== "running" && Option.isNone(options.endAs)) {
     return yield* releaseEnded(found);
   }
@@ -408,8 +445,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
         removedWorktrees: [],
         releasedClaims: [...releasedClaims],
         released: Option.none(),
-        closedSessions: [],
-        openSessions: yield* sessionsLeft(cancelled, spoke),
+        ...(yield* closeSessionsLeft(yield* sessionsLeft(cancelled, spoke), leftForPerson)),
         leftForPerson,
         ...spokeExitOf(spoke),
       });
@@ -454,27 +490,10 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
     const released = yield* releaseIssueClaim(cancelled, leftForPerson);
 
-    const sessions = yield* sessionsLeft(cancelled, spoke);
-    const closedSessions: Array<OpenSession> = [];
-    const openSessions: Array<OpenSession> = [];
-
-    for (const session of sessions) {
-      if (!options.closeSessions) {
-        openSessions.push(session);
-        continue;
-      }
-
-      const closing = yield* cleanup.closeSession(session).pipe(Effect.result);
-
-      if (Result.isSuccess(closing)) {
-        closedSessions.push(session);
-      } else {
-        openSessions.push(session);
-        leftForPerson.push(
-          `closing ${session.launcher} session ${session.handle} failed: ${closing.failure.message}`,
-        );
-      }
-    }
+    const { closedSessions, openSessions } = yield* closeSessionsLeft(
+      yield* sessionsLeft(cancelled, spoke),
+      leftForPerson,
+    );
 
     yield* tellEnded(cancelled);
 

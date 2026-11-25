@@ -198,6 +198,18 @@ graph:
         - "@/modules/*/*.contracts.ts"
         - "@/modules/*/domain/**"
         - "@/kernel/**"
+    # The SDK's block tests still wake a run parked in their own engine, a
+    # path no chernabog process has since a park ends its run (ADR 23,
+    # decisions 2 and 9). The wake is the tests' alone: nothing chernabog runs
+    # or publishes may reach it.
+    - name: only-tests-wake-runs
+      message: >-
+        This reaches test/wake-signals.ts, the tests' wake of a run parked in their own engine. No
+        chernabog process wakes a parked run: a park ends its run, and a later run takes the item
+        up from its record (ADR 23, decisions 2 and 9). Keep the wake to the tests.
+      from: ["@/**", "~/**", "scripts/**"]
+      fromNot: "**/*.test.ts"
+      to: "test/wake-signals.ts"
     - name: daemon-reaches-no-sdk
       message: >-
         The binary provides @chernabog/core and nothing else of the flows' packages: each repo
@@ -520,6 +532,22 @@ defs:
       source: "export const zzBus = makeEventBus();"
       name: makeEventBus
 
+  # The daemon is a hub that runs no flow itself (ADR 23, decision 9): each
+  # run executes in a spoke of its own, a process the hub can end. A path
+  # rule can't say so, since the daemon names the runs module's surface,
+  # which publishes the engine for the roots that run flows; so the rule
+  # reads the calls that would register a flow's workflow or execute a run.
+  hub-runs-no-flow:
+    message: >-
+      `{name}` registers or executes a flow's workflow in the daemon's process. The daemon is the
+      hub: it records each run and hands it to a spoke, a process of its own the hub can end
+      (docs/adr/0023-runs-execute-in-spokes.md, decision 9). Start a spoke instead.
+    subject: calls
+    match: [flowLayer, ExecuteRunCommand, executeRunHandler]
+    probe:
+      source: "export const zzFlows = [flowLayer(handle, services)];"
+      name: flowLayer
+
   # A live adapter is chosen where a module is wired, never where it is used
   # (docs/adr/0015-composition-roots.md): a client's, a repository's, a
   # transaction driver's or an ACL's *-live.ts is named by its module's
@@ -700,6 +728,8 @@ tree:
                 - "@/interface/cli/*.main.ts"
                 - "@/interface/daemon/*.server.ts"
                 - "**/*.test.ts"
+                # The tests' harness, a composition root of its own.
+                - "test/sdk-fakes.ts"
 
           "cli/":
             members: [{ use: no-bus-factories }]
@@ -758,7 +788,7 @@ tree:
               "*.ts": {}
 
           "daemon/":
-            members: [{ use: no-bus-factories }]
+            members: [{ use: no-bus-factories }, { use: hub-runs-no-flow }]
             message: >-
               daemon/ is the daemon's adapter: the protocol it speaks over its local socket
               (*.protocol.ts), and the client the CLI and TUI ask it with (*.client.ts).

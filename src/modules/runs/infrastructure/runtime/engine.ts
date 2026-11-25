@@ -70,14 +70,13 @@ import {
 } from "../../domain/run/node-did.value-object.ts";
 import { type SpokeHandOver } from "../../domain/run/spoke-hand-over.value-object.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
-import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
-import { JournalsAt } from "./journals.ts";
+import { JournalsAt, RunJournals } from "./journals.ts";
 import { ProgressLive } from "./progress.ts";
 import {
-  dispatchingRecords,
+  journalRecords,
   RunRecords,
   RunRecordsInJournal,
   type RunRecordsService,
@@ -571,19 +570,21 @@ const markerHolds = (runId: RunId, flow: Flow, records: RunRecordsService) => {
   });
 };
 
-// Where a run's records go: a spoke provides its journal (ADR 23, decision
-// 3); a process that is its own hub dispatches them on the runs' commands.
-export const recordsOfRun = Effect.flatMap(Effect.serviceOption(RunRecords), (provided) =>
-  Option.match(provided, {
-    onSome: (records) => Effect.succeed(records),
-    onNone: () =>
-      Effect.zipWith(
-        RunsCommands.use(Effect.succeed),
-        RunsQueries.use(Effect.succeed),
-        dispatchingRecords,
-      ),
-  }),
-);
+// Where a run's records go: its journal, always (ADR 23, decisions 3 and 9).
+// A spoke provides its records over its hand-over; a process that is its own
+// hub reads its run back from its state.db.
+export const recordsOfRun = (runId: RunId) =>
+  Effect.flatMap(Effect.serviceOption(RunRecords), (provided) =>
+    Option.match(provided, {
+      onSome: (records) => Effect.succeed(records),
+      onNone: () =>
+        Effect.zipWith(
+          RunJournals.use(Effect.succeed),
+          RunsQueries.use(Effect.succeed),
+          (journals, queries) => journalRecords(journals, queries, runId),
+        ),
+    }),
+  );
 
 // What the process executing a run hears of its park, once the run's wait is
 // recorded: a spoke ends there, at its phase boundary, and says so in its
@@ -604,7 +605,7 @@ export const flowLayer = <R>(
   handle.workflow.toLayer((payload, executionId) =>
     Effect.gen(function* () {
       const runId = RunId.make(payload.runId);
-      const records = yield* recordsOfRun;
+      const records = yield* recordsOfRun(runId);
       const row = yield* records.run(runId);
 
       // A run started under a core this binary doesn't provide is never

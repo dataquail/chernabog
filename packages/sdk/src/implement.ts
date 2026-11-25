@@ -582,6 +582,27 @@ export const adoptionComment = (claim: ClaimMarker, adopted: Adopted, again = fa
     claimMarker.write(claim),
   ].join("\n");
 
+// Takes the label that queued an issue off it as a run claims it, and first
+// holds the marker that puts it back should the run be interrupted (core's
+// Markers.requeue), so the issue's trigger offers it again and its phase
+// repeats in a new run (ADR 23, decision 7). Only for a label the issue
+// carried: a task an epic claims was queued by no label.
+export const takeQueueLabel = (issue: number, label: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+
+    const carried = yield* github.issue(issue).pipe(
+      Effect.map((found) => found.labels.includes(label)),
+      Effect.orElseSucceed(() => false),
+    );
+
+    if (carried) {
+      yield* Markers.hold(Markers.requeue, { number: issue, label });
+    }
+
+    yield* github.removeLabel(issue, label);
+  });
+
 // Labels the issue for a person, says why claim took nothing on, and stops.
 const referToPerson = (issue: number, label: string, reason: string) =>
   Effect.gen(function* () {
@@ -652,7 +673,7 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>, r
     const adopted = { number: only.number, url: only.url, draft: only.isDraft };
     yield* Subjects.name(Claims.pullRequest(only.number));
     yield* markClaimed(issue);
-    yield* github.removeLabel(issue, label);
+    yield* takeQueueLabel(issue, label);
 
     const marker: ClaimMarker = {
       runId: run.runId,
@@ -733,7 +754,7 @@ export const claim = (
         // gives is the task's now, which may have moved since that claim
         // (#249); otherwise the one the claim ref recorded.
         if (resumed && Option.isSome(before)) {
-          yield* github.removeLabel(issue, label);
+          yield* takeQueueLabel(issue, label);
 
           if (Option.isSome(Option.fromUndefinedOr(options.base))) {
             return { branch, base };
@@ -746,7 +767,7 @@ export const claim = (
       }
 
       yield* markClaimed(issue);
-      yield* github.removeLabel(issue, label);
+      yield* takeQueueLabel(issue, label);
       const claimedAt = DateTime.formatIso(yield* DateTime.now);
       yield* github.comment(
         issue,

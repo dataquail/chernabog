@@ -429,12 +429,19 @@ describe("RunCleanupClientLive", () => {
 
       const open = yield* client.openSessions(run("issue-7"));
 
-      expect(open).toEqual([{ sessionId: "open", launcher: "mine", handle: "handle-open" }]);
+      expect(open).toEqual([
+        { sessionId: "open", launcher: "mine", handle: "handle-open", withPerson: false },
+      ]);
 
       yield* client.closeSession(open[0]);
 
       const refused = yield* Effect.flip(
-        client.closeSession({ sessionId: "unlaunched", launcher: "mine", handle: "h" }),
+        client.closeSession({
+          sessionId: "unlaunched",
+          launcher: "mine",
+          handle: "h",
+          withPerson: false,
+        }),
       );
 
       expect((yield* fs.readFileString(closed)).trim()).toBe("handle-open");
@@ -489,7 +496,9 @@ describe("RunCleanupClientLive", () => {
             reported("headless"),
             reported("open"),
           ]),
-        ).toEqual([{ sessionId: "open", launcher: "mine", handle: "handle-open" }]);
+        ).toEqual([
+          { sessionId: "open", launcher: "mine", handle: "handle-open", withPerson: false },
+        ]);
       }),
   );
 

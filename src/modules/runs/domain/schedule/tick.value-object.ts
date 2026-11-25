@@ -70,13 +70,11 @@ export const freeSlots = (capacity: Capacity) =>
     ),
   );
 
-// What a tick of a persona's flow would do: the work whose signals go to the
-// runs in flight (none when its trigger didn't run), the work it may start
-// runs for, in order, why it would start nothing when it wouldn't, and, once
+// What a tick of a persona's flow would do: the work it may start runs for,
+// in order, why it would start nothing when it wouldn't, and, once
 // its trigger ran, what it queued for this machine, left for others, and
 // says waits on someone, with who and why.
 export class TickPlan extends Schema.Class<TickPlan, { readonly brand: "TickPlan" }>("TickPlan")({
-  signalled: Schema.Array(WorkItem),
   start: Schema.Array(WorkItem),
   skipped: Schema.Option(Schema.String),
   routed: Schema.Option(

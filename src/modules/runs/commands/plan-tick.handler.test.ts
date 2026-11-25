@@ -110,7 +110,6 @@ describe("planTickHandler", () => {
           }),
         );
         expect(keys(plan.start)).toEqual(["pr-74"]);
-        expect(keys(plan.signalled)).toEqual(["pr-73", "pr-74"]);
         expect(named.start).toEqual([]);
       }).pipe(
         Effect.provide([
@@ -136,7 +135,6 @@ describe("planTickHandler", () => {
       const plan = yield* planning(review, open);
 
       expect(keys(plan.start)).toEqual(["pr-1"]);
-      expect(keys(plan.signalled)).toEqual(["pr-1", "pr-2"]);
       expect(plan.routed).toEqual(
         Option.some({ queued: ["pr-1 One", "pr-2"], elsewhere: [], waiting: [] }),
       );
@@ -155,7 +153,7 @@ describe("planTickHandler", () => {
     "records why it starts nothing: the machine's gates, a failing trigger, a persona not ready, the limit",
     () =>
       Effect.gen(function* () {
-        const paused = yield* planning(review, {
+        yield* planning(review, {
           ...open,
           conditions: { ...open.conditions, paused: true },
         });
@@ -164,9 +162,7 @@ describe("planTickHandler", () => {
         yield* planning({ ...review, flow: "logged-out" }, open);
         const limited = yield* planning(review, open);
 
-        expect(paused.signalled).toEqual([]);
         expect(limited.start).toEqual([]);
-        expect(keys(limited.signalled)).toEqual(["pr-1"]);
         expect(yield* reasons).toContain("paused");
         expect(yield* reasons).toContain("trigger failed: rate limited");
         expect(yield* reasons).toContain("bob is unavailable; run gh auth login");
@@ -261,51 +257,48 @@ describe("planTickHandler", () => {
     ),
   );
 
-  effect(
-    "never starts a held item, though its signals still go out, and records why it's held",
-    () =>
-      Effect.gen(function* () {
-        const implement = { ...review, flow: "implement" };
-        const plan = yield* planning(implement, open);
+  effect("never starts a held item, and records why it's held", () =>
+    Effect.gen(function* () {
+      const implement = { ...review, flow: "implement" };
+      const plan = yield* planning(implement, open);
 
-        expect(keys(plan.start)).toEqual(["issue-15"]);
-        expect(keys(plan.signalled)).toEqual(["issue-14", "issue-15", "issue-16"]);
-        expect(plan.routed).toEqual(
-          Option.some({ queued: ["issue-15"], elsewhere: [], waiting: [] }),
-        );
+      expect(keys(plan.start)).toEqual(["issue-15"]);
+      expect(plan.routed).toEqual(
+        Option.some({ queued: ["issue-15"], elsewhere: [], waiting: [] }),
+      );
 
-        expect(
-          (yield* listHoldsHandler()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),
-        ).toEqual([
-          ["implement", "issue-14", "waits on #12, #13"],
-          ["implement", "issue-16", "waits on #15"],
-        ]);
+      expect(
+        (yield* listHoldsHandler()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),
+      ).toEqual([
+        ["implement", "issue-14", "waits on #12, #13"],
+        ["implement", "issue-16", "waits on #15"],
+      ]);
 
-        // Not even a person naming it starts it, and they hear why.
-        const named = yield* planning(implement, {
-          ...open,
-          gates: false,
-          item: Option.some("issue-14"),
-        });
+      // Not even a person naming it starts it, and they hear why.
+      const named = yield* planning(implement, {
+        ...open,
+        gates: false,
+        item: Option.some("issue-14"),
+      });
 
-        expect(named.start).toEqual([]);
-        expect(named.skipped).toEqual(Option.some("issue-14 is held: waits on #12, #13"));
-      }).pipe(
-        Effect.provide([
-          runtime(fakeEngine(), {
-            flows: {
-              "demo/implement": {
-                items: [
-                  item("issue-14", { held: "waits on #12, #13" }),
-                  item("issue-15"),
-                  item("issue-16", { held: "waits on #15", wakeOnly: true, signals: ["ci"] }),
-                ],
-              },
+      expect(named.start).toEqual([]);
+      expect(named.skipped).toEqual(Option.some("issue-14 is held: waits on #12, #13"));
+    }).pipe(
+      Effect.provide([
+        runtime(fakeEngine(), {
+          flows: {
+            "demo/implement": {
+              items: [
+                item("issue-14", { held: "waits on #12, #13" }),
+                item("issue-15"),
+                item("issue-16", { held: "waits on #15", wakeOnly: true, signals: ["ci"] }),
+              ],
             },
-          }),
-          PassThroughUnitOfWork,
-        ]),
-      ),
+          },
+        }),
+        PassThroughUnitOfWork,
+      ]),
+    ),
   );
 
   effect("a tick's holds replace the flow's last, and leave other flows' alone", () =>
