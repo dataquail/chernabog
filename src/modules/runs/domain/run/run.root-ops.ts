@@ -145,15 +145,16 @@ const cancel = (run: RunRoot, by: string, at: string) =>
     }),
   );
 
-// The run ended, at `at`, because its work item went while it was in flight
-// (closed, merged, claimed by another run), before its workflow could end it,
-// or was lost to a run that took it over. Its summary says why, and the step
-// it was interrupted in, if any.
+// The run ended, at `at`, before its workflow could end it: because its work
+// item went while it was in flight (closed, merged, claimed by another run),
+// it was lost to a run that took it over, or its spoke was ended from outside
+// (its hub stopped, or it went past a bound). Its summary says why, and the
+// step it was interrupted in, if any.
 const supersede = (
   run: RunRoot,
   reason: string,
   at: string,
-  ending: "superseded" | "lost" | "ended-at-park" | "interrupted" = "superseded",
+  ending: "superseded" | "lost" | "ended-at-park" | "interrupted" | "failed" = "superseded",
 ) =>
   whileRunning(run, () =>
     RunRoot.make({

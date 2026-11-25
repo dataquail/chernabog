@@ -36,6 +36,11 @@ import YAML from "yaml";
 
 import { howToStart } from "./kernel/manual-flow.value-object.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
+import {
+  DEFAULT_SPOKE_BOUNDS,
+  parseByteSize,
+  type SpokeBounds,
+} from "./kernel/spoke-bounds.value-object.ts";
 import { StandIns } from "./kernel/stand-in.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
@@ -103,6 +108,15 @@ const DurationText = Schema.String.pipe(
     Schema.makeFilter(
       (text: string) =>
         Option.isSome(parseDuration(text)) || `"${text}" is not a duration, such as "6 hours"`,
+    ),
+  ),
+);
+
+const ByteSizeText = Schema.String.pipe(
+  Schema.check(
+    Schema.makeFilter(
+      (text: string) =>
+        Option.isSome(parseByteSize(text)) || `"${text}" is not a size, such as "256 MB"`,
     ),
   ),
 );
@@ -367,6 +381,16 @@ const GitHubPersonaFile = Schema.Struct({
   token: Schema.optionalKey(TokenSourceFile),
 });
 
+// The bounds the daemon holds each run's spoke to (ADR 23, decision 4); each
+// left out is its default.
+const SpokesFile = Schema.Struct({
+  telemetry: Schema.optionalKey(ByteSizeText),
+  runLog: Schema.optionalKey(ByteSizeText),
+  phaseTime: Schema.optionalKey(DurationText),
+  idle: Schema.optionalKey(DurationText),
+  memory: Schema.optionalKey(ByteSizeText),
+});
+
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
 // The key machine config is stamped with: the chernabog that last migrated it.
 export const STAMP_KEY = "chernabog";
@@ -389,6 +413,7 @@ export const MachineConfigFile = Schema.Struct({
   launcher: Schema.optionalKey(Schema.String),
   launchers: Schema.optionalKey(Schema.Record(Schema.String, LauncherFile)),
   repos: Schema.optionalKey(Schema.Array(EnrolledRepoSchema)),
+  spokes: Schema.optionalKey(SpokesFile),
 });
 
 export type MachineConfigFile = typeof MachineConfigFile.Type;
@@ -437,6 +462,8 @@ export type MachineConfig = {
     readonly byLogin: Readonly<Record<string, Events>>;
   };
   readonly repos: ReadonlyArray<EnrolledRepo>;
+  // What the daemon ends a run's spoke past.
+  readonly spokes: SpokeBounds;
 };
 
 // Which events tick a persona's flows.
@@ -672,6 +699,27 @@ const eventsOf = (file: MachineConfigFile): MachineConfig["events"] => {
   };
 };
 
+// A size or duration machine config gives, else the default; the schema has
+// already refused one that doesn't read.
+const boundOf = <A>(
+  text: Option.Option<string>,
+  parse: (given: string) => Option.Option<A>,
+  fallback: A,
+) => Option.getOrElse(Option.flatMap(text, parse), () => fallback);
+
+const spokeBoundsOf = (file: MachineConfigFile["spokes"]): SpokeBounds => {
+  const given = (key: keyof typeof SpokesFile.Type) =>
+    Option.flatMap(Option.fromUndefinedOr(file), (spokes) => Option.fromUndefinedOr(spokes[key]));
+
+  return {
+    telemetry: boundOf(given("telemetry"), parseByteSize, DEFAULT_SPOKE_BOUNDS.telemetry),
+    runLog: boundOf(given("runLog"), parseByteSize, DEFAULT_SPOKE_BOUNDS.runLog),
+    phaseTime: boundOf(given("phaseTime"), parseDuration, DEFAULT_SPOKE_BOUNDS.phaseTime),
+    idle: boundOf(given("idle"), parseDuration, DEFAULT_SPOKE_BOUNDS.idle),
+    memory: boundOf(given("memory"), parseByteSize, DEFAULT_SPOKE_BOUNDS.memory),
+  };
+};
+
 export const normalizeMachineConfig = (file: MachineConfigFile, home: string): MachineConfig => ({
   github: Object.keys(file.github ?? {}),
   accounts: Object.entries(file.accounts ?? { work: {} }).map(fromAccountFile(home)),
@@ -684,6 +732,7 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   humanOnly: file.humanOnly ?? [],
   events: eventsOf(file),
   repos: (file.repos ?? []).map((repo) => ({ ...repo, path: expandHome(repo.path, home) })),
+  spokes: spokeBoundsOf(file.spokes),
 });
 
 // A persona's token source as machine config's github: entry gives it: gh's

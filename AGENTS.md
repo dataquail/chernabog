@@ -1059,6 +1059,21 @@ How a CI run differs from a daemon run:
   finds running as `interrupted` (it keeps its markers and lets go of its
   claim ref, so the phase repeats in a new run) before its first tick.
   `RecoverRunsCommand` resumes nothing from a journal.
+- **The hub bounds every spoke** (ADR 23 d4, #663): telemetry bytes,
+  run-log bytes, phase time, idle time and its process group's memory,
+  machine config's `spokes:` over `DEFAULT_SPOKE_BOUNDS`
+  (`src/kernel/spoke-bounds.value-object.ts`). `hubSpokes` samples every
+  live spoke every 5 seconds (`SAMPLE_EVERY`): telemetry and log by size,
+  idle from when its journal, run log or a reported session's
+  `transcripts` (`Adapter.transcripts`; claude's) last changed, memory from
+  one `ps -A -o pgid=,rss=` (`groupsMemory`). One past a bound is ended
+  through `CancelRunCommand` `endAs failed`, its summary naming the bound
+  (`breachSummary`), with `closeSessions: true` always. The spoke caps its
+  own writes too: the hub passes `--telemetry-limit` (its files are
+  `spoke-<run>-<pid>.jsonl`, counted over every day folder,
+  `telemetryOfArgs`) and `--run-log-limit` (`RunLogLimit`), and
+  `--stop-after-seconds` five minutes past its phase-time bound, so the
+  hub's bound ends it first.
 
 ## Versions (#123, #163)
 

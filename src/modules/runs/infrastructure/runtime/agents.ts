@@ -184,10 +184,19 @@ export const AgentLive = (
               // A spoke reports the session in its journal too, where its hub
               // finds it to close it (ADR 23, decision 5).
               for (const records of Option.toArray(yield* Effect.serviceOption(RunRecords))) {
+                const transcripts = yield* Option.match(
+                  Option.fromUndefinedOr(found.value.transcripts),
+                  {
+                    onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+                    onSome: (of) => of({ sessionId: request.sessionId, cwd: request.cwd, account }),
+                  },
+                );
+
                 yield* records.openedSession(RunId.make(run.value.runId), {
                   adapter: name,
                   sessionId: request.sessionId,
                   launch: sessionFiles((yield* Home).root, request.sessionId).launch,
+                  transcripts,
                 });
               }
             }

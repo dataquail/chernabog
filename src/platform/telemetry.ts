@@ -8,6 +8,12 @@
 // CLI call that ends at once loses nothing. Writing is best effort: a failure
 // is said on stderr once and its records are dropped, never failing the
 // program they describe.
+//
+// A spoke (ADR 23, decision 4) names its files for its run,
+// <dir>/<YYYY-MM-DD>/spoke-<run>-<pid>.jsonl, and is given a limit: the bytes
+// its run's files may hold, summed over every day folder. At the limit it
+// writes one last line saying it stopped, and drops everything after, so no
+// flood grows a run's telemetry past its bound on any day.
 
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -22,14 +28,55 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Tracer from "effect/Tracer";
 
-export type TelemetryProcess = "daemon" | "cli";
+import { formatBytes } from "../kernel/spoke-bounds.value-object.ts";
+
+// Which process writes: the daemon, a CLI call, or one run's spoke.
+export type TelemetryProcess = "daemon" | "cli" | `spoke-${string}`;
 
 export type FileTelemetryOptions = {
   // The folder the day folders go in.
   readonly dir: string;
   readonly process: TelemetryProcess;
+  // The bytes every file of this process's name may hold, over every day
+  // folder: a spoke's bound. None for no limit.
+  readonly limit?: Option.Option<number>;
   // Where the one warning about a failed write goes; stderr by default.
   readonly warn?: (line: string) => void;
+};
+
+// What a process writes telemetry as, and its limit, from the arguments its
+// command line is parsed from: a spoke (`ci run --run <run>`) as its run,
+// limited by `--telemetry-limit <bytes>`; the daemon; or a CLI call.
+export const telemetryOfArgs = (
+  args: ReadonlyArray<string>,
+): { readonly process: TelemetryProcess; readonly limit: Option.Option<number> } => {
+  const valueOf = (flag: string) =>
+    Option.flatMap(
+      Option.liftPredicate(args.indexOf(flag), (at) => at >= 0),
+      (at) => Option.fromUndefinedOr(args[at + 1]),
+    );
+
+  const spokeOf = Option.flatMap(
+    Option.liftPredicate(args, (given) => given[0] === "ci" && given[1] === "run"),
+    () => valueOf("--run"),
+  );
+
+  return Option.match(spokeOf, {
+    onSome: (run) => ({
+      process: `spoke-${run}`,
+      limit: Option.filter(
+        Option.map(valueOf("--telemetry-limit"), Number),
+        (bytes) => Number.isFinite(bytes) && bytes >= 0,
+      ),
+    }),
+    onNone: () => ({
+      process: Option.match(
+        Option.filter(Option.fromUndefinedOr(args[0]), (command) => command === "daemon"),
+        { onNone: () => "cli" as const, onSome: () => "daemon" as const },
+      ),
+      limit: Option.none(),
+    }),
+  });
 };
 
 type SpanStatus = "ok" | "error" | "unfinished";
@@ -44,6 +91,8 @@ const NANOS_PER_MILLI = BigInt(1_000_000);
 const dateOfNanos = (nanos: bigint) => new Date(Number(nanos / NANOS_PER_MILLI));
 
 const dayOf = (date: Date) => date.toISOString().slice(0, 10);
+
+const bytesOf = (line: string) => Buffer.byteLength(line) + 1;
 
 const stderr = (line: string) => {
   process.stderr.write(`${line}\n`);
@@ -105,6 +154,11 @@ const make = (options: FileTelemetryOptions) =>
     const pending: Array<Pending> = [];
     const open = new Set<RecordedSpan>();
     let warned = false;
+    const limit = options.limit ?? Option.none<number>();
+    // The bytes this process's name holds, counted from the files already
+    // there at the first write; none until then, or with no limit.
+    let used = Option.none<number>();
+    let stopped = false;
 
     const warnOnce = (line: string) => {
       if (!warned) {
@@ -160,6 +214,94 @@ const make = (options: FileTelemetryOptions) =>
       pending.push({ day: dayOf(log.date), line });
     });
 
+    // What every file of this process's name already holds, in every day
+    // folder: a spoke's earlier files count toward its bound.
+    const heldAlready = Effect.gen(function* () {
+      if (!(yield* fs.exists(options.dir))) {
+        return 0;
+      }
+
+      let total = 0;
+
+      for (const day of yield* fs.readDirectory(options.dir)) {
+        const files = yield* fs
+          .readDirectory(`${options.dir}/${day}`)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+        for (const file of files.filter((name) => name.startsWith(`${options.process}-`))) {
+          const info = yield* fs.stat(`${options.dir}/${day}/${file}`).pipe(Effect.option);
+          total += Option.match(info, { onNone: () => 0, onSome: ({ size }) => Number(size) });
+        }
+      }
+
+      return total;
+    }).pipe(Effect.orElseSucceed(() => 0));
+
+    // The line a limited process writes last, in place of the first that
+    // would take it past its limit, `filler` long. It fills the files to just
+    // past the bound, which is how the hub, measuring their size, knows the
+    // spoke reached it (ADR 23, decision 4), whatever size the dropped line was.
+    const stopLine = (bytes: number, at: Date, filler: number) =>
+      Formatter.formatJson({
+        type: "log",
+        time: at.toISOString(),
+        level: "WARN",
+        message: `chernabog: ${options.process}'s telemetry stopped at its bound of ${formatBytes(bytes)}; what it records after is dropped`,
+        annotations: {},
+        filler: " ".repeat(filler),
+      });
+
+    // The lines that fit within the limit, and the stop line in place of the
+    // first that doesn't, once; all of them with no limit.
+    const withinLimit = (lines: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        if (Option.isNone(limit)) {
+          return lines;
+        }
+
+        if (stopped) {
+          return [];
+        }
+
+        let total = yield* Option.match(used, {
+          onNone: () => heldAlready,
+          onSome: Effect.succeed,
+        });
+
+        const kept: Array<string> = [];
+
+        // Only a stop line takes this name's files past the limit: one an
+        // earlier process of the run wrote has stopped it already.
+        if (total > limit.value) {
+          stopped = true;
+          used = Option.some(total);
+
+          return kept;
+        }
+
+        for (const line of lines) {
+          if (total + bytesOf(line) > limit.value) {
+            stopped = true;
+            const at = new Date(yield* Clock.currentTimeMillis);
+            const bare = bytesOf(stopLine(limit.value, at, 0));
+            const last = stopLine(limit.value, at, Math.max(0, limit.value + 1 - total - bare));
+            kept.push(last);
+            total += bytesOf(last);
+            warn(
+              `chernabog: ${options.process}'s telemetry reached its bound of ${formatBytes(limit.value)}, and stops here`,
+            );
+            break;
+          }
+
+          kept.push(line);
+          total += bytesOf(line);
+        }
+
+        used = Option.some(total);
+
+        return kept;
+      });
+
     const writeDay = (day: string, lines: ReadonlyArray<string>) => {
       const folder = `${options.dir}/${day}`;
       const file = `${folder}/${fileName}`;
@@ -189,9 +331,10 @@ const make = (options: FileTelemetryOptions) =>
           return Effect.forEach(
             byDay,
             ([day, records]) =>
-              writeDay(
-                day,
-                records.map((record) => record.line),
+              withinLimit(records.map((record) => record.line)).pipe(
+                Effect.flatMap((lines) =>
+                  Effect.when(writeDay(day, lines), Effect.succeed(lines.length > 0)),
+                ),
               ),
             { discard: true },
           );

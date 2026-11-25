@@ -12,17 +12,26 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import {
+  activityOf,
   foldSpoke,
   hubSpokes,
   journalSignature,
+  measureOf,
+  nextActivity,
   ReportFold,
   reportFold,
   spokeArgs,
   spokeEnvironment,
   type SpokeHandOver,
   tailSpoke,
+  telemetryByRun,
 } from "../src/interface/daemon/spokes.server.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import {
+  breachOf,
+  breachSummary,
+  DEFAULT_SPOKE_BOUNDS,
+} from "../src/kernel/spoke-bounds.value-object.ts";
 import { JournalsAt, RunJournals } from "../src/modules/runs/infrastructure/runtime/journals.ts";
 import {
   type RunStatus,
@@ -64,30 +73,42 @@ const handOver = (fields: Partial<SpokeHandOver> = {}): SpokeHandOver => ({
 
 describe("a spoke's hand-over", () => {
   test("is `ci run --run` with the run, its repo, flow, persona, item and tree", () => {
-    expect(spokeArgs(handOver(), "/home/spokes/3f2a.hand-over.json")).toEqual([
-      "ci",
-      "run",
-      "--run",
-      "3f2a",
-      "--repo",
-      "demo",
-      "--flow",
-      "implement",
-      "--persona",
-      "chernabog-bot",
-      "--item",
-      "issue-7",
-      "--hand-over-file",
-      "/home/spokes/3f2a.hand-over.json",
-      "--tree",
-      "abc123",
-    ]);
+    expect(spokeArgs(handOver(), "/home/spokes/3f2a.hand-over.json", DEFAULT_SPOKE_BOUNDS)).toEqual(
+      [
+        "ci",
+        "run",
+        "--run",
+        "3f2a",
+        "--repo",
+        "demo",
+        "--flow",
+        "implement",
+        "--persona",
+        "chernabog-bot",
+        "--item",
+        "issue-7",
+        "--hand-over-file",
+        "/home/spokes/3f2a.hand-over.json",
+        "--tree",
+        "abc123",
+        // Its byte bounds, which it caps its own writes at, and its own stop a
+        // margin past its phase-time bound (4 hours and 5 minutes), so the
+        // hub's bound is the one that ends it.
+        "--telemetry-limit",
+        "256000000",
+        "--run-log-limit",
+        "32000000",
+        "--stop-after-seconds",
+        "14700",
+      ],
+    );
   });
 
   test("names no persona for the implicit one, and no tree for a working copy's", () => {
     const args = spokeArgs(
       handOver({ persona: Option.none(), tree: Option.none() }),
       "/home/spokes/3f2a.hand-over.json",
+      DEFAULT_SPOKE_BOUNDS,
     );
 
     expect(args).not.toContain("--persona");
@@ -340,6 +361,8 @@ describe("ending a live spoke", () => {
           apply: () => Effect.void,
           onExit: (_run, _exit, intended) =>
             Deferred.succeed(exiting, intended).pipe(Effect.andThen(Deferred.await(gate))),
+          bounds: DEFAULT_SPOKE_BOUNDS,
+          onBound: () => Effect.succeed(true),
         });
 
         yield* spokes.start(handOver({ checkout: home }));
@@ -367,4 +390,87 @@ describe("ending a live spoke", () => {
         expect(yield* spokes.end(runId, "cancelled")).toEqual(Option.none());
       }),
   );
+});
+
+describe("a spoke measured against its bounds", () => {
+  const scratchHome = FileSystem.FileSystem.use((fs) =>
+    fs.makeTempDirectoryScoped({ prefix: "chernabog-bounds-" }),
+  );
+
+  effect("its telemetry is every file named for its run, over every day folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const telemetry = `${yield* scratchHome}/telemetry`;
+
+      yield* fs.makeDirectory(`${telemetry}/2026-11-24`, { recursive: true });
+      yield* fs.makeDirectory(`${telemetry}/2026-11-25`, { recursive: true });
+      yield* fs.writeFileString(`${telemetry}/2026-11-24/spoke-3f2a-100.jsonl`, "a".repeat(300));
+      yield* fs.writeFileString(`${telemetry}/2026-11-25/spoke-3f2a-100.jsonl`, "a".repeat(200));
+      yield* fs.writeFileString(`${telemetry}/2026-11-25/spoke-9b9b-7.jsonl`, "b".repeat(50));
+      yield* fs.writeFileString(`${telemetry}/2026-11-25/daemon-1.jsonl`, "c".repeat(999));
+
+      const byRun = yield* telemetryByRun(fs, telemetry);
+
+      expect([...byRun.entries()].toSorted()).toEqual([
+        ["3f2a", 500],
+        ["9b9b", 50],
+      ]);
+    }),
+  );
+
+  effect("its activity moves when its journal, its run log or a transcript grows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* scratchHome;
+      const runId = RunId.make("3f2a");
+      const transcript = `${home}/claude/projects/demo/s1.jsonl`;
+      const subagents = `${home}/claude/projects/demo/s1`;
+      yield* fs.makeDirectory(`${subagents}/subagents`, { recursive: true });
+      yield* fs.makeDirectory(`${home}/runs`, { recursive: true });
+
+      const sessions = [
+        { adapter: "claude", sessionId: "s1", launch: "/l", transcripts: [transcript, subagents] },
+      ];
+
+      const signature = activityOf(fs, home, runId, sessions);
+
+      const first = yield* signature;
+      expect(yield* signature).toBe(first);
+
+      yield* fs.writeFileString(`${home}/runs/${runId}.log`, "step: claim\n");
+      const afterLog = yield* signature;
+      expect(afterLog).not.toBe(first);
+
+      yield* fs.writeFileString(transcript, "{}\n");
+      const afterTranscript = yield* signature;
+      expect(afterTranscript).not.toBe(afterLog);
+
+      yield* fs.writeFileString(`${subagents}/subagents/agent-1.jsonl`, "{}\n");
+      expect(yield* signature).not.toBe(afterTranscript);
+    }),
+  );
+
+  test("idle is the time since its files last changed; phase time since it was spawned", () => {
+    const started = { signature: "", at: 0 };
+    const working = nextActivity(started, "j1", 60_000);
+    const unchanged = nextActivity(working, "j1", 40 * 60_000);
+
+    expect(working).toEqual({ signature: "j1", at: 60_000 });
+    expect(unchanged).toBe(working);
+
+    const measure = measureOf({
+      now: 40 * 60_000,
+      startedAt: 0,
+      activity: unchanged,
+      telemetry: 0,
+      runLog: 0,
+      memory: Option.some(200_000_000),
+    });
+
+    expect(Duration.toMinutes(measure.idle)).toBe(39);
+    expect(Duration.toMinutes(measure.phaseTime)).toBe(40);
+    expect(Option.map(breachOf(measure, DEFAULT_SPOKE_BOUNDS), breachSummary)).toEqual(
+      Option.some("ended past its idle bound: 39m over 30m"),
+    );
+  });
 });

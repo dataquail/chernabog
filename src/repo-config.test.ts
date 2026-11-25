@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-import { parseDuration } from "./repo-config.ts";
+import { DEFAULT_SPOKE_BOUNDS } from "./kernel/spoke-bounds.value-object.ts";
+import { MachineConfigFile, normalizeMachineConfig, parseDuration } from "./repo-config.ts";
 
 const millisOf = (text: string) => Option.map(parseDuration(text), Duration.toMillis);
 
@@ -40,4 +42,30 @@ test("anything else is not a duration", () => {
   const rejected = ["", "hours", "6", "-1 hours", "6 months", "6 Hours"];
 
   expect(rejected.map(parseDuration)).toEqual(rejected.map(() => Option.none()));
+});
+
+const machineFrom = (file: typeof MachineConfigFile.Encoded) =>
+  normalizeMachineConfig(Schema.decodeSync(MachineConfigFile)(file), "/home/me");
+
+test("a spoke's bounds are the defaults unless machine config's spokes: sets them", () => {
+  expect(machineFrom({}).spokes).toEqual(DEFAULT_SPOKE_BOUNDS);
+
+  const set = machineFrom({
+    spokes: { telemetry: "64 MB", runLog: "2 MB", phaseTime: "90 minutes", idle: "5 minutes" },
+  }).spokes;
+
+  expect(set.telemetry).toBe(64_000_000);
+  expect(set.runLog).toBe(2_000_000);
+  expect(Duration.toMinutes(set.phaseTime)).toBe(90);
+  expect(Duration.toMinutes(set.idle)).toBe(5);
+  expect(set.memory).toBe(DEFAULT_SPOKE_BOUNDS.memory);
+});
+
+test("a spoke bound machine config can't read is refused, naming what it wants", () => {
+  expect(() => machineFrom({ spokes: { memory: "a lot" } })).toThrow(
+    '"a lot" is not a size, such as "256 MB"',
+  );
+  expect(() => machineFrom({ spokes: { idle: "soon" } })).toThrow(
+    '"soon" is not a duration, such as "6 hours"',
+  );
 });

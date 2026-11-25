@@ -172,6 +172,17 @@ const transcriptsOf = (session: AgentSession) =>
     return yield* Effect.filter(files, (file) => fs.exists(file.path));
   }).pipe(Effect.mapError(failed(`the transcripts of session ${session.sessionId}`)));
 
+// Where a session's transcripts grow as it works: its own, and the folder
+// beside it its subagents write theirs in. What a hub watches, by size, to
+// tell a session working quietly from a spoke gone idle (ADR 23, decision 4).
+export const claudeTranscripts = (session: AgentSession) =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    const main = yield* transcriptFile(session, claudeHomeOf(session.account, home.user));
+
+    return [main, main.slice(0, -".jsonl".length)];
+  });
+
 export const claudeUsage = (session: AgentSession, cursor: Option.Option<string>) =>
   Effect.gen(function* () {
     const positions = yield* cursorOf(cursor);

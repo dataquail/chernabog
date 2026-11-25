@@ -65,6 +65,20 @@ The daemon runs no flow itself. Each run it starts executes in a **spoke**: a pr
 
 `~/.config/chernabog/state.db` keeps the machine's records of its runs. A lock file next to it keeps a second daemon or foreground `run` from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity.
 
+### Spoke bounds
+
+The daemon holds every spoke to five bounds, and ends one that goes past any of them. Machine config's `spokes:` sets each; the defaults sit well above what a healthy run uses.
+
+| Bound       | Key         | Default      | Measured as                                                                          |
+| ----------- | ----------- | ------------ | ------------------------------------------------------------------------------------ |
+| telemetry   | `telemetry` | `256 MB`     | bytes in the spoke's telemetry files (`telemetry/<day>/spoke-<run>-<pid>.jsonl`), over every day |
+| run log     | `runLog`    | `32 MB`      | bytes in `runs/<run>.log`                                                            |
+| phase time  | `phaseTime` | `4 hours`    | time since the spoke started                                                         |
+| idle        | `idle`      | `30 minutes` | time since the run's journal, its run log or an agent session's transcript last grew |
+| memory      | `memory`    | `2 GB`       | resident memory of the spoke's process group, summed                                 |
+
+The daemon measures every spoke every 5 seconds. A spoke past a bound gets `SIGTERM` to its process group, then `SIGKILL` ten seconds later; its run ends **`failed`** with the bound it broke (`ended past its idle bound: 31m over 30m`), its journal is deleted, and its agent sessions are closed, so none goes on spending for a run that has ended. The item's phase is left as its record has it, so a new run repeats it. A spoke also stops writing its own telemetry and run log at their bounds, with one last line saying so, so neither grows past its bound however fast it floods. A wait longer than the idle bound must be a park, not a sleep.
+
 A daemon that stops ends its spokes. When it starts again, each run it finds in flight ends as **`interrupted`**: like `ended-at-park`, it keeps every marker on the item, its worktrees and its agent sessions, and lets go of its claim ref, so the flow's trigger offers the item again and a new run repeats the phase from where its record says it is. A restart the daemon chooses (an upgrade, newly trusted config) waits until no run is in flight.
 
 ## Logs

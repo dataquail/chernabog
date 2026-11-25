@@ -324,6 +324,18 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
         ),
         Flag.optional,
       ),
+      telemetryLimit: Flag.Int("telemetry-limit").pipe(
+        Flag.withDescription(
+          "A spoke's telemetry bound, in bytes: its run's telemetry files stop growing there, on any day",
+        ),
+        Flag.optional,
+      ),
+      runLogLimit: Flag.Int("run-log-limit").pipe(
+        Flag.withDescription(
+          "A spoke's run-log bound, in bytes: its run's log stops growing there, with a line saying so",
+        ),
+        Flag.optional,
+      ),
     },
     (options) =>
       Effect.gen(function* () {
@@ -352,6 +364,7 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             run: options.run,
             handOver: options.handOver,
             handOverFile: options.handOverFile,
+            runLogLimit: options.runLogLimit,
             logs: Option.orElse(options.logs, () =>
               Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
             ),
