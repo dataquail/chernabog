@@ -242,6 +242,7 @@ const decodeFlowEvents = Schema.decodeUnknownOption(FlowEvents);
 
 // What a flow declares, when it declares anything.
 export const of = (flow: Flow): Option.Option<FlowEvents> => {
+  // Stryker disable next-line ConditionalExpression,BlockStatement: past the guard, a flow without events decodes undefined, which is none too
   if (!Predicate.hasProperty(flow, "events")) {
     return Option.none();
   }
@@ -315,6 +316,7 @@ const phaseRoute = (flow: CiFlow): Route => ({
   personas: flow.personas,
   item: { kind: "item", path: "client_payload.item" },
   association: Option.none(),
+  // Stryker disable next-line BooleanLiteral: with no association to read, a trusted route lets every sender through, as an untrusted one does
   trusted: false,
   ownPersona: true,
 });
