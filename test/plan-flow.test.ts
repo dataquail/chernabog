@@ -1,6 +1,9 @@
 // The plan recipe through the engine, on an in-memory GitHub: a spec queued
 // with auto:plan, the plan the agent drafts and the code checks, the wait for
-// a person's answer, and the epic of sub-issues it makes once approved.
+// a person's answer, and the epic of sub-issues it makes once approved. The
+// wait is the spec's proposed record, and the park ends the run (ADR 23,
+// decision 2); once a person answers, the recipe's trigger (Plan.answered)
+// offers the spec from the record, and a new run takes the plan up.
 
 import {
   claimMarker,
@@ -11,26 +14,27 @@ import {
   planNodeMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
-import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import plan from "../packages/recipes/flows/plan.ts";
-import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
-  deliverSignals,
+  type EngineRun,
   type Fake,
   flowTriggered,
+  follow,
   ISSUE,
   item,
   makeFake,
+  onEngine,
   repo,
-  runUntil,
   summaryOf,
+  takeUp,
   triggered,
 } from "./sdk-fakes.ts";
 
@@ -75,41 +79,42 @@ const askFor =
     fake.comment(change, "zach");
   };
 
-// Runs the plan flow, and each time it parks on a plan, gives the next answer
-// and delivers what the trigger then reports, as the daemon's ticks would:
-// again on each poll until it wakes the run, since a run registers the waits
-// of one awaitSignal one at a time.
-const planWith = (fake: Fake, answers: ReadonlyArray<Answer>) => {
-  let round = 0;
-  let given = 0;
-
-  return runUntil(planning, fake, work, (run) =>
+// Runs the plan flow, and each time a run ends at its park on a plan, gives
+// the next answer, and takes the spec up in a new run from what the recipe's
+// own trigger then offers, as a tick would; until a run ends otherwise, or
+// no answer is left. The last run, and how each run before it ended.
+const planWith = (fake: Fake, answers: ReadonlyArray<Answer>) =>
+  onEngine(
+    planning,
+    fake,
     Effect.gen(function* () {
-      if (run.status !== "running") {
-        return true;
-      }
+      let last: EngineRun = yield* follow(planning, work);
+      const statuses = [last.status];
 
-      const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "approved" });
-      const parked = waits.some((wait) => wait.deferred === `approved:plan-${round + 1}`);
-      const answer = Arr.get(answers, round);
-
-      if (parked && Option.isSome(answer)) {
-        if (given === round) {
-          given += 1;
-          answer.value(fake);
+      for (const answer of answers) {
+        if (last.status !== "ended-at-park") {
+          break;
         }
 
-        const answered = yield* triggered(fake, Plan.answers).pipe(Effect.orDie);
+        answer(fake);
 
-        if ((yield* deliverSignals(planning, IMPLICIT, answered)) > 0) {
-          round += 1;
-        }
+        const offered = (yield* flowTriggered(fake, plan).pipe(Effect.orDie)).filter(
+          (found) => found.key === work.key,
+        );
+
+        last = yield* Effect.flatMap(
+          takeUp(planning, offered),
+          Option.match({
+            onNone: () => Effect.die(`nothing took the plan up after answer ${statuses.length}`),
+            onSome: Effect.succeed,
+          }),
+        );
+        statuses.push(last.status);
       }
 
-      return false;
+      return { run: last, before: statuses.slice(0, -1) };
     }),
   );
-};
 
 // An issue already on GitHub, as an earlier run or a person left it.
 const madeIssue = (
@@ -136,31 +141,45 @@ const madeIssues = (fake: Fake) =>
   }));
 
 describe("plan", () => {
-  effect("finds specs labelled auto:plan, and wakes nothing until a person answers", () =>
-    Effect.gen(function* () {
-      const fake = queuedFake();
-      expect((yield* flowTriggered(fake, plan)).map((found) => found.key)).toEqual([
-        `issue-${ISSUE}`,
-      ]);
+  effect(
+    "finds specs labelled auto:plan, and offers a parked plan from its record only once a person answers",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedFake();
+        expect((yield* flowTriggered(fake, plan)).map((found) => found.key)).toEqual([
+          `issue-${ISSUE}`,
+        ]);
 
-      // The spec's record says its plan waits on a person; the label is only for people.
-      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
-      fake.recordPhase(`issue-${ISSUE}`, "proposed", { data: { round: 1 } });
-      fake.comment(`## Proposed plan\n\n${'<!-- chernabog-plan {"round":1} -->'}`);
-      expect(yield* triggered(fake, Plan.answers)).toEqual([]);
+        const answered = triggered(fake, Plan.answered("14 days"));
 
-      fake.comment("Split the API in two.", "zach");
-      expect(yield* triggered(fake, Plan.answers)).toEqual([
-        expect.objectContaining({
-          key: `issue-${ISSUE}`,
-          signals: ["changes-requested"],
-          wakeOnly: true,
-        }),
-      ]);
+        // The spec's record says its plan, posted now, waits on a person: a
+        // comment after the plan's is an answer. The label is only for people.
+        fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+        fake.comment(`## Proposed plan\n\n${'<!-- chernabog-plan {"round":1} -->'}`);
+        fake.recordPhase(`issue-${ISSUE}`, "proposed", {
+          at: yield* DateTime.now,
+          data: { round: 1, after: fake.comments.length },
+        });
+        expect(yield* answered).toEqual([]);
 
-      approve(fake);
-      expect((yield* triggered(fake, Plan.answers))[0]?.signals).toEqual(["approved"]);
-    }),
+        fake.comment("Split the API in two.", "zach");
+        const changes = yield* answered;
+        expect(changes).toEqual([
+          expect.objectContaining({
+            key: `issue-${ISSUE}`,
+            data: { issue: ISSUE, resumePlan: { round: 1, answer: "changes-requested" } },
+          }),
+        ]);
+        // Work a new run may start, not a wake.
+        expect(changes.map(mayStart)).toEqual([true]);
+
+        approve(fake);
+        expect(
+          (yield* answered).map((found) =>
+            Option.map(Plan.resuming(found), (taken) => taken.answer),
+          ),
+        ).toEqual([Option.some("approved")]);
+      }),
   );
 
   effect(
@@ -169,9 +188,10 @@ describe("plan", () => {
       Effect.gen(function* () {
         const fake = queuedFake();
         fake.plans.push(PLAN);
-        const run = yield* planWith(fake, [approve]);
+        const { before, run } = yield* planWith(fake, [approve]);
 
         expect(run.status).toBe("done");
+        expect(before).toEqual(["ended-at-park"]);
         expect(summaryOf(run)).toBe(`#${ISSUE}: an epic of 4 sub-issues`);
 
         const posted = fake.comments.find((comment) => comment.body.includes("## Proposed plan"));
@@ -193,8 +213,9 @@ describe("plan", () => {
 
         expect(fake.labelsOf(ISSUE)).toEqual([Plan.LABELS.epic]);
         expect(fake.removed).toEqual([Plan.planCheckout(ISSUE)]);
-        // The run took the spec's claim ref, and let it go when it ended.
-        expect(fake.commits.size).toBe(1);
+        // Each run took the spec's claim ref, the one that parked and the one
+        // that took the plan up, and let it go when it ended.
+        expect(fake.commits.size).toBe(2);
         expect(fake.refs.size).toBe(0);
         expect(fake.comments.at(-1)?.body).toContain(`- #${api} \`api\`: Do api`);
       }),
@@ -204,9 +225,10 @@ describe("plan", () => {
     Effect.gen(function* () {
       const fake = queuedFake();
       fake.plans.push(PLAN, { ...PLAN, nodes: [task("api-schema", "auto")] });
-      const run = yield* planWith(fake, [askFor("Leave the API for later."), approve]);
+      const { before, run } = yield* planWith(fake, [askFor("Leave the API for later."), approve]);
 
       expect(run.status).toBe("done");
+      expect(before).toEqual(["ended-at-park", "ended-at-park"]);
       expect(fake.steps).toEqual([Option.some("draft-plan-1"), Option.some("draft-plan-2")]);
       expect(fake.requests[1]?.resumePrompt).toEqual(
         Option.some(expect.stringContaining("zach: Leave the API for later.")),
@@ -239,13 +261,14 @@ describe("plan", () => {
             answered.comment(change, "zach");
           };
 
-        const run = yield* planWith(fake, [
+        const { before, run } = yield* planWith(fake, [
           deleteThenAsk("Leave the API for later."),
           deleteThenAsk("Only the name."),
           approve,
         ]);
 
         expect(run.status).toBe("done");
+        expect(before).toEqual(["ended-at-park", "ended-at-park", "ended-at-park"]);
         expect(fake.steps).toEqual([
           Option.some("draft-plan-1"),
           Option.some("draft-plan-2"),
@@ -272,9 +295,10 @@ describe("plan", () => {
         { ...PLAN, nodes: [task("a", "auto", ["b"]), task("b", "auto", ["a"])] },
         PLAN,
       );
-      const run = yield* planWith(fake, [approve]);
+      const { before, run } = yield* planWith(fake, [approve]);
 
       expect(run.status).toBe("done");
+      expect(before).toEqual(["ended-at-park"]);
       expect(fake.steps.slice(0, 2)).toEqual([
         Option.some("draft-plan-1"),
         Option.some("fix-plan-1-1"),
@@ -291,9 +315,10 @@ describe("plan", () => {
       Effect.gen(function* () {
         const fake = queuedFake();
         fake.plans.push({ ...PLAN, nodes: [task("verify", "auto")] });
-        const run = yield* planWith(fake, []);
+        const { before, run } = yield* planWith(fake, []);
 
         expect(run.status).toBe("needs-human");
+        expect(before).toEqual([]);
         expect(fake.steps).toEqual([
           Option.some("draft-plan-1"),
           Option.some("fix-plan-1-1"),
@@ -316,9 +341,10 @@ describe("plan", () => {
         nodes: [],
         questions: "1. What does done look like?",
       });
-      const run = yield* planWith(fake, []);
+      const { before, run } = yield* planWith(fake, []);
 
       expect(run.status).toBe("needs-human");
+      expect(before).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsClarification]);
       expect(fake.comments.at(-1)?.body).toContain("1. What does done look like?");
       expect(fake.comments.at(-1)?.body).toContain("`auto:plan`");
@@ -341,9 +367,10 @@ describe("plan", () => {
           ),
         );
 
-        const run = yield* planWith(fake, [approve]);
+        const { before, run } = yield* planWith(fake, [approve]);
 
         expect(run.status).toBe("done");
+        expect(before).toEqual(["ended-at-park"]);
         expect(
           madeIssues(fake)
             .filter((issue) => Option.contains(issue.key, "api-schema"))
@@ -357,7 +384,8 @@ describe("plan", () => {
     Effect.gen(function* () {
       const fake = queuedFake();
       fake.plans.push(PLAN);
-      yield* planWith(fake, [approve]);
+      const { before } = yield* planWith(fake, [approve]);
+      expect(before).toEqual(["ended-at-park"]);
 
       expect(fake.comments.some((comment) => Option.isSome(claimMarker.read(comment.body)))).toBe(
         true,
