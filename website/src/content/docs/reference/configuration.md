@@ -27,8 +27,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `flows.<flow>.settings` | —                     | the flow's own settings, over `settings`; see [Flow settings](#flow-settings) |
 | `flows.<flow>.as`  | none                       | which of the team's GitHub Apps (`apps`) the flow acts as in CI: `author` or `reviewer`; see [GitHub Apps](#github-apps) |
-| `apps.author`, `apps.reviewer` | none           | the team's GitHub Apps, each as `{ id, slug }`; see [GitHub Apps](#github-apps) |
 | `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |
+| `apps.author`, `apps.reviewer` | none           | the team's GitHub Apps, each as `{ id, slug }`; see [GitHub Apps](#github-apps) |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
