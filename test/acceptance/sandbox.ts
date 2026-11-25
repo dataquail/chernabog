@@ -259,6 +259,18 @@ const chernabogCommand = () =>
     onSome: (bin) => [bin],
   });
 
+// The variables that keep git's global and system config, and XDG's, under
+// `dir`, as a test's processes must: a scratch HOME alone leaves git's global
+// config at $XDG_CONFIG_HOME/git/config, which is the person's own.
+export const gitConfigIn = (dir: string) => ({
+  XDG_CONFIG_HOME: join(dir, ".config"),
+  GIT_CONFIG_GLOBAL: join(dir, ".gitconfig"),
+  GIT_CONFIG_NOSYSTEM: "1",
+});
+
+// A runner's user, at `user`: its HOME, with git's config and XDG's inside it.
+export const runnerUserEnv = (user: string) => ({ HOME: user, ...gitConfigIn(user) });
+
 export const waitFor = async (check: () => boolean, what: string, timeoutMs = 30_000) => {
   const deadline = Date.now() + timeoutMs;
 
@@ -382,6 +394,10 @@ export const openSandbox = (
 
   const env = {
     ...inherited,
+    // git's global and system config, never the person's: a process the
+    // sandbox starts that writes git's global config writes the sandbox's.
+    // XDG_CONFIG_HOME too, which git falls back to without a ~/.gitconfig.
+    ...gitConfigIn(root),
     CHERNABOG_HOME: home,
     CHERNABOG_GITHUB_API: github.url,
     GH_TOKEN: "test-token",
@@ -419,13 +435,22 @@ export const openSandbox = (
 
   const [program = "chernabog", ...programArgs] = chernabogCommand();
 
-  // The CLI as a machine with this home and checkout runs it.
+  // The CLI as a machine with this home and checkout runs it, with extraEnv
+  // over the sandbox's environment and the variables `unset` names left out.
   const cliOn =
     (machineHome: string, machineCheckout: string) =>
-    (args: ReadonlyArray<string>, extraEnv: Readonly<Record<string, string>> = {}) =>
+    (
+      args: ReadonlyArray<string>,
+      extraEnv: Readonly<Record<string, string>> = {},
+      unset: ReadonlyArray<string> = [],
+    ) =>
       // From the sandbox's root once a test has moved the checkout away.
       spawn(program, [...programArgs, ...args], {
-        env: { ...env, CHERNABOG_HOME: machineHome, ...extraEnv },
+        env: Object.fromEntries(
+          Object.entries({ ...env, CHERNABOG_HOME: machineHome, ...extraEnv }).filter(
+            ([name]) => !unset.includes(name),
+          ),
+        ),
         cwd: Option.getOrElse(Option.liftPredicate(machineCheckout, existsSync), () => root),
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -433,9 +458,13 @@ export const openSandbox = (
 
   const collecting =
     (spawnCli: ReturnType<typeof cliOn>) =>
-    (args: ReadonlyArray<string>, extraEnv: Readonly<Record<string, string>> = {}) =>
+    (
+      args: ReadonlyArray<string>,
+      extraEnv: Readonly<Record<string, string>> = {},
+      unset: ReadonlyArray<string> = [],
+    ) =>
       new Promise<CliResult>((resolve) => {
-        const child = spawnCli(args, extraEnv);
+        const child = spawnCli(args, extraEnv, unset);
         let output = "";
 
         const collect = (chunk: Buffer) => {

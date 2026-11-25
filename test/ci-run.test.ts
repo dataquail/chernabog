@@ -11,6 +11,7 @@ import {
   claudeSeed,
   OAUTH_TOKEN_ENV,
   refusalOf,
+  runnerGitConfigFile,
   transcriptDirName,
 } from "../src/interface/cli/ci-run.main.ts";
 import { MachineConfigFile, normalizeMachineConfig } from "../src/repo-config.ts";
@@ -101,6 +102,24 @@ describe("claudeSeed", () => {
         "/tmp/home/worktrees": { hasTrustDialogAccepted: true },
       },
     });
+  });
+});
+
+describe("runnerGitConfigFile", () => {
+  test("is ~/.gitconfig, whatever XDG_CONFIG_HOME says, so a person's own git config is never written", () => {
+    expect(runnerGitConfigFile({ XDG_CONFIG_HOME: "/home/person/.config" }, "/runner")).toBe(
+      "/runner/.gitconfig",
+    );
+  });
+
+  test("is GIT_CONFIG_GLOBAL when the job names one", () => {
+    expect(runnerGitConfigFile({ GIT_CONFIG_GLOBAL: "/job/gitconfig" }, "/runner")).toBe(
+      "/job/gitconfig",
+    );
+  });
+
+  test("is ~/.gitconfig when GIT_CONFIG_GLOBAL is empty", () => {
+    expect(runnerGitConfigFile({ GIT_CONFIG_GLOBAL: "" }, "/runner")).toBe("/runner/.gitconfig");
   });
 });
 

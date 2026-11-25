@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
 import { USER_ID } from "./fake-github.ts";
-import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
+import { closed, openSandbox, runnerUserEnv, type Sandbox, waitFor } from "./sandbox.ts";
 
 // Claims an issue labelled ci:park and, in its first phase, has the agent
 // commit a change and waits on `go`; once the issue is labelled go, its
@@ -122,11 +122,16 @@ describe("chernabog ci run", () => {
     ...extra,
   ];
 
-  const ciRun = (issue: number, extra: ReadonlyArray<string> = [], env = {}) => {
+  const ciRun = (
+    issue: number,
+    extra: ReadonlyArray<string> = [],
+    env = {},
+    unset: ReadonlyArray<string> = [],
+  ) => {
     const job = jobHome();
 
     return sandbox
-      .runCli(ciArgs(issue, job.logs, extra), { CHERNABOG_HOME: job.home, ...env })
+      .runCli(ciArgs(issue, job.logs, extra), { CHERNABOG_HOME: job.home, ...env }, unset)
       .then((result) => ({ ...result, ...job }));
   };
 
@@ -181,7 +186,7 @@ describe("chernabog ci run", () => {
 
     const job = await ciRun(issue, [], {
       GITHUB_ACTIONS: "true",
-      HOME: user,
+      ...runnerUserEnv(user),
       CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
     });
 
@@ -205,6 +210,37 @@ describe("chernabog ci run", () => {
     expect(readdirSync(user)).toContain(".claude.json");
   }, 120_000);
 
+  test("on a runner with a HOME of its own, the machine's XDG git config is left as it was", async () => {
+    const issue = sandbox.github.addIssue("XDG decoy", ["ci:park"]);
+    const user = join(sandbox.root, `runner-user-${issue}`);
+    const decoy = join(sandbox.root, `decoy-config-${issue}`);
+    mkdirSync(user, { recursive: true });
+    mkdirSync(join(decoy, "git"), { recursive: true });
+    // As a person's machine keeps git's global config, with no ~/.gitconfig.
+    const before = "[user]\n\tname = A Person\n\temail = person@example.com\n";
+    writeFileSync(join(decoy, "git", "config"), before);
+
+    const job = await ciRun(
+      issue,
+      [],
+      {
+        GITHUB_ACTIONS: "true",
+        HOME: user,
+        XDG_CONFIG_HOME: decoy,
+        CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
+      },
+      ["GIT_CONFIG_GLOBAL"],
+    );
+
+    expect(job.code).toBe(0);
+    expect(readFileSync(join(decoy, "git", "config"), "utf8")).toBe(before);
+    expect(readdirSync(decoy, { recursive: true }).map(String).toSorted()).toEqual([
+      "git",
+      "git/config",
+    ]);
+    expect(readFileSync(join(user, ".gitconfig"), "utf8")).toContain("$GH_TOKEN");
+  }, 120_000);
+
   test("on a runner, a job without GH_TOKEN is refused before it starts, naming it", async () => {
     const issue = sandbox.github.addIssue("No GH_TOKEN", ["ci:park"]);
     const user = join(sandbox.root, `runner-user-${issue}`);
@@ -213,7 +249,7 @@ describe("chernabog ci run", () => {
 
     const job = await ciRun(issue, [], {
       GITHUB_ACTIONS: "true",
-      HOME: user,
+      ...runnerUserEnv(user),
       GH_TOKEN: "",
       GITHUB_TOKEN: "test-token",
       CLAUDE_CODE_OAUTH_TOKEN: "fake-token",

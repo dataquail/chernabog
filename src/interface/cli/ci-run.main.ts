@@ -42,7 +42,7 @@ import {
   withRepoReservedFor,
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
-import { HostEnvironment } from "../../platform/environment.ts";
+import { type Environment, HostEnvironment } from "../../platform/environment.ts";
 import { execOk } from "../../platform/exec.ts";
 import { viewerAs, viewerLoginAs } from "../../platform/github-api.ts";
 import { GH_TOKEN_CREDENTIAL_HELPER } from "../../platform/github-auth.ts";
@@ -73,10 +73,7 @@ export type CiRunEnding =
 
 // Why the job may not start, if it may not: a key that bills per token, or a
 // home that already holds runs, as a person's does and a runner's never.
-export const refusalOf = (
-  variables: Readonly<Record<string, string>>,
-  homeHasState: boolean,
-): Option.Option<string> => {
+export const refusalOf = (variables: Environment, homeHasState: boolean): Option.Option<string> => {
   if (Record.has(variables, "ANTHROPIC_API_KEY")) {
     return Option.some(
       `ANTHROPIC_API_KEY is set (even empty), which claude bills per token over the subscription: unset it, and pass the subscription's token as ${OAUTH_TOKEN_ENV}`,
@@ -127,6 +124,17 @@ export const runnerGitConfig = (viewer: { readonly login: string; readonly id: n
     ["user.name", viewer.login],
     ["user.email", `${viewer.id}+${viewer.login}@users.noreply.github.com`],
   ] as const;
+
+// The file a runner's global git config is written to: GIT_CONFIG_GLOBAL when
+// the job names one, else ~/.gitconfig, never left to `git config --global`.
+// That falls back to $XDG_CONFIG_HOME/git/config when ~/.gitconfig is missing,
+// which a runner never has but a person's machine may: a job started there
+// with a HOME of its own would rewrite the person's identity and credentials.
+export const runnerGitConfigFile = (variables: Environment, user: string) =>
+  Record.get(variables, "GIT_CONFIG_GLOBAL").pipe(
+    Option.filter((path) => path.length > 0),
+    Option.getOrElse(() => `${user}/.gitconfig`),
+  );
 
 // What a fresh runner's ~/.claude.json needs so an interactive claude starts
 // at its prompt: onboarding done, and the checkout and the worktrees trusted
@@ -233,8 +241,10 @@ const prepareHome = (options: CiRunOptions) =>
         ),
       );
 
+      const gitConfig = runnerGitConfigFile(variables, home.user);
+
       for (const [key, value] of runnerGitConfig(viewer)) {
-        yield* execOk("git", ["config", "--global", key, value]).pipe(
+        yield* execOk("git", ["config", "--file", gitConfig, key, value]).pipe(
           Effect.mapError(
             (error) => new ConfigError({ message: `setting git's ${key}: ${error.message}` }),
           ),
