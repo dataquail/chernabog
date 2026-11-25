@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ciMachineConfig,
+  ciPersonaOf,
   claudeSeed,
   OAUTH_TOKEN_ENV,
   refusalOf,
@@ -29,6 +30,20 @@ describe("refusalOf", () => {
 
   test("starts with a fresh home and the subscription's token", () => {
     expect(refusalOf({ [OAUTH_TOKEN_ENV]: "t" }, false)).toEqual(Option.none());
+  });
+});
+
+describe("ciPersonaOf", () => {
+  const apps = { review: { login: "acme-review[bot]" }, author: { login: "acme-author[bot]" } };
+
+  test("a flow config names an App for acts as that App's login", () => {
+    expect(ciPersonaOf(apps, "review")).toEqual(Option.some("acme-review[bot]"));
+    expect(ciPersonaOf(apps, "author")).toEqual(Option.some("acme-author[bot]"));
+  });
+
+  test("a flow with no App acts as the implicit persona", () => {
+    expect(ciPersonaOf(apps, "plan")).toEqual(Option.none());
+    expect(ciPersonaOf({}, "review")).toEqual(Option.none());
   });
 });
 

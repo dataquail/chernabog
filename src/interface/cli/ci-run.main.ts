@@ -347,6 +347,13 @@ export const writeJson = (path: string, value: Schema.Json) =>
     yield* (yield* FileSystem.FileSystem).writeFileString(path, `${text}\n`);
   });
 
+// The persona a CI flow's job acts as: the flow's App, by its login, when
+// config names one; else the implicit persona, the job's GH_TOKEN.
+export const ciPersonaOf = (
+  apps: Readonly<Record<string, { readonly login: string }>>,
+  flow: string,
+): Persona => Option.map(Record.get(apps, flow), (app) => app.login);
+
 // The home's machine config, written from the job's environment when the
 // workflow left none; and on a runner, ~/.claude.json, seeded when it has
 // none, and git's credential and identity (runnerGitConfig), the identity of
@@ -366,8 +373,7 @@ const prepareHome = (options: CiRunOptions, ciOf: CiAppsAccess) =>
 
     const { apps } = yield* ciOf(`${checkout}/.chernabog`);
 
-    // The flow's App, if config names one; else the implicit persona.
-    const persona: Persona = Option.map(Record.get(apps, options.flow), (app) => app.login);
+    const persona = ciPersonaOf(apps, options.flow);
 
     if (!(yield* fs.exists(paths.machineConfig))) {
       if (!Record.has(variables, OAUTH_TOKEN_ENV)) {
