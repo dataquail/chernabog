@@ -6,7 +6,8 @@
 //
 // While a spoke lives, the hub tails its journal (ADR 23, decision 8): on a
 // watch of the journals, with a poll behind it every 2 seconds, it folds each
-// report the spoke appended since the last into state.db, in order, and once
+// report the spoke appended since the last into state.db, in order, when the
+// journal's files have changed since the last fold, and once
 // the spoke has exited it folds what's left before it ends the run. Spokes
 // push nothing: what the hub knows of a run in flight is what its spoke wrote
 // to disk. The hub reads nothing of a spoke's stdout but log lines.
@@ -170,6 +171,70 @@ export const foldSpoke = <R>(
     }
   });
 
+// The next change to anything under `dir`, as a file watch says: `next`
+// waits for it, for as long as the scope lasts. A watch that fails says
+// nothing more, and whoever waits falls back on a poll.
+export const watchChanges = (fs: FileSystem.FileSystem, dir: string) =>
+  Effect.gen(function* () {
+    let changed = yield* Deferred.make<boolean>();
+
+    yield* Effect.forkScoped(
+      Stream.runForEach(fs.watch(dir), () =>
+        Effect.gen(function* () {
+          const was = changed;
+          changed = yield* Deferred.make<boolean>();
+          yield* Deferred.succeed(was, true);
+        }),
+      ).pipe(Effect.ignore),
+    );
+
+    return { next: Effect.suspend(() => Deferred.await(changed)).pipe(Effect.asVoid) };
+  });
+
+// What a journal's files look like on disk: the database's and its
+// write-ahead log's sizes and modification times. A spoke's write moves it;
+// a reader opening and closing the journal, as each fold does, touches the
+// shared memory and fires the watch, but moves neither, so the tail doesn't
+// wake itself.
+export const journalSignature = (fs: FileSystem.FileSystem, journal: string) =>
+  Effect.forEach([journal, `${journal}-wal`], (path) =>
+    fs.stat(path).pipe(
+      Effect.map((info) =>
+        [
+          String(info.size),
+          Option.match(info.mtime, { onNone: () => "", onSome: (at) => String(at.getTime()) }),
+        ].join("@"),
+      ),
+      Effect.orElseSucceed(() => "none"),
+    ),
+  ).pipe(Effect.map((parts) => parts.join(" ")));
+
+// Folds a live spoke's journal for as long as it lives: at once, then
+// whenever its files have changed since the last fold, looked at on each
+// change under the journals or every `every`, whichever is first. A journal
+// that hasn't changed isn't read.
+export const tailSpoke = (options: {
+  readonly fold: Effect.Effect<void>;
+  readonly signature: Effect.Effect<string>;
+  readonly changed: Effect.Effect<void>;
+  readonly every: Duration.Duration;
+}) =>
+  Effect.gen(function* () {
+    let folded = Option.none<string>();
+
+    for (;;) {
+      // Taken before the fold, so a write during it is folded the next time.
+      const now = yield* options.signature;
+
+      if (!Option.contains(folded, now)) {
+        yield* options.fold;
+        folded = Option.some(now);
+      }
+
+      yield* options.changed.pipe(Effect.timeoutOption(options.every));
+    }
+  });
+
 export const hubSpokes = <R>(options: {
   readonly home: string;
   readonly variables: Readonly<Record<string, string>>;
@@ -198,29 +263,17 @@ export const hubSpokes = <R>(options: {
 
     const [program, ...prefix] = selfCommand();
 
-    // Completed, and replaced, whenever a journal changes: what wakes every
-    // tail before its poll is due.
-    let changed = yield* Deferred.make<boolean>();
-
     yield* fs.makeDirectory(paths.journals, { recursive: true }).pipe(Effect.ignore);
 
-    yield* Effect.forkIn(
-      Stream.runForEach(fs.watch(paths.journals), () =>
-        Effect.gen(function* () {
-          const was = changed;
-          changed = yield* Deferred.make<boolean>();
-          yield* Deferred.succeed(was, true);
-        }),
-      ).pipe(Effect.ignore),
-      scope,
-    );
+    const journalsChanged = yield* watchChanges(fs, paths.journals);
 
-    const nextChange = Effect.suspend(() => Deferred.await(changed));
-
-    // Folds a live spoke's journal for as long as it lives: at once, then on
-    // each change to the journals or every TAIL_EVERY, whichever is first.
-    const tail = (fold: Effect.Effect<void>) =>
-      Effect.forever(fold.pipe(Effect.andThen(nextChange.pipe(Effect.timeoutOption(TAIL_EVERY)))));
+    const tail = (runId: RunId, fold: Effect.Effect<void>) =>
+      tailSpoke({
+        fold,
+        signature: journalSignature(fs, paths.journal(runId)),
+        changed: journalsChanged.next,
+        every: TAIL_EVERY,
+      });
 
     // A hub that stops ends its spokes, waiting for none: their runs are the
     // next hub's to end (ADR 23, decision 7). Closing their stdin does the
@@ -272,7 +325,7 @@ export const hubSpokes = <R>(options: {
           scope,
         );
 
-        const tailing = yield* Effect.forkIn(tail(fold), scope);
+        const tailing = yield* Effect.forkIn(tail(handOver.runId, fold), scope);
 
         // Once the spoke has exited, its tail stops, and what it wrote since
         // the last fold is folded before its run ends: the steps, markers and

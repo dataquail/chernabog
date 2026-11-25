@@ -1,20 +1,28 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import {
   foldSpoke,
+  journalSignature,
   ReportFold,
   reportFold,
   spokeArgs,
   spokeEnvironment,
   type SpokeHandOver,
+  tailSpoke,
 } from "../src/interface/daemon/spokes.server.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { JournalsAt, RunJournals } from "../src/modules/runs/infrastructure/runtime/journals.ts";
 import {
   RunView,
   type SpokeReport,
@@ -182,6 +190,107 @@ describe("folding a spoke's reports", () => {
       yield* foldSpoke(RunId.make("3f2a"), folded, reports, apply);
 
       expect(applied).toEqual([1, 2, 3]);
+    }),
+  );
+});
+
+// A live spoke's journal in a home of the test's own: the spoke's connection,
+// held open as a running spoke holds it, and the journal's path.
+const liveJournal = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-tail-" });
+  yield* fs.makeDirectory(`${home}/journals`);
+  const path = `${home}/journals/3f2a.db`;
+
+  const spoke = yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const db = new Database(path);
+      db.run("PRAGMA journal_mode = WAL");
+      db.run(
+        "CREATE TABLE spoke_reports (seq INTEGER PRIMARY KEY, at TEXT NOT NULL, tag TEXT NOT NULL, payload TEXT NOT NULL)",
+      );
+
+      return db;
+    }),
+    (db) =>
+      Effect.sync(() => {
+        db.close();
+      }),
+  );
+
+  const journals = yield* Layer.build(JournalsAt(home));
+
+  return {
+    fs,
+    path,
+    spoke,
+    reports: Effect.provideContext(
+      RunJournals.use((found) => found.reports(RunId.make("3f2a"), 0)),
+      journals,
+    ),
+  };
+});
+
+describe("tailing a live spoke's journal", () => {
+  effect("the hub reading a journal doesn't change what its files look like", () =>
+    Effect.gen(function* () {
+      const live = yield* liveJournal;
+      live.spoke.run(
+        "INSERT INTO spoke_reports (at, tag, payload) VALUES ('', 'EnterStepCommand', '{}')",
+      );
+      const before = yield* journalSignature(live.fs, live.path);
+
+      expect(yield* live.reports).toHaveLength(1);
+      expect(yield* live.reports).toHaveLength(1);
+      expect(yield* journalSignature(live.fs, live.path)).toBe(before);
+
+      live.spoke.run(
+        "INSERT INTO spoke_reports (at, tag, payload) VALUES ('', 'FinishStepCommand', '{}')",
+      );
+
+      expect(yield* journalSignature(live.fs, live.path)).not.toBe(before);
+    }),
+  );
+
+  effect("folds again only when the spoke wrote, however often the journals change", () =>
+    Effect.gen(function* () {
+      const live = yield* liveJournal;
+      const changes = yield* Queue.unbounded<boolean>();
+      const looks = yield* Queue.unbounded<boolean>();
+      const folds = yield* Ref.make(0);
+
+      // Each look at the journal's files, and each fold, a real read of it.
+      yield* Effect.forkChild(
+        tailSpoke({
+          fold: live.reports.pipe(Effect.andThen(Ref.update(folds, (count) => count + 1))),
+          signature: journalSignature(live.fs, live.path).pipe(
+            Effect.tap(() => Queue.offer(looks, true)),
+          ),
+          changed: Queue.take(changes).pipe(Effect.asVoid),
+          every: Duration.hours(1),
+        }),
+      );
+
+      // A change event, and the tail's look at the journal that follows it.
+      const change = Queue.offer(changes, true).pipe(Effect.andThen(Queue.take(looks)));
+
+      yield* Queue.take(looks);
+
+      // The events its own reads fire, which used to wake it to read again.
+      for (let event = 0; event < 5; event += 1) {
+        yield* change;
+      }
+
+      expect(yield* Ref.get(folds)).toBe(1);
+
+      live.spoke.run(
+        "INSERT INTO spoke_reports (at, tag, payload) VALUES ('', 'EnterStepCommand', '{}')",
+      );
+      yield* change;
+      // The next look comes only after the fold the write started.
+      yield* change;
+
+      expect(yield* Ref.get(folds)).toBe(2);
     }),
   );
 });

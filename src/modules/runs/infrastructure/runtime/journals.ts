@@ -357,7 +357,7 @@ const journalsMade = (root: string) =>
             return [];
           }
 
-          return yield* inJournal(paths.journal(runId), (sql) =>
+          const read = (sql: SqlClient.SqlClient) =>
             Effect.gen(function* () {
               const tables = yield* sql`SELECT name FROM sqlite_master
                 WHERE type = 'table' AND name = 'spoke_reports'`;
@@ -368,8 +368,14 @@ const journalsMade = (root: string) =>
 
               return yield* sql`SELECT seq, at, tag, payload FROM spoke_reports
                 WHERE seq > ${after} ORDER BY seq`.pipe(Effect.flatMap(decodeReports));
-            }),
-          );
+            });
+
+          // The process that writes the journal reads it over its own
+          // connection; any other opens one for the read.
+          return yield* Option.match(Option.fromUndefinedOr(opened.get(runId)), {
+            onSome: (found) => read(found.reports),
+            onNone: () => inJournal(paths.journal(runId), read),
+          });
         }).pipe(Effect.orDie),
       list: fs.readDirectory(paths.journals).pipe(
         Effect.map((names) =>
