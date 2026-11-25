@@ -277,7 +277,7 @@ Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `G
 
 - `token: gh`, the default, says so explicitly.
 - `token: { env: NAME }` takes it from the variable `NAME`, such as a CI job's.
-- `token: { app: { id, installation, key } }` acts as a GitHub App: Chernabog signs a JWT with the App's private key, the PEM file at `key` (`~` is your home), and trades it for an installation token, which lasts an hour and is made again a few minutes before it runs out. The key file is read each time, so a rotated key is picked up. The persona's login is the App's bot, `<slug>[bot]`. [`chernabog ci apps`](/chernabog/work/commands/#ci-apps) makes the App and writes this entry for you.
+- `token: { app: { id, installation, key } }` acts as a GitHub App: Chernabog signs a JWT with the App's private key, the PEM file at `key` (`~` is your home), and trades it for an installation token, which lasts an hour and is made again a few minutes before it runs out. The key file is read each time, so a rotated key is picked up. The token reaches only the repos the persona runs on this machine (those whose `personas:` names it, or every repo when it's the only login), even when the App's installation covers more of the owner's repos. The persona's login is the App's bot, `<slug>[bot]`. [`chernabog ci apps`](/chernabog/work/commands/#ci-apps) makes the App and writes this entry for you.
 
 ```yaml
 # ~/.config/chernabog/config.yaml
