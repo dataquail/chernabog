@@ -290,9 +290,11 @@ describe("the review steps", () => {
       fake.people.me = "data-quail";
       fake.recordPhase(`pr-${PULL}`, "review-asked");
       const atPost: Array<ReturnType<ReturnType<typeof fake.records>["get"]>> = [];
-      fake.reviewing.hooks.push(() => {
-        atPost.push(fake.records().get(`pr-${PULL}`));
-      });
+      fake.reviewing.hooks.push(
+        Effect.sync(() => {
+          atPost.push(fake.records().get(`pr-${PULL}`));
+        }),
+      );
 
       expect((yield* runToEnd(fake, "round")).status).toBe("done");
 
@@ -305,6 +307,54 @@ describe("the review steps", () => {
       expect(fake.records().get(`pr-${PULL}`)).toBe(atPost[0]);
     }),
   );
+
+  // The reviewer's side of #698: once the run has recorded its review, and
+  // until the post lands, GitHub still asks this persona for the review. Its
+  // review.requestedAgain source reads that as its own review posting, not a
+  // request to review again, so it neither reconciles the record nor starts a
+  // re-review of the same head.
+  for (const [verdict, phase] of [
+    ["request-changes", "changes-asked"],
+    ["approve", "approved"],
+  ] as const) {
+    effect(
+      `Review.requestedAgain leaves alone the ${phase} record of this persona's review while it posts`,
+      () =>
+        Effect.gen(function* () {
+          const fake = makeFake(verdict);
+          fake.people.me = "data-quail";
+          fake.people.requested = ["data-quail"];
+          fake.recordPhase(`pr-${PULL}`, "review-asked");
+
+          const atPost: Array<{
+            readonly requested: ReadonlyArray<string>;
+            readonly items: ReadonlyArray<string>;
+            readonly record: ReturnType<ReturnType<typeof fake.records>["get"]>;
+          }> = [];
+
+          fake.reviewing.hooks.push(
+            Effect.map(Effect.orDie(triggered(fake, Review.requestedAgain)), (items) => {
+              atPost.push({
+                requested: [...fake.people.requested],
+                items: items.map((found) => found.key),
+                record: fake.records().get(`pr-${PULL}`),
+              });
+            }),
+          );
+
+          expect((yield* runToEnd(fake, "round")).status).toBe("done");
+
+          expect(atPost).toHaveLength(1);
+          expect(atPost[0]?.requested).toEqual(["data-quail"]);
+          expect(atPost[0]?.items).toEqual([]);
+          expect(atPost[0]?.record).toMatchObject({
+            phase,
+            data: Option.some({ review: { sha: HEAD, round: 1, reviewer: "data-quail" } }),
+          });
+          expect(fake.records().get(`pr-${PULL}`)).toBe(atPost[0]?.record);
+        }),
+    );
+  }
 
   // What the observer is for: a person's review, which no run will record.
   effect(

@@ -289,7 +289,7 @@ export const makeFake = (
   const submitted: Array<SubmittedReview> = [];
   // What a test runs as GitHub takes a review, before it's submitted: to see
   // what the store holds at that moment.
-  const reviewing = { hooks: new Array<() => void>() };
+  const reviewing = { hooks: new Array<Effect.Effect<void>>() };
 
   // What each login did here, in order, as whoever `people.me` was then: for
   // a test that plays several personas on one fake in turn. The reviews it
@@ -1262,9 +1262,9 @@ export const makeFake = (
         }),
       // As on GitHub, a review drops its author from the requested reviewers.
       review: (_, review) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           for (const hook of reviewing.hooks) {
-            hook();
+            yield* hook;
           }
 
           reviews.push(review.body);
