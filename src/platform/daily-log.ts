@@ -3,6 +3,11 @@
 // daemon.<YYYY-MM-DD>.log, for the retention sweep to remove in time
 // (sweepRotatedLogs). The file is opened by its path for each line, so a
 // rename never leaves this writing to the old one.
+//
+// A process has one writer per path, however many ask for one (the daemon's
+// own lines and its telemetry's, #611): each keeps the day its file holds and
+// a lock, so a second writer would turn the file over by a day it no longer
+// holds, and race the first's appends.
 
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -26,12 +31,10 @@ const directoryOf = (path: string) =>
 export const rotatedLogPath = (path: string, day: string) =>
   path.replace(/(\.[^./]*)?$/, (extension) => `.${day}${extension}`);
 
-// Appends timestamped lines to `path`, turning it over at the first write of
-// each new UTC day, by the clock. A file left from an earlier day, judged by
-// when it was last written, turns over at the first write too.
-export const dailyLogWriting = (
-  path: string,
-): Effect.Effect<DailyLog, never, FileSystem.FileSystem> =>
+// This process's writer of each path.
+const writers = new Map<string, DailyLog>();
+
+const makeWriter = (path: string): Effect.Effect<DailyLog, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const writing = yield* Semaphore.make(1);
@@ -78,3 +81,25 @@ export const dailyLogWriting = (
 
     return { log };
   });
+
+// Appends timestamped lines to `path`, turning it over at the first write of
+// each new UTC day, by the clock. A file left from an earlier day, judged by
+// when it was last written, turns over at the first write too.
+export const dailyLogWriting = (
+  path: string,
+): Effect.Effect<DailyLog, never, FileSystem.FileSystem> =>
+  Effect.suspend(() =>
+    Option.match(Option.fromUndefinedOr(writers.get(path)), {
+      onSome: (found) => Effect.succeed(found),
+      onNone: () =>
+        makeWriter(path).pipe(
+          // Two asking at once keep the first made.
+          Effect.map((made) => {
+            const first = writers.get(path) ?? made;
+            writers.set(path, first);
+
+            return first;
+          }),
+        ),
+    }),
+  );

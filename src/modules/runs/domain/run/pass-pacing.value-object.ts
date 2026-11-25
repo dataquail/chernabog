@@ -7,6 +7,11 @@ import * as Option from "effect/Option";
 // such a pass counts as a quick restart; after enough in a row, each next pass
 // waits, longer each time, up to a bound. A pass that ends any other way, or a
 // restart that comes late, starts the count again.
+//
+// A suspension ends a pass as an interrupt too, so a healthy run that
+// suspends and is woken within the window more than `freeRestarts` times in a
+// row is slowed as well. No flow does that today: durable sleeps and waits are
+// longer, and a run woken that often is better slowed than not.
 
 // The last pass of an execution that ended without a result: when it ended
 // (epoch millis), and how many quick restarts in a row came before it.

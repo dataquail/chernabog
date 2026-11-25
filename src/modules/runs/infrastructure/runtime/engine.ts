@@ -72,6 +72,7 @@ import {
   NodeFinished,
 } from "../../domain/run/node-did.value-object.ts";
 import { PassPacing, type UnfinishedPass } from "../../domain/run/pass-pacing.value-object.ts";
+import { type RunView } from "../../domain/run/run-view.value-object.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
@@ -569,14 +570,38 @@ const unfinishedPasses = new Map<string, UnfinishedPass>();
 // Says a run's workflow keeps restarting, as the daemon writes it to daemon.log.
 export type RestartingSaid = (line: string) => Effect.Effect<void>;
 
+// The result a pass of a run that has already ended (cancelled, superseded,
+// lost, ended at a park…) ends with, without running its flow: the engine
+// keeps it, so neither a redelivery nor a restart brings the run back (#611).
+// Cancel's interrupt ends the pass in flight, and the next one ends here. A
+// stop asked of it is done with.
+const endedRun = (row: Option.Option<RunView>, executionId: string) =>
+  Option.map(
+    Option.filter(row, (found) => found.status !== "running"),
+    (ended): RunResult => {
+      stopRequests.delete(executionId);
+
+      return {
+        status: "skipped",
+        summary: `the run had already ended (${ended.status}), so its workflow ends without running`,
+      };
+    },
+  );
+
 // A run's workflow, paced (#611). The engine replays a workflow whose pass
 // ended interrupted, without a result, at once, so a pass that keeps ending
 // that way would replay many times a second, for good. After enough quick
 // restarts in a row each next pass waits, longer each time (PassPacing), and
-// says so, to `said` and the run's log; being told to stop ends the wait.
+// says so, to `said` and the run's log; a run that has ended doesn't wait,
+// and being told to stop ends the wait.
 const pacingPasses =
-  (executionId: string, runId: string, said: RestartingSaid) =>
-  <A, E, R>(pass: Effect.Effect<A, E, R>) =>
+  <E2, R2>(
+    executionId: string,
+    runId: RunId,
+    said: RestartingSaid,
+    ended: Effect.Effect<Option.Option<RunResult>, E2, R2>,
+  ) =>
+  <E, R>(pass: Effect.Effect<RunResult, E, R>) =>
     Effect.gen(function* () {
       const next = PassPacing.next(
         Option.fromUndefinedOr(unfinishedPasses.get(executionId)),
@@ -586,6 +611,10 @@ const pacingPasses =
       unfinishedPasses.delete(executionId);
 
       for (const wait of Option.toArray(next.wait)) {
+        for (const result of Option.toArray(yield* ended)) {
+          return result;
+        }
+
         const line = `run ${runId}: its workflow restarted ${next.quick} times in a row without finishing a pass; waiting ${Duration.format(Duration.millis(wait))} before the next`;
 
         yield* said(line);
@@ -627,17 +656,9 @@ export const flowLayer = <R>(
       const runId = RunId.make(payload.runId);
       const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
 
-      // A run that has ended (cancelled, superseded, lost, ended at a park…)
-      // never runs its flow again: its workflow ends here with a result, which
-      // the engine keeps, so neither a redelivery nor a restart brings it back
-      // (#611). Cancel's interrupt ends the pass in flight, and this is the next.
-      for (const ended of Option.toArray(
-        Option.filter(row, (found) => found.status !== "running"),
-      )) {
-        return {
-          status: "skipped",
-          summary: `the run had already ended (${ended.status}), so its workflow ends without running`,
-        } satisfies RunResult;
+      // A run cancelled while this pass waited (pacingPasses) ends here.
+      for (const result of Option.toArray(endedRun(row, executionId))) {
+        return result;
       }
 
       // A run started under a core this binary doesn't provide is never
@@ -852,7 +873,14 @@ export const flowLayer = <R>(
     }).pipe(
       Effect.catchTag("RunFailed", Effect.fail),
       Effect.orDie,
-      pacingPasses(executionId, payload.runId, restarting),
+      pacingPasses(
+        executionId,
+        RunId.make(payload.runId),
+        restarting,
+        RunsQueries.use((runs) => runs.FindRunQuery({ runId: RunId.make(payload.runId) })).pipe(
+          Effect.map((found) => endedRun(found.run, executionId)),
+        ),
+      ),
     ),
   );
 
