@@ -3,7 +3,7 @@
 // reports; which checks gate a merge is decided here, and a recipe sets it
 // with `ciGates` and `ciOptionalFailures` (Settings.Ci).
 
-import { type CiChecks, type CiState, GitHub } from "@chernabog/core";
+import { type CiChecks, type CiState, GitHub, Repo } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -80,6 +80,28 @@ export const pullRequestState = (pullRequest: number) =>
     const facts = yield* GitHub.use((github) => github.ciChecks(pullRequest));
 
     return verdict(facts, policy);
+  });
+
+// GitHub computes mergeability in the background: `mergeable_state` is
+// "dirty" for a conflict, and "unknown" until it has looked.
+const MergeState = Schema.Struct({ mergeable_state: Schema.String });
+
+// Whether GitHub says the pull request conflicts with its base now. GitHub
+// runs no pull_request workflow on a head that conflicts, so CI that is
+// pending there won't settle until the conflict is resolved (#603).
+export const conflicting = (pullRequest: number) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+
+    const pull = yield* (yield* GitHub).request(
+      "GET",
+      `/repos/${repo.slug}/pulls/${pullRequest}`,
+      Option.none(),
+    );
+
+    return Schema.decodeUnknownOption(MergeState)(pull).pipe(
+      Option.exists((state) => state.mergeable_state === "dirty"),
+    );
   });
 
 const FollowUp = Schema.fromJsonString(

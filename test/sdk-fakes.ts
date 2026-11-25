@@ -201,6 +201,10 @@ export type MergeFake = {
   requests: Array<MergeRequest>;
   // What CI on the head reads once the branch is pushed, when a test sets it.
   afterPush: Option.Option<CiState>;
+  // What GitHub says of the pushed head's mergeability, when a test sets it,
+  // as "dirty" for a base that moved again. Otherwise a push leaves a
+  // conflicting head clean, as resolve-conflicts' merge does.
+  stateAfterPush: Option.Option<string>;
 };
 
 // The checks a verdict stands for, every one required: green is one passing
@@ -435,6 +439,7 @@ export const makeFake = (
     refusal: Option.none(),
     requests: [],
     afterPush: Option.none(),
+    stateAfterPush: Option.none(),
   };
 
   // The pushed head, pushes so far, whether the pull request is open, the
@@ -1336,6 +1341,16 @@ export const makeFake = (
           // A push starts CI on the new head, as a test that sets it says.
           for (const started of Option.toArray(merge.afterPush)) {
             merge.ci = started;
+          }
+
+          // The pushed head no longer conflicts, as resolve-conflicts' merge
+          // leaves it, unless a test says the base moved again.
+          if (merge.state === "dirty") {
+            merge.state = "clean";
+          }
+
+          for (const state of Option.toArray(merge.stateAfterPush)) {
+            merge.state = state;
           }
 
           return Effect.void;

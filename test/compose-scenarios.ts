@@ -11,6 +11,7 @@ import {
   DEFAULT_LABELS,
   Epic,
   type Flow,
+  GitHub,
   type Json,
   type LinkedIssue,
   Phases,
@@ -25,6 +26,8 @@ import {
 import type { BunServices } from "@effect/platform-bun";
 import { expect } from "bun:test";
 import * as Arr from "effect/Array";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -427,6 +430,26 @@ export const IMPLEMENT_SCENARIOS = scenarios((scenario) => {
       return fake;
     },
     "needs-human",
+  );
+
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = queued();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ci-1-1");
+    },
   );
 
   scenario(
@@ -1148,6 +1171,26 @@ export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
     toPerson,
   );
 
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = changesAsked();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ask-again-1");
+    },
+  );
+
   scenario(
     "when CI is red and stays red",
     () => {
@@ -1378,6 +1421,26 @@ export const RESOLVE_CONFLICTS_SCENARIOS = scenarios((scenario) => {
     (recipe) => {
       toPerson(recipe);
       expect(recipe.pushes).toBe(0);
+    },
+  );
+
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = conflicting();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.summary).toBe(`#${PULL}: merged main and resolved its conflicts`);
     },
   );
 
@@ -1741,6 +1804,48 @@ export const POST_MERGE_SCENARIOS = scenarios((scenario) => {
 // The issue a person names with chernabog start, as Hybrid.itemFor finds it.
 export const HUMAN_INITIATED_WORK_ITEM = item(`issue-${ISSUE}`, { issue: ISSUE });
 
+// The fake, where each read of CI takes `elapsed` by the clock a run's steps
+// read, as polls slower than a minute do.
+const ciReadsTake = (fake: Fake, elapsed: Duration.Duration): Fake => {
+  const real = Clock.Clock.defaultValue();
+  let offset = 0;
+  const millis = () => real.currentTimeMillisUnsafe() + offset;
+  const nanos = () => BigInt(millis()) * BigInt(1_000_000);
+
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: millis,
+    currentTimeMillis: Effect.sync(millis),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    sleep: (duration) => real.sleep(duration),
+  };
+
+  const slow = Layer.effect(
+    GitHub,
+    Effect.map(GitHub.use(Effect.succeed), (github) =>
+      GitHub.of({
+        ...github,
+        ciChecks: (pullRequest) =>
+          Effect.tap(github.ciChecks(pullRequest), () =>
+            Effect.sync(() => {
+              offset += Duration.toMillis(elapsed);
+            }),
+          ),
+      }),
+    ),
+  );
+
+  return {
+    ...fake,
+    services: Layer.merge(
+      slow.pipe(Layer.provideMerge(fake.services)),
+      Layer.succeed(Clock.Clock, clock),
+    ),
+  };
+};
+
 const started = () => repoFake("approve", POOL);
 
 // The issue's branch, and the claim marker of the run that left it.
@@ -1904,6 +2009,26 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
     "done",
   );
 
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ci-1-1");
+    },
+  );
+
   scenario(
     "when CI is red and stays red",
     () => {
@@ -1920,6 +2045,26 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
       // Each fix, from the person's session, pushed.
       expect(recipe.pushes).toBe(4);
       expect(recipe.sessions.every(([, , withPerson]) => withPerson === true)).toBe(true);
+    },
+  );
+
+  // ciTimeout counts from when the wait began, not in one-minute polls: with
+  // a reading that takes longer than ciTimeout, the wait has timed out by its
+  // second poll, before ciTimeout / 1 minute polls (two here) have run.
+  scenario(
+    "when CI stays pending past ciTimeout, with polls slower than a minute",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+
+      return ciReadsTake(fake, Duration.minutes(3));
+    },
+    "needs-human",
+    void 0,
+    { ciTimeout: "2 minutes" },
+    (recipe) => {
+      expect(recipe.summary).toContain("still pending after 2m");
+      expect(recipe.steps).not.toContain("ci-1-2");
     },
   );
 
