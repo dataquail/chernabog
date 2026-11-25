@@ -135,6 +135,24 @@ describe("the plan", () => {
     );
   });
 
+  test("an entry whose flow acts as an App names its role and the Environment with its key", () => {
+    const apps = {
+      review: { role: "reviewer", login: "acme-review[bot]", environment: "chernabog-review" },
+    };
+
+    expect(
+      CiPlan.matrix(
+        [
+          { flow: "review", persona: "acme-review[bot]", item: "pr-7" },
+          { flow: "triage", persona: "bot", item: "issue-3" },
+        ],
+        apps,
+      ),
+    ).toBe(
+      '[{"flow":"review","persona":"acme-review[bot]","item":"pr-7","role":"reviewer","environment":"chernabog-review"},{"flow":"triage","persona":"bot","item":"issue-3"}]',
+    );
+  });
+
   test("starts the trigger's items in its order, up to the flow's concurrency", () => {
     const planned = CiPlan.plan(
       [

@@ -336,7 +336,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
-import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
 import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
@@ -462,6 +462,10 @@ export declare const boardStatus: import("./run-markers.ts").Definition<{
 export declare const claimBranch: import("./run-markers.ts").Definition<{
     readonly branch: string;
     readonly base?: string | undefined;
+}>;
+export declare const requeue: import("./run-markers.ts").Definition<{
+    readonly number: number;
+    readonly label: string;
 }>;
 export declare const builtIn: ReadonlyArray<Marker>;
 ```
@@ -874,6 +878,13 @@ export declare const ResolvedLauncher: Schema.Struct<{
 }>;
 export type ResolvedLauncher = typeof ResolvedLauncher.Type;
 export declare const HEADLESS: ResolvedLauncher;
+export declare const AppIdentity: Schema.Struct<{
+    readonly id: Schema.Int;
+    readonly slug: Schema.String;
+    readonly login: Schema.String;
+}>;
+export type AppIdentity = typeof AppIdentity.Type;
+export declare const APP_REVIEWER = "app:";
 export declare const RepoSettings: Schema.Struct<{
     readonly name: Schema.String;
     readonly slug: Schema.String;
@@ -881,6 +892,12 @@ export declare const RepoSettings: Schema.Struct<{
     readonly baseBranch: Schema.String;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly personas: Schema.$Array<Schema.String>;
+    readonly apps: Schema.optionalKey<Schema.$Record<Schema.String, Schema.Struct<{
+        readonly id: Schema.Int;
+        readonly slug: Schema.String;
+        readonly login: Schema.String;
+    }>>>;
+    readonly flowApps: Schema.optionalKey<Schema.$Record<Schema.String, Schema.String>>;
     readonly persona: Schema.optionalKey<Schema.String>;
     readonly account: Schema.Struct<{
         readonly name: Schema.String;
@@ -955,6 +972,16 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
     readonly baseBranch: string;
     readonly reviewers?: readonly string[] | undefined;
     readonly personas: readonly string[];
+    readonly apps?: {
+        readonly [x: string]: {
+            readonly id: number;
+            readonly slug: string;
+            readonly login: string;
+        };
+    } | undefined;
+    readonly flowApps?: {
+        readonly [x: string]: string;
+    } | undefined;
     readonly persona?: string | undefined;
     readonly account: {
         readonly name: string;

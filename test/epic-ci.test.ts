@@ -117,24 +117,22 @@ const parkedAt = (round: number) => (run: EngineRun) =>
     waits.some((wait) => wait.deferred === `${Epic.LAYER_CHANGED}:epic-${round}`),
   );
 
-// Whether the run is parked on the epic, in any round.
-const parkedOnEpic = (run: EngineRun) =>
-  Effect.map(
-    listRunWaitsHandler({ runId: run.id, signal: Epic.LAYER_CHANGED }),
-    ({ waits }) => waits.length > 0,
-  );
-
-// Runs the epic from `work` until it parks, in whichever round, then lets go
-// of every claim, as a run ending at its park does.
-const runToPark = (fake: Fake, work: ReturnType<typeof item>) =>
+// Runs the epic from `work` until it parks at `round`, then lets go of every
+// claim, as a run ending at its park does.
+const runToPark = (fake: Fake, work: ReturnType<typeof item>, round: number) =>
   Effect.gen(function* () {
-    const run = yield* runUntil(working, fake, work, parkedOnEpic);
+    const run = yield* runUntil(working, fake, work, parkedAt(round));
     fake.refs.clear();
 
     return run;
   });
 
 const fresh = item(`issue-${EPIC}`, { issue: EPIC });
+
+// The round a fresh run of epicFake parks in: #10 and #12 in the first, #11
+// once #10 is done in the second, and nothing left to start in the third, as
+// #13 needs #10 and #12 merged.
+const LAST_ROUND = 3;
 
 const pushTo = (fake: Fake, number: number) => {
   for (const pull of Option.toArray(
@@ -150,7 +148,7 @@ describe("an epic parked in a CI job", () => {
     () =>
       Effect.gen(function* () {
         const fake = epicFake();
-        const run = yield* runToPark(fake, fresh);
+        const run = yield* runToPark(fake, fresh, LAST_ROUND);
 
         expect(run.status).toBe("running");
         expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
@@ -188,7 +186,7 @@ describe("an epic parked in a CI job", () => {
         const fake = epicFake();
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
-        yield* runToPark(fake, fresh);
+        yield* runToPark(fake, fresh, LAST_ROUND);
 
         // Every task attempted read as something other than ready since, #12
         // as a person's: each may start again once ready.
@@ -199,7 +197,8 @@ describe("an epic parked in a CI job", () => {
         // A person answers, and hands #12 back.
         fake.setLabels(12, [DEFAULT_LABELS.eligible]);
         const resumed = yield* onlyOffered(fake);
-        yield* runToPark(fake, resumed);
+        // A new run counts its rounds afresh: #12 in its first, then nothing left to start.
+        yield* runToPark(fake, resumed, 2);
 
         // The new run took #12 up as its second attempt, and started nothing else again.
         const steps = fake.steps.flatMap(Option.toArray);

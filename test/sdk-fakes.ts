@@ -60,15 +60,18 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
+import { busesOver } from "../src/interface/application-runtime.ts";
+import { endAsSaid, foldReport, foldSpoke } from "../src/interface/daemon/report-fold.server.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
-import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
-import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
+import { type RunId } from "../src/kernel/run-id.id.ts";
+import { executeRunHandler } from "../src/modules/runs/commands/execute-run.handler.ts";
 import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
-import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
+import { startSpokeRunHandler } from "../src/modules/runs/commands/start-spoke-run.handler.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
@@ -80,23 +83,34 @@ import { RunLanesRepositoryLive } from "../src/modules/runs/infrastructure/repos
 import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
 import { RunNodesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-nodes.repository-live.ts";
 import { RunPlansRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-plans.repository-live.ts";
+import { RunSpokesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-spokes.repository-live.ts";
 import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/skips.repository-live.ts";
 import {
   EngineAt,
+  type EngineOptions,
   type FlowHandle,
   flowLayer,
   forEveryPersona,
+  type OnParked,
   type ServicesFor,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
-import { RunsModule } from "../src/modules/runs/runs.platform.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
+import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
+import {
+  RunFlowsQueries,
+  RunsModule,
+  RunsQueries,
+  SpokeEnding,
+} from "../src/modules/runs/runs.platform.ts";
+import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 import { TestTimeout } from "./effect-test.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
+import { wakeParkedRuns } from "./wake-signals.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -190,6 +204,10 @@ export type MergeFake = {
   requests: Array<MergeRequest>;
   // What CI on the head reads once the branch is pushed, when a test sets it.
   afterPush: Option.Option<CiState>;
+  // What GitHub says of the pushed head's mergeability, when a test sets it,
+  // as "dirty" for a base that moved again. Otherwise a push leaves a
+  // conflicting head clean, as resolve-conflicts' merge does.
+  stateAfterPush: Option.Option<string>;
 };
 
 // The checks a verdict stands for, every one required: green is one passing
@@ -424,6 +442,7 @@ export const makeFake = (
     refusal: Option.none(),
     requests: [],
     afterPush: Option.none(),
+    stateAfterPush: Option.none(),
   };
 
   // The pushed head, pushes so far, whether the pull request is open, the
@@ -1327,6 +1346,16 @@ export const makeFake = (
             merge.ci = started;
           }
 
+          // The pushed head no longer conflicts, as resolve-conflicts' merge
+          // leaves it, unless a test says the base moved again.
+          if (merge.state === "dirty") {
+            merge.state = "clean";
+          }
+
+          for (const state of Option.toArray(merge.stateAfterPush)) {
+            merge.state = state;
+          }
+
           return Effect.void;
         }),
     }),
@@ -1458,7 +1487,7 @@ export type EngineRun = RunView | ActiveRun;
 // The runs' stores and logs in a home's state.db, the bus their commands
 // dispatch on, the unit of work they declare, and the engine journalling
 // there: what a test that drives the runs' handlers itself reads and writes.
-export const StateAt = (home: string) =>
+export const StateAt = (home: string, engine: EngineOptions = {}) =>
   Layer.mergeAll(
     RunsRepositoryLive,
     RunCreatedIssuesRepositoryLive,
@@ -1466,6 +1495,7 @@ export const StateAt = (home: string) =>
     RunMarkersRepositoryLive,
     RunNodesRepositoryLive,
     RunPlansRepositoryLive,
+    RunSpokesRepositoryLive,
     RunStepsRepositoryLive,
     RunWaitsRepositoryLive,
     SkipsRepositoryLive,
@@ -1473,29 +1503,32 @@ export const StateAt = (home: string) =>
     RunLogsClientLive,
     makeEventBus(),
     RunsModule.unitOfWork,
-  ).pipe(
-    Layer.provideMerge(EngineAt(homePaths(home).state)),
-    Layer.provideMerge(Home.at(home, home)),
-  );
+  ).pipe(Layer.provideMerge(EngineAt(home, engine)), Layer.provideMerge(Home.at(home, home)));
 
 export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 
 // The engine over one flow, as the composition roots build it: the modules a
-// process with an engine adds, from the one list every root merges, and the
-// flow, which takes its runs' steps through them, over the test's runtime and
-// a state.db in `home`.
+// process with an engine adds, from the one list every root merges, the
+// runs' buses, which a run's hub folds its journal through, and the flow,
+// which keeps its runs' records in their journals, over the test's runtime
+// and a state.db in `home`.
 export const engineOver = <R>(
   handle: FlowHandle,
   registry: FlowRegistry,
   servicesFor: ServicesFor<R>,
   home: string,
+  onParked: OnParked = () => Effect.void,
+  engine: EngineOptions = {},
 ) =>
   Layer.mergeAll(
     applicationModules.engine,
-    flowLayer(handle, servicesFor).pipe(Layer.provide(applicationModules.engine)),
+    busesOver(RunsModule.engineRoutes).pipe(Layer.provide(applicationModules.engine)),
+    flowLayer(handle, servicesFor, noHooks, onParked).pipe(
+      Layer.provide(applicationModules.engine),
+    ),
   ).pipe(
     Layer.provideMerge(applicationModules.runtime(registry)),
-    Layer.provideMerge(StateAt(home)),
+    Layer.provideMerge(StateAt(home, engine)),
   );
 
 // What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
@@ -1510,23 +1543,109 @@ const refOf = (handle: FlowHandle, persona: Persona) => ({
   persona,
 });
 
-// Starting, polling and waking runs as the daemon does, through the runs module.
+// Starting and polling a run as a process that is its own hub does (ADR 23,
+// decision 9): recorded with its execution attached, executed in a journal
+// of its own, and its journal folded into state.db as it goes. A second start
+// for an item gets the run that has it.
 export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
-  startFlowRunHandler({ flow: refOf(handle, persona), item: work });
+  Effect.gen(function* () {
+    const started = yield* startSpokeRunHandler({ flow: refOf(handle, persona), item: work });
 
+    for (const run of Option.toArray(Option.filter(started.run, () => started.started))) {
+      yield* executeRunHandler({ run, item: work });
+    }
+
+    return started;
+  });
+
+// How far each run's journal is folded, by run.
+const folded = new Map<string, Ref.Ref<number>>();
+
+const foldedOf = (runId: RunId) =>
+  Effect.gen(function* () {
+    const known = Option.fromUndefinedOr(folded.get(runId));
+
+    if (Option.isSome(known)) {
+      return known.value;
+    }
+
+    const made = yield* Ref.make(0);
+    folded.set(runId, made);
+
+    return made;
+  });
+
+// Folds a run's journal into state.db, from where its last fold left off.
+export const foldRun = (runId: RunId) =>
+  Effect.gen(function* () {
+    const queries = yield* RunFlowsQueries;
+
+    yield* foldSpoke(
+      runId,
+      yield* foldedOf(runId),
+      (asked, after) =>
+        queries.ReadSpokeReportsQuery({ runId: asked, after }).pipe(
+          Effect.map((found) => found.reports),
+          Effect.orDie,
+        ),
+      foldReport,
+    );
+  });
+
+// Folds a run's journal, and ends the run once its workflow has: a park keeps
+// it running here, for a test to wake (wake-signals.ts).
 export const pollRun = (run: EngineRun) =>
-  pollRunHandler({ runId: run.id }).pipe(
-    Effect.map((found): EngineRun => Option.getOrElse(found.run, () => run)),
-  );
+  Effect.gen(function* () {
+    yield* foldRun(run.id);
 
+    const found = (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run;
+
+    for (const current of Option.toArray(Option.filter(found, (one) => one.status === "running"))) {
+      for (const executionId of Option.toArray(current.executionId)) {
+        const outcome = yield* (yield* RunFlowsQueries).PollExecutionQuery({
+          runId: run.id,
+          executionId,
+          flow: { repo: current.repo, flow: current.flow, persona: current.persona },
+        });
+
+        for (const ended of Option.toArray(outcome.ended)) {
+          yield* endAsSaid(run.id, Schema.decodeOption(SpokeEnding)(ended), () => ({
+            status: "failed",
+            summary: ended.summary,
+          }));
+        }
+      }
+    }
+
+    return Option.getOrElse(
+      Option.map(
+        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
+        (current): EngineRun => current,
+      ),
+      () => run,
+    );
+  }).pipe(Effect.orDie);
+
+// Wakes the runs parked on the signals `items` carry, in the test's engine,
+// once their journals are folded: a test-only wake (wake-signals.ts).
 export const deliverSignals = (
   handle: FlowHandle,
   persona: Persona,
   items: ReadonlyArray<WorkItem>,
 ) =>
-  deliverSignalsHandler({ flow: refOf(handle, persona), items }).pipe(
-    Effect.map(({ count }) => count),
-  );
+  Effect.gen(function* () {
+    const running = yield* (yield* RunsQueries).ListActiveRunsQuery({
+      repo: Option.none(),
+      persona: Option.none(),
+      flow: Option.none(),
+    });
+
+    for (const run of running.runs) {
+      yield* foldRun(run.id);
+    }
+
+    return yield* wakeParkedRuns(refOf(handle, persona), items);
+  });
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(
@@ -1554,7 +1673,8 @@ const notThereYet = (handle: FlowHandle, work: WorkItem, last: Option.Option<Eng
   });
 
 // Starts a run of the flow on the fake, and polls it 25ms apart until `until` says it has
-// got far enough or it ended. No count of polls bounds it: a count is a wall-clock budget
+// got far enough or it ended, and fails the test if it ended short of it, rather than handing
+// back wherever it had got to. No count of polls bounds it: a count is a wall-clock budget
 // that a loaded machine runs past, and it handed back a run still on its way as if it had
 // got there. The test's own timeout bounds it instead: a second before it, the wait fails
 // with the run as it last stood.
@@ -1599,14 +1719,10 @@ export const runUntil = (
               last = Option.some(polled);
             }),
           ),
-          Effect.flatMap((polled) =>
-            until(polled).pipe(
-              Effect.map((done) => ({ polled, done: done || !isRunning(polled) })),
-            ),
-          ),
+          Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
-            until: (step) => step.done,
+            until: (step) => step.done || !isRunning(step.polled),
           }),
         ),
       ),
@@ -1614,7 +1730,27 @@ export const runUntil = (
         duration: Duration.millis(Math.max(0, timeout - RUN_UNTIL_MARGIN_MS)),
         orElse: () => Effect.die(new Error(notThereYet(handle, work, last))),
       }),
-      Effect.map((step) => step.polled),
+      Effect.flatMap((step) =>
+        Effect.gen(function* () {
+          if (step.done) {
+            return step.polled;
+          }
+
+          const { waits } = yield* readRunHistoryHandler({ runId: step.polled.id });
+
+          const on = Option.getOrElse(
+            Option.liftPredicate(
+              waits.map((wait) => wait.deferred).join(", "),
+              (listed) => listed.length > 0,
+            ),
+            () => "nothing",
+          );
+
+          return yield* Effect.die(
+            `runUntil: the run of ${handle.name} never got where the case waits for; it is ${step.polled.status}, waiting on ${on}`,
+          );
+        }),
+      ),
       // A run that ended has its markers released, as the daemon releases them.
       Effect.tap((polled) =>
         Effect.when(

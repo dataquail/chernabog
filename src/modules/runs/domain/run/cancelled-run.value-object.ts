@@ -20,18 +20,33 @@ export type CancelTarget = typeof CancelTarget.Type;
 // Ending a run in flight otherwise than as cancelled: needing a person, with
 // that summary (a run this binary can't resume); superseded, because its
 // work item went (closed, merged, claimed by another run); or lost, because
-// another run took its work item over once its claim's lease expired.
+// another run took its work item over once its claim's lease expired; ended
+// at its park; interrupted, because the hub it ran under stopped; or failed,
+// because its spoke went past one of the hub's bounds (ADR 23, decision 4).
 export const EndAs = Schema.Struct({
-  ending: Schema.Literals(["needs-human", "superseded", "lost", "ended-at-park"]),
+  ending: Schema.Literals([
+    "needs-human",
+    "superseded",
+    "lost",
+    "ended-at-park",
+    "interrupted",
+    "failed",
+  ]),
   reason: Schema.String,
+  // For a run whose spoke exited before saying how it ended, how many runs
+  // of its item in a row have now ended so, this one included (ADR 23,
+  // decision 2).
+  silentExits: Schema.optionalKey(Schema.Int),
 });
 
 export type EndAs = typeof EndAs.Type;
 
+// A session, and whether a person works in it.
 const OpenSessionView = Schema.Struct({
   sessionId: Schema.String,
   launcher: Schema.String,
   handle: Schema.String,
+  withPerson: Schema.Boolean,
 });
 
 // A cancelled run and what cancelling it cleaned up: the worktrees removed,
@@ -64,4 +79,7 @@ export class CancelledRun extends Schema.Class<CancelledRun, { readonly brand: "
   openSessions: Schema.Array(OpenSessionView),
   // What it left, each a sentence saying what and why.
   leftForPerson: Schema.Array(Schema.String),
+  // How the run's spoke exited once cancel ended it (`killed by SIGTERM`),
+  // its journal gone; absent for a run with no live spoke (ADR 23).
+  spokeExited: Schema.optionalKey(Schema.String),
 }) {}

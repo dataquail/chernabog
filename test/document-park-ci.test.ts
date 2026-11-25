@@ -394,11 +394,9 @@ describe("the epic document", () => {
     return fake;
   };
 
-  // Whether the run is parked on the epic, in whichever round it got to.
-  const parked = (run: EngineRun) =>
-    Effect.map(
-      listRunWaitsHandler({ runId: run.id, signal: Epic.LAYER_CHANGED }),
-      ({ waits }) => waits.length > 0,
+  const parkedAt = (round: number) => (run: EngineRun) =>
+    Effect.map(listRunWaitsHandler({ runId: run.id, signal: Epic.LAYER_CHANGED }), ({ waits }) =>
+      waits.some((wait) => wait.deferred === `${Epic.LAYER_CHANGED}:epic-${round}`),
     );
 
   const offered = (fake: Fake, flow: Flow) =>
@@ -462,7 +460,9 @@ describe("the epic document", () => {
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
 
-        yield* runUntil(handle, fake, fresh, parked);
+        // #10 and #12 in its first round, #11 once #10 is done in its second, and
+        // nothing left to start in its third.
+        yield* runUntil(handle, fake, fresh, parkedAt(3));
         fake.refs.clear();
         expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
 
@@ -472,7 +472,8 @@ describe("the epic document", () => {
         const again = yield* offered(fake, flow);
         expect(mayStart(again)).toBe(true);
 
-        yield* runUntil(handle, fake, again, parked);
+        // A new run counts its rounds afresh: #12 in its first, then nothing left to start.
+        yield* runUntil(handle, fake, again, parkedAt(2));
 
         // The new run took #12 up as its second attempt, and started nothing else again.
         const steps = fake.steps.flatMap(Option.toArray);

@@ -12,9 +12,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { type FlowsClient } from "../../domain/ports/clients/flows.client.ts";
+import { type WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { RunFinished } from "../../domain/run/run.events.ts";
 import { type RunsRepository } from "../../domain/run/runs.repository.ts";
 import { type RunMarkersRepository } from "../../domain/run-marker/run-markers.repository.ts";
+import { discardRunJournalHandler } from "../discard-run-journal.handler.ts";
 import { releaseRunMarkersHandler } from "../release-run-markers.handler.ts";
 
 export const RunTriggersLive = Layer.effectDiscard(
@@ -24,7 +26,7 @@ export const RunTriggersLive = Layer.effectDiscard(
     // What the handlers need, from the module that built this slot rather
     // than from whichever fiber committed the ending.
     const own = yield* Effect.context<
-      EventBus | FlowsClient | RunMarkersRepository | RunsRepository | UnitOfWork
+      EventBus | FlowsClient | RunMarkersRepository | RunsRepository | UnitOfWork | WorkflowsClient
     >();
 
     // An ended run lets go of what it held at once (release-run-markers).
@@ -32,6 +34,13 @@ export const RunTriggersLive = Layer.effectDiscard(
       RunFinished,
       (event) => releaseRunMarkersHandler(event).pipe(Effect.provideContext(own)),
       { name: "runs/release-run-markers" },
+    );
+
+    // An ended run's journal goes (discard-run-journal).
+    yield* bus.subscribeAfterCommit(
+      RunFinished,
+      (event) => discardRunJournalHandler(event).pipe(Effect.provideContext(own)),
+      { name: "runs/discard-run-journal" },
     );
   }),
 );

@@ -25,7 +25,7 @@ import {
   RunLogsQueriesLive,
   type RunsQueries,
 } from "../src/modules/runs/runs.query-handlers.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
+import { Home } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import { TestEventBus } from "./events.ts";
 
@@ -60,7 +60,7 @@ const daemonInScratch = Layer.unwrap(
         applicationModules.engine.pipe(
           Layer.provide(applicationModules.runtime({ handles: [], services: () => Option.none() })),
           Layer.provideMerge(TestEventBus),
-          Layer.provide(EngineAt(homePaths(home).state)),
+          Layer.provide(EngineAt(home)),
           Layer.provide(Home.at(home, home)),
         ),
         RunLogsQueriesLive.pipe(Layer.provide(RunLogsClientFake(logs))),

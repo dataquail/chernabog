@@ -40,6 +40,32 @@ const runsIn = (path: string) => {
   return rows.map((row) => row.id);
 };
 
+const tablesIn = (path: string) => {
+  const db = new Database(path, { readonly: true });
+
+  const rows = db
+    .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all();
+
+  db.close();
+
+  return rows.map((row) => row.name).toSorted();
+};
+
+// The workflow engine's tables, as state.db held them before each run had a
+// journal of its own.
+const withEngineTables = (path: string) => {
+  const db = new Database(path, { create: true });
+
+  for (const table of ["cluster_messages", "cluster_replies", "cluster_migrations"]) {
+    db.run(`CREATE TABLE ${table} (id TEXT PRIMARY KEY)`);
+  }
+
+  db.run("INSERT INTO cluster_messages (id) VALUES ('m-1')");
+
+  db.close();
+};
+
 const at = Effect.gen(function* () {
   const root = (yield* Home).root;
 
@@ -47,6 +73,34 @@ const at = Effect.gen(function* () {
 });
 
 describe("preparing state.db", () => {
+  effectAtHome(
+    "drops the workflow engine's tables an older chernabog left, after keeping the copy with them",
+    () =>
+      Effect.gen(function* () {
+        const { paths, root } = yield* at;
+        leftBy(paths.state, Option.some("0.0.1"));
+        withEngineTables(paths.state);
+
+        yield* prepareState(root, paths.state);
+
+        expect(tablesIn(paths.state)).toEqual(["om_meta", "om_runs"]);
+        expect(runsIn(paths.state)).toEqual(["run-1"]);
+        expect(tablesIn(`${paths.backups}/state.db.0.0.1`)).toContain("cluster_messages");
+      }),
+  );
+
+  effectAtHome("drops the workflow engine's tables from one this chernabog stamped too", () =>
+    Effect.gen(function* () {
+      const { paths, root } = yield* at;
+      leftBy(paths.state, Option.some(VERSION));
+      withEngineTables(paths.state);
+
+      yield* prepareState(root, paths.state);
+
+      expect(tablesIn(paths.state)).toEqual(["om_meta", "om_runs"]);
+    }),
+  );
+
   effectAtHome("a new one is stamped, with nothing to copy", () =>
     Effect.gen(function* () {
       const { fs, paths, root } = yield* at;

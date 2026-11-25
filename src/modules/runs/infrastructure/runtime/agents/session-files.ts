@@ -48,9 +48,18 @@ export const Done = Schema.fromJsonString(
 
 export type Done = typeof Done.Type;
 
+// The launcher and handle a session runs under, when it started, and whether
+// a person works in it (AgentRequest.withPerson): such a session is never
+// closed for a run that a stopped process left (ADR 23, #665). A record from
+// before it said says no person.
 export const LaunchRecord = Schema.fromJsonString(
   Schema.toCodecJson(
-    Schema.Struct({ launcher: ResolvedLauncher, handle: Schema.String, at: Schema.String }),
+    Schema.Struct({
+      launcher: ResolvedLauncher,
+      handle: Schema.String,
+      at: Schema.String,
+      withPerson: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
 );
 

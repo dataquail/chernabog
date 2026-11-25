@@ -47,6 +47,7 @@ import {
   PullRequestRef,
   recordHandOff,
   sessionIdFor,
+  takeQueueLabel,
 } from "./implement.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { hasReviewer, requestReview } from "./pull-request.ts";
@@ -147,7 +148,7 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       yield* markClaimed(issue, { keepOn: ["failed"] });
 
       for (const queued of [labelNames.eligible, labelNames.ship]) {
-        yield* github.removeLabel(issue, queued);
+        yield* takeQueueLabel(issue, queued);
       }
 
       yield* github.comment(

@@ -1,8 +1,8 @@
-// Runs flows durably. Each repo's flow is an Effect workflow, journaled in
-// SQLite; each work item gets its own execution, keyed by run, so one item
-// never has two runs at once and a finished item can run again later. The
-// engine must live in exactly one process: a second process on the same
-// database takes over workflows the first is still running.
+// Runs flows durably. Each repo's flow is an Effect workflow; each work item
+// gets its own execution, keyed by run, so one item never has two runs at
+// once and a finished item can run again later. Each run's execution is
+// journaled in SQLite, in a file of its own (journals.ts), which no other
+// process opens.
 
 import {
   Agent,
@@ -34,8 +34,6 @@ import {
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
-import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
-import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -70,12 +68,19 @@ import {
   NodeEntered,
   NodeFinished,
 } from "../../domain/run/node-did.value-object.ts";
+import { type SpokeHandOver } from "../../domain/run/spoke-hand-over.value-object.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
-import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
+import { type EngineOptions, JournalsAt, RunJournals } from "./journals.ts";
 import { ProgressLive } from "./progress.ts";
+import {
+  journalRecords,
+  RunRecords,
+  RunRecordsInJournal,
+  type RunRecordsService,
+} from "./run-records.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
   GitHubLive,
@@ -88,6 +93,8 @@ import {
 import { prepareState } from "./state-stamp.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
+
+export type { EngineOptions } from "./journals.ts";
 
 // Lost: the run found, before a write, that another run took its work item over.
 export const RunResult = Schema.Struct({
@@ -104,11 +111,15 @@ export class RunFailed extends Schema.TaggedError<RunFailed, { readonly brand: "
   },
 ) {}
 
-// The workflow engine and its SQLite journal, in `database`, which a newer
-// chernabog's stamp refuses, and an older one's is copied before it moves up.
-export const EngineAt = (database: string) =>
+// state.db under the chernabog home at `root`, which a newer chernabog's
+// stamp refuses, and an older one's is copied before it moves up: the
+// machine's own records, and no workflow journal (ADR 23, decision 3). A
+// spoke never opens it this way (SpokeEngineAt): the hub is its only writer.
+export const StateDbAt = (root: string) =>
   Layer.unwrap(
     Effect.gen(function* () {
+      const database = homePaths(root).state;
+
       const prepared = yield* prepareState((yield* Home).root, database);
 
       for (const kept of Option.toArray(prepared.kept)) {
@@ -117,17 +128,37 @@ export const EngineAt = (database: string) =>
         );
       }
 
-      return ClusterWorkflowEngine.layer.pipe(
-        Layer.provideMerge(SingleRunner.layer({ runnerStorage: "memory" })),
-        Layer.provideMerge(SqliteClient.layer({ filename: database })),
-      );
+      return SqliteClient.layer({ filename: database });
     }).pipe(Effect.catchTag("PlatformError", Effect.die)),
   );
 
-// The engine in this machine's state.db.
-export const EngineLive = Layer.unwrap(
-  Home.use((home) => Effect.succeed(EngineAt(homePaths(home.root).state))),
-);
+// The workflow engine, journaling each run in a file of its own under `root`
+// (journals.ts), beside state.db there.
+export const EngineAt = (root: string, options: EngineOptions = {}) =>
+  Layer.merge(JournalsAt(root, options), StateDbAt(root));
+
+// The engine under this machine's chernabog home.
+export const EngineLive = Layer.unwrap(Home.use((home) => Effect.succeed(EngineAt(home.root))));
+
+// A spoke's engine (ADR 23, decision 3): its run's journal under `root`, and
+// its run's records in that journal, for the hub to fold into state.db. A
+// spoke never opens state.db for the runs module: the module stands over a
+// store of the spoke's own in memory, which holds nothing, since what the
+// spoke reads of its run is what the hub handed it over. Its one read of
+// state.db is a token cursor its own reports don't have (RunRecordsInJournal).
+export const SpokeEngineAt = (root: string, handOver: SpokeHandOver) => {
+  const journals = JournalsAt(root);
+
+  return Layer.mergeAll(
+    journals,
+    SqliteClient.layer({ filename: ":memory:", disableWAL: true }),
+    RunRecordsInJournal(handOver, homePaths(root).state).pipe(Layer.provide(journals)),
+  );
+};
+
+// A spoke's engine under this machine's chernabog home.
+export const SpokeEngineLive = (handOver: SpokeHandOver) =>
+  Layer.unwrap(Home.use((home) => Effect.succeed(SpokeEngineAt(home.root, handOver))));
 
 // The repo's settings as a persona sees them: Repo.persona names it.
 export const personaSettings = (settings: RepoSettings, persona: Persona): RepoSettings =>
@@ -526,39 +557,44 @@ export const flowSettingsFor = (handle: FlowHandle, persona: Persona) =>
 // The markers a run holds, recorded against it for their release when it
 // ends. A marker neither the SDK nor the flow defines couldn't be released,
 // so holding one fails.
-const markerHolds = (runId: RunId, flow: Flow) =>
-  Effect.gen(function* () {
-    const known = new Set(
-      [...Markers.builtIn, ...(flow.markers ?? [])].map((marker) => marker.name),
-    );
+const markerHolds = (runId: RunId, flow: Flow, records: RunRecordsService) => {
+  const known = new Set([...Markers.builtIn, ...(flow.markers ?? [])].map((marker) => marker.name));
 
-    const hold = yield* capturing(
-      (name: string, args: Schema.Json, keepOn: ReadonlyArray<string>) =>
-        RunsCommands.use((runs) => runs.HoldMarkerCommand({ runId, name, args, keepOn })),
-    );
+  return Markers.MarkerHolds.of({
+    hold: (name, args, keepOn) => {
+      if (!known.has(name)) {
+        return Effect.fail(Markers.unlisted(name));
+      }
 
-    const forget = yield* capturing((name: string, args: Schema.Json) =>
-      RunsCommands.use((runs) => runs.ForgetMarkerCommand({ runId, name, args })),
-    );
-
-    const held = yield* capturing((name: string) =>
-      RunsQueries.use((runs) => runs.ListRunMarkersQuery({ runId, name: Option.some(name) })).pipe(
-        Effect.map((found) => found.markers.map((marker) => marker.args)),
-      ),
-    );
-
-    return Markers.MarkerHolds.of({
-      hold: (name, args, keepOn) => {
-        if (!known.has(name)) {
-          return Effect.fail(Markers.unlisted(name));
-        }
-
-        return hold(name, args, keepOn).pipe(Effect.asVoid);
-      },
-      held,
-      forget,
-    });
+      return records.holdMarker({ runId, name, args, keepOn: [...keepOn] });
+    },
+    held: (name) => records.held(runId, name),
+    forget: (name, args) => records.forgetMarker({ runId, name, args }),
   });
+};
+
+// Where a run's records go: its journal, always (ADR 23, decisions 3 and 9).
+// A spoke provides its records over its hand-over; a process that is its own
+// hub reads its run back from its state.db.
+export const recordsOfRun = (runId: RunId) =>
+  Effect.flatMap(Effect.serviceOption(RunRecords), (provided) =>
+    Option.match(provided, {
+      onSome: (records) => Effect.succeed(records),
+      onNone: () =>
+        Effect.zipWith(
+          RunJournals.use(Effect.succeed),
+          RunsQueries.use(Effect.succeed),
+          (journals, queries) => journalRecords(journals, queries, runId),
+        ),
+    }),
+  );
+
+// What the process executing a run hears of its park, once the run's wait is
+// recorded: a spoke ends there, at its phase boundary, and says so in its
+// journal (ADR 23, decision 2). Nothing by default.
+export type OnParked = (runId: RunId) => Effect.Effect<void>;
+
+const ignoreParks: OnParked = () => Effect.void;
 
 // A flow's workflow, registered in the engine. Its runs take their steps,
 // markers and subjects through the runs' dispatchers, which the composition
@@ -567,11 +603,13 @@ export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
   hooks: StepHooks = noHooks,
+  onParked: OnParked = ignoreParks,
 ) =>
   handle.workflow.toLayer((payload, executionId) =>
     Effect.gen(function* () {
       const runId = RunId.make(payload.runId);
-      const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
+      const records = yield* recordsOfRun(runId);
+      const row = yield* records.run(runId);
 
       // A run started under a core this binary doesn't provide is never
       // replayed under this one: it goes to a person before any of its flow runs.
@@ -619,60 +657,37 @@ export const flowLayer = <R>(
       );
 
       // A step reported after its run ended changes nothing.
-      const enterStep = yield* capturing((step: string, node: Option.Option<NodeAt>) =>
-        RunsCommands.use((runs) =>
-          runs.EnterStepCommand({
-            runId,
-            step,
-            ...Option.match(node, {
-              onNone: () => ({}),
-              onSome: (at) => ({ node: NodeRefs.of(at) }),
-            }),
+      const enterStep = (step: string, node: Option.Option<NodeAt>) =>
+        records.enterStep({
+          runId,
+          step,
+          ...Option.match(node, {
+            onNone: () => ({}),
+            onSome: (at) => ({ node: NodeRefs.of(at) }),
           }),
-        ).pipe(
-          Effect.catchTags({
-            RunAlreadyFinished: () => Effect.void,
-            RunNotFound: () => Effect.void,
-          }),
-        ),
-      );
+        });
 
-      const park = yield* capturing(
-        (parking: { signal: string; deferred: string; token: string }) =>
-          RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
-      );
+      const park = (parking: { signal: string; deferred: string; token: string }) =>
+        records.parkRun({ runId, ...parking }).pipe(Effect.tap(() => onParked(runId)));
 
       // A subject named after its run ended changes nothing.
-      const nameSubject = yield* capturing((subject: string) =>
-        RunsCommands.use((runs) => runs.NameSubjectCommand({ runId, subject })).pipe(
-          Effect.catchTags({
-            RunAlreadyFinished: () => Effect.void,
-            RunNotFound: () => Effect.void,
-          }),
-          Effect.asVoid,
-        ),
-      );
+      const nameSubject = (subject: string) => records.nameSubject({ runId, subject });
 
       // A step that ends, and a lane declared, after the run ended change nothing:
       // neither command refuses one.
-      const finishStep = yield* capturing((step: string, outcome: StepOutcome) =>
-        RunsCommands.use((runs) => runs.FinishStepCommand({ runId, step, outcome })),
-      );
+      const finishStep = (step: string, outcome: StepOutcome) =>
+        records.finishStep({ runId, step, outcome });
 
       // Each issue a write of the run created, kept in its journal.
-      const recordCreatedIssue = yield* capturing((issue: number) =>
-        RunsCommands.use((runs) => runs.RecordCreatedIssueCommand({ runId, issue })),
-      );
+      const recordCreatedIssue = (issue: number) => records.recordCreatedIssue({ runId, issue });
 
-      const declareLane = yield* capturing((lane: string, needs: ReadonlyArray<string>) =>
-        RunsCommands.use((runs) => runs.DeclareLaneCommand({ runId, lane, needs })),
-      );
+      const declareLane = (lane: string, needs: ReadonlyArray<string>) =>
+        records.declareLane({ runId, lane, needs: [...needs] });
 
       // Where in its plan the run went, each recorded once however often the
       // workflow body passes it, as a resumed run's does.
-      const recordNode = yield* capturing((node: NodeAt, did: NodeDid) =>
-        RunsCommands.use((runs) => runs.RecordNodeCommand({ runId, node: NodeRefs.of(node), did })),
-      );
+      const recordNode = (node: NodeAt, did: NodeDid) =>
+        records.recordNode({ runId, node: NodeRefs.of(node), did });
 
       const runNodes = PlanNodes.RunNodes.of({
         entered: (node) => recordNode(node, NodeEntered.make({})),
@@ -683,20 +698,12 @@ export const flowLayer = <R>(
 
       // The plan of the flow it runs, kept as it starts: a run resumed from
       // the tree it started from has the same one, and keeps the first.
-      const savePlan = yield* capturing((plan: FlowPlan) =>
-        RunsCommands.use((runs) => runs.SaveRunPlanCommand({ runId, plan })),
-      );
+      const savePlan = (plan: FlowPlan) => records.saveRunPlan({ runId, plan });
 
       // What each agent call of the run spent, recorded when it ends.
       const tokenUsage = TokenUsageRecorder.of({
-        cursor: yield* capturing((adapter: string, sessionId: string) =>
-          RunsQueries.use((runs) => runs.ReadTokenUsageCursorQuery({ adapter, sessionId })).pipe(
-            Effect.map((found) => found.cursor),
-          ),
-        ),
-        record: yield* capturing((call: TokenUsageCall) =>
-          RunsCommands.use((runs) => runs.RecordTokenUsageCommand(call)),
-        ),
+        cursor: records.cursor,
+        record: (call: TokenUsageCall) => records.recordTokenUsage(call),
       });
 
       const runLog = yield* runLogFor(payload.runId, {
@@ -724,7 +731,7 @@ export const flowLayer = <R>(
         yield* savePlan(plan);
       }
 
-      const holds = yield* markerHolds(runId, flow);
+      const holds = markerHolds(runId, flow, records);
       const lost = yield* Deferred.make<string>();
       const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
 

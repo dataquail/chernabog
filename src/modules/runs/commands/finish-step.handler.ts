@@ -12,7 +12,7 @@ import { RunStepsRepository } from "../domain/run/run-steps.repository.ts";
 import { type FinishStepPayload } from "./finish-step.command.ts";
 
 export const finishStepHandler = Effect.fn("finishStepHandler")(
-  function* ({ outcome, runId, step }: FinishStepPayload) {
+  function* ({ at, outcome, runId, step }: FinishStepPayload) {
     const steps = yield* RunStepsRepository;
 
     // An entry a step ended already keeps its end: a step ends once.
@@ -25,7 +25,10 @@ export const finishStepHandler = Effect.fn("finishStepHandler")(
       return;
     }
 
-    const finishedAt = DateTime.formatIso(yield* DateTime.now);
+    const finishedAt = yield* Option.match(Option.fromUndefinedOr(at), {
+      onNone: () => Effect.map(DateTime.now, DateTime.formatIso),
+      onSome: Effect.succeed,
+    });
 
     yield* steps.updateOne(
       RunStepEntity.make({

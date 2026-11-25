@@ -368,7 +368,12 @@ const start = (
     const at = DateTime.formatIso(yield* DateTime.now);
     yield* fs.writeFileString(
       files.launch,
-      yield* Schema.encodeEffect(LaunchRecord)({ launcher: context.launcher, handle, at }),
+      yield* Schema.encodeEffect(LaunchRecord)({
+        launcher: context.launcher,
+        handle,
+        at,
+        withPerson: request.withPerson === true,
+      }),
     );
 
     return { launcher, handle } satisfies Running;

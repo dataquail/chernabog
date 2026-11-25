@@ -33,7 +33,7 @@ description: Every chernabog command and flag.
 | `recipes compile [documents…]` | Compile this repo's [flow documents](/chernabog/flows/documents/) to flow files with the SDK it pins, all when none is named, and report each problem at its line in the document. `--check` writes nothing and fails if a flow file is out of date; `--json` gives the same result to read. Experimental |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
-| `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
+| `start`, `stop`                   | Start or stop the daemon; stopping it ends the runs in flight, which end `interrupted` when it starts again and repeat their phases in new runs. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
 | `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
 | `ci run --flow <flow> --persona <login> --item <item>` | The run job: one item on one runner, to the next phase boundary; see [below](#ci-run) |
@@ -72,10 +72,10 @@ It exits 1 when the run failed or ran out of time, and 0 otherwise. `--repo` def
 
 - **What wakes it.** The events the CI flows [declare](/chernabog/flows/documents/#the-github-events-that-wake-a-flow), each with its `types:`; `repository_dispatch` `chernabog-phase` when a flow reads phases; `workflow_run: completed` filtered to the repo's CI workflows (those a push or a pull request starts, never this one); `ci.schedule` for the sweep; and `workflow_dispatch`, to sweep by hand. Never `pull_request_target`: it refuses to write a workflow that would wake on it.
 - **A plan job, then a run job per item.** The plan job runs [`ci plan`](#ci-plan). The run job fans its matrix out with `strategy.matrix.include`, `fail-fast: false` and `max-parallel` from `ci.maxParallel`, and is skipped when the plan starts nothing. Each run job is in a `chernabog-<flow>-<item>` concurrency group that never cancels the job at work, so a later event for the same item waits for it.
-- **Least access.** The workflow's own token only reads the checkout (`permissions: contents: read`), and the checkout is always the default branch, with that token left out of git's config. Chernabog acts as a persona: its token, the `CHERNABOG_TOKEN` secret, is the job's `GH_TOKEN`, since pushes and pull requests made with the workflow's own token start no other workflow. `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, is the subscription's. Both are passed to the steps that run chernabog and to no other.
+- **Least access.** The workflow's own token only reads the checkout (`permissions: contents: read`), and the checkout is always the default branch, with that token left out of git's config. Chernabog acts as a persona: its token, the `CHERNABOG_TOKEN` secret, is the job's `GH_TOKEN`, since pushes and pull requests made with the workflow's own token start no other workflow. `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, is the subscription's. Both are passed to the steps that run chernabog and to no other. When config names [`apps:`](/chernabog/reference/configuration/#github-apps), there's no `CHERNABOG_TOKEN`. The plan job acts as the workflow's own token, with `contents: write` for its claims. Each run job runs in its App's Environment, as an App token narrowed to the repo and to its role.
 - **Logs.** Each run job uploads the run log and the agent's transcripts, whatever became of it, kept 5 days. On a public repo, anyone signed in to GitHub can download them.
 
-Both jobs run the action published from this repo, `dataquail/chernabog/action`, at the tag of the chernabog that wrote the workflow, and it installs that release. On a runner, `ci plan` writes the home's machine config itself, enrolling the checkout for every CI flow as the job's `GH_TOKEN`, as `ci run` does for its one flow.
+Both jobs run the action published from this repo, `dataquail/chernabog/action`, at the tag of the chernabog that wrote the workflow, and it installs that release. On a runner, `ci plan` writes the home's machine config itself, enrolling the checkout for every CI flow as the job's `GH_TOKEN`, as `ci run` does for its one flow. With `apps:`, each App's `<slug>[bot]` login is a persona on that token, running the flows whose `as:` names it.
 
 [Run on GitHub Actions](/chernabog/operate/github-actions/) walks through setting it up: the secrets, the rulesets, cost and security.
 
@@ -138,7 +138,8 @@ Some commands always run here: `setup`, `install`, `uninstall`, `start` and `sto
 | Path                                   | Holds                                              |
 | -------------------------------------- | -------------------------------------------------- |
 | `~/.config/chernabog/config.yaml`      | [Machine config](/chernabog/reference/configuration/#machine) |
-| `~/.config/chernabog/state.db`         | The workflow engine's journal                      |
+| `~/.config/chernabog/state.db`         | The machine's records of runs: their steps, waits, markers and usage |
+| `~/.config/chernabog/journals/<run>.db` | One run's workflow journal, deleted when the run ends |
 | `~/.config/chernabog/daemon.log`       | The daemon's log, today's (UTC); earlier days' are `daemon.<YYYY-MM-DD>.log`, kept 30 days |
 | `~/.config/chernabog/daemon.out.log`   | The daemon's stdout and stderr, as the service manager catches them |
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log, kept 30 days after the run finishes |

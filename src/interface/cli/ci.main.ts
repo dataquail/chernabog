@@ -21,6 +21,7 @@ import {
   type CiEvent,
   type CiPlanResult,
   ciWorkflowFor,
+  type CiWorkflowSettings,
   planCi,
   type WorkflowFiles,
 } from "../../modules/runs/runs.platform.ts";
@@ -116,9 +117,7 @@ export const summaryOf = (plan: CiPlanResult, event: Option.Option<CiEvent>) =>
 
 type PlanOptions = Parameters<typeof planCi>[0];
 
-type CiSection = Effect.Success<ReturnType<PlanOptions["ciOf"]>> & {
-  readonly schedule: string;
-};
+type CiSection = Effect.Success<ReturnType<PlanOptions["ciOf"]>> & CiWorkflowSettings;
 
 // How the command reads machine config and a repo's ci: section, which the
 // CLI's root hands it.
@@ -160,7 +159,14 @@ const prepareRunnerHome = (
     }
 
     const ci = yield* ciOf(`${checkout.value}/.chernabog`);
-    const config = ciMachineConfig({ slug: slug.value, checkout: checkout.value, flows: ci.flows });
+
+    const config = ciMachineConfig({
+      slug: slug.value,
+      checkout: checkout.value,
+      flows: ci.flows,
+      apps: ci.apps,
+    });
+
     yield* fs.makeDirectory(home.root, { recursive: true });
     yield* writeJson(paths.machineConfig, config);
   }).pipe(
@@ -268,7 +274,10 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
         Flag.withDescription("The flow, as the plan's entry names it"),
       ),
       persona: Flag.String("persona").pipe(
-        Flag.withDescription("The GitHub login the run acts as, as the plan's entry names it"),
+        Flag.withDescription(
+          "The GitHub login the run acts as, as the plan's entry names it; left out, the repo's implicit persona, as a hub hands over its run",
+        ),
+        Flag.optional,
       ),
       item: Flag.String("item").pipe(
         Flag.withDescription(
@@ -299,6 +308,40 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
         ),
         Flag.withDefault(false),
       ),
+      tree: Flag.String("tree").pipe(
+        Flag.withDescription(
+          "Read .chernabog/ from this tree's snapshot, rather than the default branch's: a hub passes the tree it trusted and loaded",
+        ),
+        Flag.optional,
+      ),
+      run: Flag.String("run").pipe(
+        Flag.withDescription(
+          "A hub's hand-over, which makes this a spoke on a machine: the run it recorded, to execute against the machine's home, with the run as the hub recorded it and the item it is for as --hand-over-file or --hand-over. The spoke stops as on SIGTERM when its stdin closes",
+        ),
+        Flag.optional,
+      ),
+      handOver: Flag.String("hand-over").pipe(
+        Flag.withDescription("The hub's hand-over: the run it recorded and its work item, as JSON"),
+        Flag.optional,
+      ),
+      handOverFile: Flag.String("hand-over-file").pipe(
+        Flag.withDescription(
+          "A file holding the hub's hand-over: the run it recorded and its work item, as JSON",
+        ),
+        Flag.optional,
+      ),
+      telemetryLimit: Flag.Int("telemetry-limit").pipe(
+        Flag.withDescription(
+          "A spoke's telemetry bound, in bytes: its run's telemetry files stop growing there, on any day",
+        ),
+        Flag.optional,
+      ),
+      runLogLimit: Flag.Int("run-log-limit").pipe(
+        Flag.withDescription(
+          "A spoke's run-log bound, in bytes: its run's log stops growing there, with a line saying so",
+        ),
+        Flag.optional,
+      ),
     },
     (options) =>
       Effect.gen(function* () {
@@ -319,20 +362,26 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             persona: options.persona,
             item: options.item,
             fromCheckout: options.fromCheckout,
+            tree: options.tree,
             leaseTtl: Duration.seconds(options.leaseSeconds),
             stopAfter: Duration.seconds(options.stopAfterSeconds),
             repo,
             workflowRun: fromEnv("GITHUB_RUN_ID"),
+            run: options.run,
+            handOver: options.handOver,
+            handOverFile: options.handOverFile,
+            runLogLimit: options.runLogLimit,
             logs: Option.orElse(options.logs, () =>
               Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
             ),
           },
           config.enrolled,
+          config.ciOf,
         );
       }),
   ).pipe(
     Command.withDescription(
-      "The run job: one item on one runner, in a home of its own, to the next phase boundary: where a run would park on a signal, it lets go of the claim and exits 0",
+      "The run job: one item on one runner, in a home of its own, to the next phase boundary: where a run would park on a signal, it lets go of the claim and exits 0. With --run, a spoke on a machine: the run a hub recorded, in the machine's home and a journal of its own, to the next phase boundary",
     ),
   );
 
@@ -355,7 +404,7 @@ export const writeCiWorkflow = (root: string, access: CiWorkflowAccess) =>
       return [];
     }
 
-    const { notes, path, text } = found.value;
+    const { needs, notes, path, text } = found.value;
     const file = `${root}/${path}`;
     const before = yield* fs.readFileString(file).pipe(Effect.option);
 
@@ -367,7 +416,7 @@ export const writeCiWorkflow = (root: string, access: CiWorkflowAccess) =>
     yield* fs.writeFileString(file, text);
 
     return [
-      `wrote ${path}${Option.match(before, { onNone: () => "", onSome: () => " (updated)" })}: give the repo the secrets CHERNABOG_TOKEN and CLAUDE_CODE_OAUTH_TOKEN, then commit and merge it`,
+      `wrote ${path}${Option.match(before, { onNone: () => "", onSome: () => " (updated)" })}: ${needs}, then commit and merge it`,
       ...notes,
     ];
   }).pipe(

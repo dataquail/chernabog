@@ -828,7 +828,7 @@ const TaskCi = Schema.Struct({
 // Where a task, or a layer's refresh, left on pending CI stands: its pull
 // request closed or merged since (gone), its CI still pending with time
 // left, past ciTimeout from when its round began (timed-out), or green or
-// red (settled).
+// red, or pending on a head that conflicts with its base (settled).
 const taskCi = (task: { readonly pullRequest: number; readonly since: string }) =>
   Effect.gen(function* () {
     const pull = yield* GitHub.use((github) => github.pullRequest(task.pullRequest)).pipe(
@@ -845,7 +845,9 @@ const taskCi = (task: { readonly pullRequest: number; readonly since: string }) 
     const { url } = open.value;
     const reading = yield* Ci.pullRequestState(task.pullRequest);
 
-    if (reading.state !== "pending") {
+    // Settled, or conflicting with its base, where CI won't run: the run
+    // that takes it up ends the wait either way.
+    if (reading.state !== "pending" || (yield* Ci.conflicting(task.pullRequest))) {
       return { state: "settled", url } satisfies typeof TaskCi.Type;
     }
 

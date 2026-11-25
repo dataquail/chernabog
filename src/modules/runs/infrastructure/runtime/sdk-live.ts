@@ -1,6 +1,7 @@
 // Chernabog's implementations of the SDK services, for one repo.
 
 import {
+  APP_REVIEWER,
   type Board,
   type Comment,
   type EnsureOptions,
@@ -38,6 +39,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -371,9 +373,13 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
       const has = (found: ReadonlyArray<LinkedIssue>, number: number) =>
         found.some((one) => one.number === number);
 
-      const self = provide(
-        githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login)),
-      );
+      // Who the persona is: a named one's login, as GitHub won't say whose an
+      // App's installation token is (#477); the implicit one's, its token's.
+      const self = Option.match(Option.fromUndefinedOr(settings.persona), {
+        onSome: (named) => Effect.succeed(named),
+        onNone: () =>
+          provide(githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login))),
+      });
 
       // One issue or pull request, which GitHub may not have.
       const readOrNotFound = <A>(what: string, rest: string, schema: Schema.Codec<A, Json>) =>
@@ -1317,13 +1323,33 @@ export const RepoLive = (settings: RepoSettings) => Layer.succeed(Repo, settings
 
 const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 
+// The logins a reviewer pool seats: its people, and the bot of each of the
+// team's Apps it names as app:<role> (#477).
+export const seatedLogins = (settings: RepoSettings) =>
+  (settings.reviewers ?? []).flatMap((entry) =>
+    Option.match(
+      Option.liftPredicate(entry, (named) => named.startsWith(APP_REVIEWER)),
+      {
+        onNone: () => [entry],
+        onSome: (named) =>
+          Option.toArray(
+            Option.map(
+              Record.get(settings.apps ?? {}, named.slice(APP_REVIEWER.length)),
+              (app) => app.login,
+            ),
+          ),
+      },
+    ),
+  );
+
 // Whether the persona holds a seat in the repo's reviewer pool: a login under
-// github:, not the implicit account, that reviewers lists, and that gh has a token for.
+// github:, not the implicit account, that reviewers lists, or the bot of an
+// App it names, and that has a token.
 export const checkReviewerSeat = (
   settings: RepoSettings,
   persona: Persona,
 ): Effect.Effect<string, SetupError, GitHubTokens> => {
-  const reviewers = settings.reviewers ?? [];
+  const reviewers = seatedLogins(settings);
 
   return Option.match(persona, {
     onNone: () => Effect.fail(new NotInReviewerPool({ reviewers })),

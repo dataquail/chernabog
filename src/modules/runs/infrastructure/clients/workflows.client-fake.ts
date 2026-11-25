@@ -9,29 +9,42 @@ import {
   type WorkflowOutcome,
   WorkflowsClient,
 } from "../../domain/ports/clients/workflows.client.ts";
+import { type SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts";
+import { type SpokeReport } from "../../domain/run/spoke-report.value-object.ts";
 
 // What a test's workflow engine did and was told: the runs it executed, the
-// executions it resumed and interrupted, the deferreds it woke and the lines it noted, and
+// executions it interrupted and the lines it noted, and
 // the outcome each execution ends with, and the flows (as repo/flow) it has
 // no workflow for, which a test sets.
 export type FakeEngine = {
   readonly executed: Array<RunId>;
-  readonly resumed: Array<string>;
   readonly interrupted: Array<string>;
-  readonly woken: Array<string>;
   readonly notes: Array<string>;
   readonly outcomes: Record<string, WorkflowOutcome>;
   readonly unloaded: Array<string>;
+  // The runs with a journal, which executing makes and discarding deletes,
+  // and those discarded, in order.
+  readonly journals: Array<RunId>;
+  readonly discarded: Array<RunId>;
+  // The runs whose workflows execute in a spoke, not in this process.
+  readonly inSpokes: Array<RunId>;
+  // The endings each run's spoke reported, in order.
+  readonly reports: Map<RunId, Array<SpokeEnding>>;
+  // The reports each run's spoke wrote in its journal, which a test sets.
+  readonly journalReports: Map<RunId, Array<SpokeReport>>;
 };
 
 export const fakeEngine = (): FakeEngine => ({
   executed: [],
-  resumed: [],
   interrupted: [],
-  woken: [],
   notes: [],
   outcomes: {},
   unloaded: [],
+  journals: [],
+  discarded: [],
+  inSpokes: [],
+  reports: new Map(),
+  journalReports: new Map(),
 });
 
 // The core the fake engine's workflows run under.
@@ -48,25 +61,43 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
       coreVersion: FAKE_CORE,
       treeOf: () => Option.some(FAKE_TREE),
       runs: (flow) => !engine.unloaded.includes(`${flow.repo}/${flow.flow}`),
+      executionIdOf: (_flow, runId) => Effect.succeed(`execution-${runId}`),
       execute: (_flow, runId) =>
         Effect.sync(() => {
           engine.executed.push(runId);
 
+          if (!engine.journals.includes(runId)) {
+            engine.journals.push(runId);
+          }
+
           return `execution-${runId}`;
         }),
       poll: (_flow, executionId) => Effect.sync(() => Record.get(engine.outcomes, executionId)),
-      resume: (_flow, executionId) =>
-        Effect.sync(() => {
-          engine.resumed.push(executionId);
-        }),
       interrupt: (_flow, executionId) =>
         Effect.sync(() => {
           engine.interrupted.push(executionId);
         }),
-      wake: (deferred) =>
+      discard: (runId) =>
         Effect.sync(() => {
-          engine.woken.push(deferred);
+          const at = engine.journals.indexOf(runId);
+
+          if (at >= 0) {
+            engine.journals.splice(at, 1);
+            engine.discarded.push(runId);
+          }
         }),
+      journals: Effect.sync(() => [...engine.journals]),
+      executing: (runId) => Effect.sync(() => !engine.inSpokes.includes(runId)),
+      reportEnded: (runId, ending) =>
+        Effect.sync(() => {
+          engine.reports.set(runId, [...(engine.reports.get(runId) ?? []), ending]);
+        }),
+      reportedEnding: (runId) =>
+        Effect.sync(() => Option.fromUndefinedOr((engine.reports.get(runId) ?? []).at(-1))),
+      reports: (runId, after) =>
+        Effect.sync(() =>
+          (engine.journalReports.get(runId) ?? []).filter((report) => report.seq > after),
+        ),
       note: (runId, line) =>
         Effect.sync(() => {
           engine.notes.push(`${runId}: ${line}`);

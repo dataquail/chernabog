@@ -10,7 +10,14 @@ import { RunView } from "../domain/run/run-view.value-object.ts";
 // more on the path it has taken, at the node of its plan it ran in, if any.
 // A run that has ended takes no step.
 export const EnterStepCommand = Command.make("EnterStepCommand", {
-  payload: { runId: RunId, step: Schema.String, node: Schema.optionalKey(NodeRef) },
+  payload: {
+    runId: RunId,
+    step: Schema.String,
+    node: Schema.optionalKey(NodeRef),
+    // When it entered the step, ISO; now when not given. A spoke reports the
+    // time it entered, which the hub folds later (ADR 23, decision 3).
+    at: Schema.optionalKey(Schema.String),
+  },
   success: RunView,
   failure: Schema.Union([RunNotFound, RunAlreadyFinished]),
 });

@@ -3,6 +3,11 @@
 // newer chernabog stamped is refused, and one an older chernabog stamped (or
 // none did) is copied to the backups first, whole and consistent (VACUUM
 // INTO, so the WAL comes too), then stamped with this one.
+//
+// The workflow engine's tables, which state.db held before each run had a
+// journal of its own (ADR 23, decision 3), are dropped once it is ready:
+// nothing reads them, and a run they journaled ends interrupted at the hub's
+// first start and repeats its phase.
 
 import { Database } from "bun:sqlite";
 import * as Effect from "effect/Effect";
@@ -50,6 +55,24 @@ const writeStamp = (db: Database) => {
   );
 };
 
+// The workflow engine's tables in state.db from before runs had journals of
+// their own (cluster_messages, cluster_replies, cluster_migrations, and any
+// other the engine made there), dropped. Which it dropped.
+export const dropEngineTables = (db: Database) => {
+  const tables = db
+    .query<{ readonly name: string }, []>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'cluster\\_%' ESCAPE '\\'",
+    )
+    .all()
+    .map((row) => row.name);
+
+  for (const table of tables) {
+    db.run(`DROP TABLE IF EXISTS "${table}"`);
+  }
+
+  return tables;
+};
+
 // What preparing state.db did: the copy it kept before moving it up, if any.
 export type StatePrepared = { readonly kept: Option.Option<string> };
 
@@ -73,6 +96,8 @@ export const prepareState = (root: string, database: string) =>
 
     switch (stampState(stamp)) {
       case "current": {
+        dropEngineTables(db);
+
         return { kept: Option.none() } satisfies StatePrepared;
       }
 
@@ -101,6 +126,7 @@ export const prepareState = (root: string, database: string) =>
         );
 
         writeStamp(db);
+        dropEngineTables(db);
 
         return { kept } satisfies StatePrepared;
       }

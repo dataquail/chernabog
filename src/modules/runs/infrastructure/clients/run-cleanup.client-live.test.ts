@@ -429,17 +429,81 @@ describe("RunCleanupClientLive", () => {
 
       const open = yield* client.openSessions(run("issue-7"));
 
-      expect(open).toEqual([{ sessionId: "open", launcher: "mine", handle: "handle-open" }]);
+      expect(open).toEqual([
+        { sessionId: "open", launcher: "mine", handle: "handle-open", withPerson: false },
+      ]);
 
       yield* client.closeSession(open[0]);
 
       const refused = yield* Effect.flip(
-        client.closeSession({ sessionId: "unlaunched", launcher: "mine", handle: "h" }),
+        client.closeSession({
+          sessionId: "unlaunched",
+          launcher: "mine",
+          handle: "h",
+          withPerson: false,
+        }),
       );
 
       expect((yield* fs.readFileString(closed)).trim()).toBe("handle-open");
       expect(refused.message).toBe("no record of mine session h");
     }),
+  );
+
+  effect(
+    "finds which of the sessions a spoke reported are open, by the launch record each names",
+    () =>
+      Effect.gen(function* () {
+        const { client, fs } = yield* opened(freshState());
+        const home = (yield* Home).root;
+
+        // A launcher whose check can't run can't say the session is gone.
+        for (const [sessionId, alive] of [
+          ["open", "true"],
+          ["gone", "false"],
+          ["unknown", "/nonexistent/alive-check"],
+        ] as const) {
+          const files = sessionFiles(home, sessionId);
+          yield* fs.makeDirectory(files.dir, { recursive: true });
+          yield* fs.writeFileString(
+            files.launch,
+            yield* Schema.encodeEffect(LaunchRecord)({
+              launcher: {
+                name: "mine",
+                from: "machine config",
+                custom: Option.some({
+                  start: ["true"],
+                  close: ["true"],
+                  alive: Option.some([alive]),
+                  attach: Option.none(),
+                }),
+              },
+              handle: `handle-${sessionId}`,
+              at: "t",
+            }),
+          );
+        }
+
+        const reported = (sessionId: string) => ({
+          adapter: "claude",
+          sessionId,
+          launch: sessionFiles(home, sessionId).launch,
+        });
+
+        // A headless session keeps no launch record; one reported twice (a
+        // resume) is one session.
+        expect(
+          yield* client.openReported([
+            reported("open"),
+            reported("gone"),
+            reported("headless"),
+            reported("open"),
+            reported("unknown"),
+          ]),
+        ).toEqual([
+          { sessionId: "open", launcher: "mine", handle: "handle-open", withPerson: false },
+          { sessionId: "unknown", launcher: "mine", handle: "handle-unknown", withPerson: false },
+        ]);
+      }),
   );
 
   effect("a persona the repo no longer has can't clean up", () =>

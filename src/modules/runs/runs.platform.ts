@@ -6,7 +6,12 @@
 export { Routing } from "./domain/domain-services/routing.domain-service.ts";
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
 export { FlowPlan, FoundPlan } from "./domain/plan/flow-plan.value-object.ts";
+export {
+  type AgentSessionOpened,
+  sessionOpenedIn,
+} from "./domain/run/agent-session-opened.value-object.ts";
 export { CancelledRun, CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
+export { type EndedSpoke } from "./domain/run/ended-spoke.value-object.ts";
 export {
   PullRequestOpened,
   RunEnteredNode,
@@ -20,9 +25,15 @@ export {
   RunTookBranch,
 } from "./domain/run/run.events.ts";
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
+export { type RunStatus } from "./domain/run/run-status.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
+export { SpokeEnding } from "./domain/run/spoke-ending.value-object.ts";
+export { SpokeHandOver, SpokeHandOverJson } from "./domain/run/spoke-hand-over.value-object.ts";
+export { type SpokeReport } from "./domain/run/spoke-report.value-object.ts";
+export { type FlowRef, WorkItem } from "./domain/run/work-item.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { MarkerReleases, RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
+export { endingOf, SpokeEndRequest } from "./domain/run-spoke/spoke-end-request.value-object.ts";
 export {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,
@@ -47,8 +58,15 @@ export {
   validityDue,
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
+export { SpokeRecordView } from "./queries/list-spokes.query.ts";
 export { LoggedAt, RunLog } from "./queries/read-run-log.query.ts";
-export { RunFlowsCommands, RunsCommands } from "./runs.command-handlers.ts";
+export {
+  RunFlowsCommands,
+  RunsCommands,
+  SpokeReportCommand,
+  spokeReportCommands,
+  spokeReportPayloadJson,
+} from "./runs.command-handlers.ts";
 export { RunsModule } from "./runs.module.ts";
 export {
   NotificationsQueries,
@@ -62,7 +80,13 @@ export {
 // registry of the flows that root loaded, which RunsModule.runtime runs. And
 // what the runs' events say on their spans, for the one bus the shared runtime
 // builds.
-export { EngineAt, EngineLive } from "./infrastructure/runtime/engine.ts";
+export {
+  EngineAt,
+  EngineLive,
+  recordsOfRun,
+  SpokeEngineAt,
+  SpokeEngineLive,
+} from "./infrastructure/runtime/engine.ts";
 export { type FlowRegistry } from "./infrastructure/runtime/flow-registry.ts";
 export { runEventSpanAttributes } from "./runs.event-span-attributes.ts";
 
@@ -102,6 +126,7 @@ export { checkAnswer, stopHook } from "./infrastructure/runtime/agents/stop-hook
 export { type CiEvent, type CiPlanResult, planCi } from "./infrastructure/runtime/ci-plan.ts";
 export {
   ciWorkflowFor,
+  type CiWorkflowSettings,
   type CiWorkflowText,
   type WorkflowFiles,
 } from "./infrastructure/runtime/ci-workflow.ts";
@@ -113,6 +138,7 @@ export {
   flowHandle,
   flowLayer,
   runLogFile,
+  runLogFor,
 } from "./infrastructure/runtime/engine.ts";
 export { type LabelDrift, labelDrift } from "./infrastructure/runtime/label-drift.ts";
 export {
@@ -152,7 +178,7 @@ export {
   withRepo,
   withRepoReservedFor,
 } from "./infrastructure/runtime/repo-runtime.ts";
-export { runLogWriting } from "./infrastructure/runtime/runlog.ts";
+export { noHooks, RunLogLimit, runLogWriting } from "./infrastructure/runtime/runlog.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";
 export {
   checkThreadsSetup,

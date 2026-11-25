@@ -849,25 +849,83 @@ const options = Effect.gen(function* () {
   ).options;
 });
 
-let previous = Option.none<ts.Program>();
+// The flow files' sources a file's tests will type-check, not checked yet,
+// and what tsc said of each source checked.
+const pending = new Set<string>();
+const checked = new Map<string, ReadonlyArray<string>>();
+
+// Declares, as a test file is collected, the documents its tests will ask
+// compileErrors about. The first ask type-checks them all in one program: a
+// program's checker works out the SDK's and effect's types once for every
+// file in it, where a program for each file works them out each time, about
+// a second and a half. Each file is a module in a directory of its own, so
+// what tsc says of one is what it says of it alone. A document not declared
+// is checked alone, the same, only slower.
+export const willCompile = (...documents: ReadonlyArray<Compose.FlowDocument>) => {
+  for (const document of documents) {
+    // A document that doesn't generate fails its own test, when it asks.
+    for (const source of Option.toArray(
+      Result.getSuccess(Compose.generate(document, "@chernabog/sdk", STAGE_FILES)),
+    )) {
+      if (!checked.has(source)) {
+        pending.add(source);
+      }
+    }
+  }
+};
+
+// What tsc says of each flow file: its own diagnostics, none of another file's.
+const typeCheck = (sources: ReadonlyArray<string>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const files: Array<readonly [string, string]> = [];
+
+      for (const source of sources) {
+        files.push([source, yield* writeFlow(source)]);
+      }
+
+      const program = ts.createProgram(
+        files.map(([, file]) => file),
+        { ...(yield* options), noEmit: true },
+      );
+
+      for (const [source, file] of files) {
+        // A file the program lost would say nothing, and pass as compiling.
+        const sourceFile = Option.fromUndefinedOr(program.getSourceFile(file));
+
+        if (Option.isNone(sourceFile)) {
+          return yield* Effect.die(`tsc: ${file} isn't in the program`);
+        }
+
+        checked.set(
+          source,
+          ts
+            .getPreEmitDiagnostics(program, sourceFile.value)
+            .filter((diagnostic) => diagnostic.file?.fileName === file)
+            .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")),
+        );
+        pending.delete(source);
+      }
+    }),
+  );
 
 // What `tsc` says of the document's flow file: nothing when it compiles.
 export const compileErrors = (document: Compose.FlowDocument) =>
   Effect.gen(function* () {
-    const file = yield* writeFlow(generated(document));
-    const compilerOptions = yield* options;
+    const source = generated(document);
 
-    const program = ts.createProgram(
-      [file],
-      { ...compilerOptions, noEmit: true },
-      void 0,
-      Option.getOrUndefined(previous),
-    );
+    if (!checked.has(source)) {
+      // The rest of the file's documents with it, when it's one of them.
+      yield* typeCheck(
+        Option.match(
+          Option.liftPredicate(source, (one) => pending.has(one)),
+          {
+            onNone: () => [source],
+            onSome: () => [...pending],
+          },
+        ),
+      );
+    }
 
-    previous = Option.some(program);
-
-    return ts
-      .getPreEmitDiagnostics(program)
-      .filter((diagnostic) => diagnostic.file?.fileName === file)
-      .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " "));
+    return checked.get(source) ?? [];
   });

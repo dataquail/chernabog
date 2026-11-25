@@ -78,15 +78,24 @@ export type OpenRepo = {
 };
 
 // The trusted .chernabog/ comes from the config branch, GitHub's default; `fromCheckout` reads the
-// working copy instead, for trying out a change before merging it.
-export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
+// working copy instead, for trying out a change before merging it. `pinned` reads the snapshot of
+// one tree instead, as a spoke reads the tree its hub trusted and loaded.
+export const repoConfigDir = (
+  enrolled: EnrolledRepo,
+  fromCheckout: boolean,
+  pinned: Option.Option<string> = Option.none(),
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     let tree = Option.none<string>();
     let configDir = `${enrolled.path}/.chernabog`;
 
     if (!fromCheckout) {
-      const snapshot = yield* snapshotConfig(enrolled.path);
+      const snapshot = yield* Option.match(pinned, {
+        onNone: () => snapshotConfig(enrolled.path),
+        onSome: (one) => snapshotTree(enrolled.path, one),
+      });
+
       tree = Option.some(snapshot.tree);
       configDir = snapshot.configDir;
     }
@@ -144,9 +153,10 @@ export const openRepo = (
   enrolled: EnrolledRepo,
   fromCheckout: boolean,
   overrides: PackageOverrides = new Map(),
+  pinned: Option.Option<string> = Option.none(),
 ) =>
   Effect.gen(function* () {
-    const { configDir, tree } = yield* repoConfigDir(enrolled, fromCheckout);
+    const { configDir, tree } = yield* repoConfigDir(enrolled, fromCheckout, pinned);
     const repo = yield* loadRepo(machine, enrolled, configDir, overrides);
     const flows = yield* loadFlows(configDir, overrides);
     yield* checkManualSchedules(repo, flows);

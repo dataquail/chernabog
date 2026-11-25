@@ -8,7 +8,7 @@ import { effect } from "../../../test/effect-test.ts";
 import { TestEventBus } from "../../../test/events.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { EngineAt, RunsCommands, type RunView } from "../../modules/runs/runs.platform.ts";
-import { Home, homePaths } from "../../platform/home.ts";
+import { Home } from "../../platform/home.ts";
 import { applicationModules } from "../application-modules.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
 
@@ -22,7 +22,7 @@ const daemonInScratch = Layer.unwrap(
       applicationModules.engine.pipe(
         Layer.provide(applicationModules.runtime({ handles: [], services: () => Option.none() })),
         Layer.provideMerge(TestEventBus),
-        Layer.provide(EngineAt(homePaths(home).state)),
+        Layer.provide(EngineAt(home)),
         Layer.provide(Home.at(home, home)),
       ),
     ),

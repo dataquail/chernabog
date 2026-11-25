@@ -19,7 +19,7 @@ import {
   transcriptExists,
 } from "./claude-events.ts";
 import { runInteractiveClaude } from "./claude-interactive.ts";
-import { claudeUsage } from "./claude-usage.ts";
+import { claudeTranscripts, claudeUsage } from "./claude-usage.ts";
 import { clip, runAgentProcess } from "./process.ts";
 
 export { describeClaudeEvent, transcriptDirectoryFor } from "./claude-events.ts";
@@ -128,4 +128,5 @@ export const claudeAdapter: Adapter = {
     }),
   // Both ways of running it keep the same transcripts, which is all this reads.
   usage: claudeUsage,
+  transcripts: claudeTranscripts,
 };

@@ -315,6 +315,15 @@
       }
     },
     {
+      // A hub's spokes lead process groups of their own (ADR 23, decision 1):
+      // setsid, a stdin pipe held for the child's life, and signals to the
+      // group, which effect/process's ChildProcess doesn't offer.
+      "files": ["src/platform/process-group.ts"],
+      "rules": {
+        "effect/noNodeBuiltinImport": "off"
+      }
+    },
+    {
       // The feature runner registers a feature's scenarios as bun:test tests while
       // its entry file loads, which bun:test requires be synchronous, so it reads
       // the feature file with node:fs rather than an Effect.

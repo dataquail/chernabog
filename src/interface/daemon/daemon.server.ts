@@ -1,9 +1,11 @@
 // One long-running daemon per machine schedules every enrolled repo's flows,
 // records state in SQLite, and serves the CLI and TUI over a local socket. It
-// is the only process that runs the workflow engine.
+// is the hub (ADR 23): it runs no flow itself, and each run executes in a
+// spoke, a process of its own.
 
 import { describeError } from "@chernabog/core";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import type { CommandBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -31,6 +33,12 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel, shortRunId } from "../../kernel/run-id.id.ts";
+import {
+  breachSummary,
+  formatDuration,
+  silentExitEnding,
+  type SpokeBreach,
+} from "../../kernel/spoke-bounds.value-object.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
@@ -46,11 +54,11 @@ import {
   DEFAULT_LEASE_LIMITS,
   DEFAULT_VALIDITY_EVERY,
   describeLauncher,
+  endingOf,
   EngineLive,
   eventTickAt,
   type FlowHandle,
   flowHandle,
-  flowLayer,
   flowOrigins,
   FlowPlan,
   type FlowRegistry,
@@ -71,7 +79,9 @@ import {
   runIsAbout,
   RunLeases,
   RunsCommands,
+  RunsModule,
   RunsQueries,
+  type RunStatus,
   RunValidity,
   type RunView,
   servicesFrom,
@@ -81,9 +91,11 @@ import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { dailyLogWriting } from "../../platform/daily-log.ts";
+import { HostEnvironment } from "../../platform/environment.ts";
 import { describeSource, flowPlanOf, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { describeExit, type GroupExit } from "../../platform/process-group.ts";
 import {
   capLog,
   DAEMON_LOG_RETENTION,
@@ -135,7 +147,9 @@ import {
   openEventFeed,
 } from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
+import { endAsSaid, foldInStateDb, noteInRun } from "./report-fold.server.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
+import { boundRetryAfter, hubSpokes, type Spokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -346,9 +360,6 @@ type LeaseNote = {
   readonly atRisk: Option.Option<string>;
 };
 
-// An item a trigger reported, with the signals it saw for it.
-type WakingItem = { readonly key: string; readonly signals?: ReadonlyArray<string> };
-
 const isGone = Predicate.isTagged("Gone");
 
 // The runs of an issue or pull request a notification was about, by the
@@ -448,6 +459,19 @@ const changedAction = (trusted: boolean) => {
   return "not trusted, starting no new runs until chernabog trust";
 };
 
+// Why a run the hub finds running when it starts ends.
+const INTERRUPTED_REASON =
+  "the hub it ran under stopped, and its spoke with it; its phase repeats in a new run";
+
+// What a run reaped with a journal the hub couldn't read lost (ADR 23,
+// decision 3).
+const UNREADABLE_JOURNAL =
+  "its journal couldn't be read, so what its spoke reported last is lost, markers included";
+
+// Why a daemon with a reload pending starts nothing.
+const RELOADING =
+  "a trusted .chernabog/ changed; the daemon starts no new runs until its runs end and it restarts on it";
+
 // Why a draining daemon starts nothing.
 const DRAINING =
   "chernabog was upgraded; the daemon is draining, starting no new runs until it restarts on the new version";
@@ -530,8 +554,6 @@ export const runDaemon = Effect.gen(function* () {
     Effect.catch((error) => log(`service: could not rewrite the unit: ${error.message}`)),
   );
 
-  const busy = yield* Ref.make(0);
-
   // Wakes the scheduling loop early, when an event makes a tick due.
   const wake = yield* Latch.make();
 
@@ -563,13 +585,6 @@ export const runDaemon = Effect.gen(function* () {
       }
     });
 
-  const hooks = {
-    onStep: () => Ref.update(busy, (count) => count + 1),
-    onStepDone: () => Ref.update(busy, (count) => count - 1),
-    onStepFinished: () => Effect.void,
-    onChange: noteLocal,
-  };
-
   // Each repo's services, once per persona.
   const contexts = new Map<string, ReadonlyArray<PersonaContext>>();
 
@@ -581,30 +596,48 @@ export const runDaemon = Effect.gen(function* () {
 
   const handles = Arr.dedupe(repos.flatMap((repo) => repo.flows.map((flow) => flow.handle)));
 
-  const flowLayers = handles.flatMap((handle) =>
-    Option.toArray(
-      Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) =>
-        flowLayer(handle, servicesFrom(personas), hooks),
-      ),
-    ),
-  );
-
   // What the runs module drives a tick through: the flows loaded here, each
-  // with its persona's services, and their workflows in the engine.
+  // with its persona's services, for their triggers, gates, item lookups,
+  // stillValid and marker releases. Their workflows are registered in no
+  // engine here: the hub runs no flow itself (ADR 23, decision 9), each run
+  // executes in a spoke of its own.
+  // The hub's spokes, once it has them: they are built over the runtime the
+  // registry below makes, and the runs module ends a run's spoke through
+  // them (ADR 23, decision 5). Before then no spoke is live.
+  const hubSpokesHandle = yield* Ref.make(Option.none<Spokes>());
+
   const registry: FlowRegistry = {
     handles,
     services: (repoName, persona) =>
       Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
         servicesFrom(personas)(persona),
       ),
+    spokes: {
+      end: (runId, request) =>
+        Effect.flatMap(Ref.get(hubSpokesHandle), (found) =>
+          Option.match(found, {
+            onNone: () => Effect.succeedNone,
+            onSome: (live) => live.end(runId, request),
+          }),
+        ),
+      forget: (runId) =>
+        Effect.flatMap(Ref.get(hubSpokesHandle), (found) =>
+          Option.match(found, {
+            onNone: () => Effect.void,
+            onSome: (live) => live.forget(runId),
+          }),
+        ),
+    },
   };
 
-  // The modules a process with an engine adds, and the flows loaded here, which
-  // take their runs' steps through them, over the daemon's own runtime and the
-  // engine in this machine's state.db.
-  const engine = yield* Layer.build(
-    engineRuntime({ registry, flows: flowLayers, engine: EngineLive }),
-  );
+  // The modules a process with an engine adds, over the daemon's own runtime,
+  // state.db and the spokes' journals, which the hub reads and deletes. No
+  // flow's workflow is registered: nothing here can execute one.
+  const engine = yield* Layer.build(engineRuntime({ registry, flows: [], engine: EngineLive }));
+
+  // Runs the hub's fold of a spoke's report and the fold position past it in
+  // one state.db transaction (ADR 23, decision 3).
+  const inOneUnitOfWork = yield* RunsModule.inOneUnitOfWork.pipe(Effect.provideContext(engine));
 
   // What releasing markers did, as the daemon logs it, whoever released them: a
   // run's ending (release-run-markers) or the sweep. A failure is logged the
@@ -682,6 +715,232 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
+      // Ends the run of a spoke that exited before it said how the run ended
+      // (a crash, a SIGKILL from outside), as a hub's restart ends one
+      // (ADR 23, decisions 2 and 7): interrupted, keeping its markers and
+      // worktree, putting its issue back on its queue and letting go of its
+      // claim ref, so a new run repeats its phase, with its agent's sessions
+      // closed but a person's left open. Once its item's runs have ended so
+      // `machine.silentExits` times in a row, it ends failed instead, so a
+      // phase that crashes every time stops being offered and a person sees
+      // why. The count is recorded with the ending, in state.db, so a
+      // restart doesn't reset it, and a run of the item that ends any other
+      // way does.
+      const endSilentSpokeRun = (runId: RunId, exit: GroupExit) =>
+        Effect.gen(function* () {
+          const running = Option.filter(
+            (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId }))).run,
+            (run) => run.status === "running",
+          );
+
+          if (Option.isNone(running)) {
+            return;
+          }
+
+          const before = (yield* RunsQueries.use((runs) => runs.ReadSilentExitsQuery({ runId })))
+            .silentExits;
+
+          const { ending, silentExits } = silentExitEnding(before, machine.silentExits);
+          const silent = `its spoke ${describeExit(exit)} before it said how the run ended`;
+
+          const reasons = {
+            failed: `${silent}, ${silentExits} runs in a row of this item; it isn't repeated again until a person looks`,
+            interrupted: `${silent} (${silentExits} of ${machine.silentExits} in a row); its phase is left for a new run to repeat`,
+          };
+
+          const reason = reasons[ending];
+
+          yield* RunFlowsCommands.use((runs) =>
+            runs.CancelRunCommand({
+              target: CancelTarget.cases.ById.make({ asked: runId }),
+              by: "chernabog",
+              closeSessions: true,
+              sparePersonSessions: true,
+              endAs: Option.some({ ending, reason, silentExits }),
+            }),
+          );
+        });
+
+      // Ends a spoke's run once the spoke has exited, with the ending it
+      // reported in its journal (ADR 23, decision 2), and lets the run's
+      // ending delete the journal (discard-run-journal). A spoke that exited
+      // before it said ends its run through endSilentSpokeRun (interrupted,
+      // or failed once its item has done so too often in a row); one whose run
+      // the hub already ended leaves it as it is, and one the hub ended for
+      // an ending of its own (a cancel, a lost lease) leaves the run to
+      // whoever asked, who ends it once the spoke is gone (decision 5).
+      const endSpokeRun = (runId: RunId, exit: GroupExit, intended: Option.Option<RunStatus>) =>
+        Effect.gen(function* () {
+          yield* log(
+            Option.match(intended, {
+              onNone: () => `spoke for ${shortRunId(runId)} ${describeExit(exit)}`,
+              onSome: (ending) =>
+                `spoke for ${shortRunId(runId)} ${describeExit(exit)}, ended for its run to end ${ending}`,
+            }),
+          );
+
+          if (Option.isSome(intended)) {
+            return;
+          }
+
+          const said = (yield* RunFlowsQueries.use((runs) => runs.ReadSpokeEndingQuery({ runId })))
+            .ending;
+
+          if (Option.isNone(said)) {
+            yield* endSilentSpokeRun(runId, exit);
+
+            return;
+          }
+
+          yield* endAsSaid(runId, said, () => said.value);
+        }).pipe(
+          Effect.catchCause((cause) =>
+            log(`could not end ${shortRunId(runId)} after its spoke exited: ${String(cause)}`),
+          ),
+        );
+
+      const runsCommands = yield* RunsCommands;
+
+      // Folds a spoke's report and its fold position in one state.db
+      // transaction (ADR 23, decisions 3 and 8).
+      const foldInSpokeState = foldInStateDb(inOneUnitOfWork, log);
+
+      // Forgets a spoke's record once its run has ended (decision 7).
+      const forgetSpoke = (runId: RunId) =>
+        runsCommands
+          .ForgetSpokeCommand({ runId })
+          .pipe(
+            Effect.catchCause((cause) =>
+              log(`could not forget the spoke of ${shortRunId(runId)}: ${String(cause)}`),
+            ),
+          );
+
+      // Ends a spoke past one of its bounds (ADR 23, decision 4): its run
+      // fails, naming the bound, what was measured and the limit. Ending it
+      // is a cancel's: SIGTERM to its group, SIGKILL after the grace, the
+      // last fold, its journal deleted, and its agent sessions always
+      // closed by their handles, since a session left running would go on
+      // spending for a run that has ended. An attempt after the first, once
+      // one couldn't end it, notes nothing in the run's log, which already
+      // says the hub is ending it, and `hubSpokes` spaces them out.
+      const endPastBound = (runId: RunId, breach: SpokeBreach, attempt: number) =>
+        Effect.gen(function* () {
+          const reason = breachSummary(breach);
+
+          if (attempt === 1) {
+            yield* log(`spoke for ${shortRunId(runId)} ${reason}; ending it`);
+            yield* noteInRun(runId, `the hub ends this run's spoke: ${reason}`);
+          }
+
+          const ended = yield* RunFlowsCommands.use((runs) =>
+            runs.CancelRunCommand({
+              target: CancelTarget.cases.ById.make({ asked: runId }),
+              by: "chernabog",
+              closeSessions: true,
+              endAs: Option.some({ ending: "failed", reason }),
+            }),
+          ).pipe(Effect.result);
+
+          yield* log(
+            Result.match(ended, {
+              onSuccess: (done) =>
+                [
+                  `ended ${runId} (${runLabel(done.run)}) failed: ${Option.getOrElse(done.run.summary, () => reason)}`,
+                  ...done.closedSessions.map(
+                    (session) => `closed its ${session.launcher} session ${session.handle}`,
+                  ),
+                  ...done.leftForPerson,
+                ].join("; "),
+              onFailure: (error) =>
+                `could not end ${shortRunId(runId)} past its bound (${reason}), attempt ${attempt}: ${error.message}; it is measured again in ${formatDuration(boundRetryAfter(attempt))}`,
+            }),
+          );
+
+          return Result.isSuccess(ended);
+        });
+
+      const spokes = yield* hubSpokes<
+        | CommandBus
+        | FileSystem.FileSystem
+        | Home
+        | RunFlowsCommands
+        | RunFlowsQueries
+        | RunsCommands
+        | RunsQueries
+      >({
+        home: (yield* Home).root,
+        variables: (yield* HostEnvironment).variables,
+        log,
+        reports: (runId, after) =>
+          RunFlowsQueries.use((runs) => runs.ReadSpokeReportsQuery({ runId, after })).pipe(
+            Effect.map((found) => found.reports),
+            Effect.orDie,
+          ),
+        apply: foldInSpokeState,
+        record: (spoke) =>
+          RunsCommands.use((runs) => runs.RecordSpokeCommand(spoke)).pipe(
+            Effect.catchCause((cause) =>
+              log(`could not record the spoke of ${shortRunId(spoke.runId)}: ${String(cause)}`),
+            ),
+          ),
+        intend: (runId, ending) =>
+          RunsCommands.use((runs) => runs.IntendSpokeEndingCommand({ runId, ending })).pipe(
+            Effect.catchCause((cause) =>
+              log(`could not record the ending meant for ${shortRunId(runId)}: ${String(cause)}`),
+            ),
+          ),
+        onExit: endSpokeRun,
+        bounds: machine.spokes,
+        onBound: endPastBound,
+      });
+
+      // The runs module ends a run's spoke through these, from now on.
+      yield* Ref.set(hubSpokesHandle, Option.some(spokes));
+
+      // A run the hub ends while its spoke still runs (lost, superseded, a
+      // person's), ends its spoke too: SIGTERM to its group, then SIGKILL
+      // after the grace. A spoke that ended its run itself has exited first.
+      // A spoke the hub ended for its run's ending is forgotten once that
+      // ending is recorded.
+      yield* subscribeRunEndings(
+        (ended) =>
+          Effect.all([spokes.stop(ended.id), spokes.forget(ended.id), forgetSpoke(ended.id)], {
+            discard: true,
+          }),
+        "daemon/spoke-endings",
+      );
+
+      // The spokes of the hub before this one, which a spoke doesn't outlive
+      // (ADR 23, decision 7), reaped before anything here ends or starts a
+      // run: each still running is ended, once the hub has checked its PID
+      // is still that spoke's, and what its journal holds is folded into
+      // state.db from where the hub before left off. Their runs end below.
+      const leftSpokes = (yield* (yield* RunsQueries).ListSpokesQuery({})).spokes;
+
+      const unreadable = new Set(
+        (yield* Effect.forEach(
+          leftSpokes,
+          (left) =>
+            spokes.reap(left).pipe(
+              Effect.tap((reaped) =>
+                log(
+                  [
+                    `the spoke ${left.pid} of ${shortRunId(left.runId)} from the hub before ${reaped.process}`,
+                    ...Option.toArray(
+                      Option.liftPredicate(
+                        "; its journal couldn't be read",
+                        () => !reaped.journalRead,
+                      ),
+                    ),
+                  ].join(""),
+                ),
+              ),
+              Effect.map((reaped) => Option.liftPredicate(left.runId, () => !reaped.journalRead)),
+            ),
+          { concurrency: 8 },
+        )).flatMap(Option.toArray),
+      );
+
       // Runs in flight that started under an SDK this binary doesn't run go
       // to a person, released as a cancel releases them, rather than resume.
       for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
@@ -713,21 +972,79 @@ export const runDaemon = Effect.gen(function* () {
         }
       }
 
-      // Starts that a crash interrupted, finished before anything ticks.
-      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
+      // Every run this hub finds running was a spoke's of the hub before it.
+      // One that hub meant an ending for (a cancel, a lost lease, a bound)
+      // ends as it meant; any other ends as interrupted, keeping what it put
+      // on its item and letting go of its claim ref, and its phase repeats in
+      // a new run once the trigger reports its item again (decision 7).
+      const meant = new Map(
+        leftSpokes.flatMap((left) =>
+          Option.toArray(Option.map(left.ending, (ending) => [left.runId, ending] as const)),
+        ),
+      );
 
-      for (const run of recovered.executed) {
-        yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
-      }
+      const leftRunning = yield* RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun));
 
-      for (const run of recovered.abandoned) {
-        yield* log(
-          `ended ${run.id} (${runLabel(run)}): a crash interrupted its start, and it kept no work item to start it from`,
+      for (const run of leftRunning.runs) {
+        const lost = Option.match(
+          Option.liftPredicate(run.id, (id) => unreadable.has(id)),
+          { onNone: () => "", onSome: () => `; ${UNREADABLE_JOURNAL}` },
+        );
+
+        // A run nobody meant an ending for closes its agent's sessions: the
+        // spoke that owned them is dead, so nobody watches them, and the run
+        // that repeats the phase would work beside them (#665). A session a
+        // person works in stays open.
+        const request = Option.getOrElse(Option.fromUndefinedOr(meant.get(run.id)), () => ({
+          by: "chernabog",
+          closeSessions: true,
+          endAs: Option.some({ ending: "interrupted" as const, reason: INTERRUPTED_REASON }),
+        }));
+
+        const endAs = Option.map(request.endAs, (as) => ({ ...as, reason: `${as.reason}${lost}` }));
+        const ending = endingOf(request);
+
+        yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: request.by,
+            closeSessions: request.closeSessions,
+            // A person's own cancel, meant before the hub stopped, closes what
+            // it asked to.
+            sparePersonSessions: !meant.has(run.id),
+            endAs,
+          }),
+        ).pipe(
+          Effect.map((done) =>
+            [
+              `ended ${run.id} (${runLabel(run)}) as ${ending}: ${Option.getOrElse(done.run.summary, () => ending)}`,
+              ...done.closedSessions.map(
+                (session) => `closed its ${session.launcher} session ${session.handle}`,
+              ),
+              ...done.leftForPerson,
+            ].join("; "),
+          ),
+          Effect.catch((error) =>
+            Effect.succeed(
+              `could not end ${run.id} (${runLabel(run)}) as ${ending}: ${error.message}`,
+            ),
+          ),
+          Effect.flatMap(log),
         );
       }
 
-      for (const run of recovered.left) {
-        yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
+      // Their records are done with: a run ended above forgot its own as it
+      // ended; one that had ended before is forgotten here.
+      for (const left of leftSpokes) {
+        yield* forgetSpoke(left.runId);
+      }
+
+      // The journals of runs that have ended, which a crash left before their
+      // ending's reaction deleted them.
+      const swept = yield* (yield* RunFlowsCommands).SweepJournalsCommand();
+
+      for (const runId of swept.swept) {
+        yield* log(`deleted the journal of ${runId}, which had ended`);
       }
 
       const reloadPending = yield* Ref.make(false);
@@ -768,16 +1085,20 @@ export const runDaemon = Effect.gen(function* () {
       const checkFailures = new Map<string, CheckFailures>();
 
       // Ends a run whose work item went as superseded, released as a cancel
-      // releases it; its agent sessions stay open.
+      // releases it; its agent sessions stay open. What its spoke has
+      // reported is folded first, so its ending names the step it was in.
       const supersede = (run: ActiveRun, reason: string) =>
-        RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "superseded", reason }),
-          }),
-        ).pipe(
+        spokes.fold(run.id).pipe(
+          Effect.andThen(
+            RunFlowsCommands.use((runs) =>
+              runs.CancelRunCommand({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "chernabog",
+                closeSessions: false,
+                endAs: Option.some({ ending: "superseded", reason }),
+              }),
+            ),
+          ),
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -814,16 +1135,20 @@ export const runDaemon = Effect.gen(function* () {
       const leasesRenewed = new Map<string, DateTime.Utc>();
 
       // Ends a run whose lease someone else took over as lost. What it left on
-      // the item, worktree included, stays for whoever took it over.
+      // the item, worktree included, stays for whoever took it over. What its
+      // spoke has reported is folded first.
       const loseRun = (run: ActiveRun, reason: string) =>
-        RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "lost", reason }),
-          }),
-        ).pipe(
+        spokes.fold(run.id).pipe(
+          Effect.andThen(
+            RunFlowsCommands.use((runs) =>
+              runs.CancelRunCommand({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "chernabog",
+                closeSessions: false,
+                endAs: Option.some({ ending: "lost", reason }),
+              }),
+            ),
+          ),
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -848,6 +1173,12 @@ export const runDaemon = Effect.gen(function* () {
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
+          // What its spoke has reported is folded first, so the claims checked
+          // are the ones it holds: a claim it took since the last fold, and
+          // another run took over, is lost, not missing (the item then reads
+          // as gone, and the run would be superseded instead).
+          yield* spokes.fold(run.id);
+
           const found = yield* (yield* RunFlowsCommands).CheckRunLeasesCommand({
             runId: run.id,
             renew,
@@ -905,7 +1236,11 @@ export const runDaemon = Effect.gen(function* () {
       // the item stays for that run; its claim ref goes, so that run may be
       // anywhere.
       const endParked = Effect.gen(function* () {
-        for (const run of (yield* active).filter((found) => found.parked)) {
+        // A spoke's park ends its run once the spoke has exited, from what it
+        // reported: only a run with no live spoke is ended here.
+        for (const run of (yield* active).filter(
+          (found) => found.parked && !spokes.has(found.id),
+        )) {
           yield* RunFlowsCommands.use((runs) =>
             runs.CancelRunCommand({
               target: CancelTarget.cases.ById.make({ asked: run.id }),
@@ -990,42 +1325,6 @@ export const runDaemon = Effect.gen(function* () {
           return !isGone(found);
         });
 
-      // The signalled items whose parked run still has its work item: a run
-      // whose item went ends as superseded instead of waking.
-      const stillWaking = <Item extends WakingItem>(
-        ref: { readonly repo: string; readonly flow: string; readonly persona: Persona },
-        items: ReadonlyArray<Item>,
-      ) =>
-        Effect.gen(function* () {
-          const parked = (yield* active).filter(
-            (run) =>
-              run.parked &&
-              run.repo === ref.repo &&
-              run.flow === ref.flow &&
-              samePersona(run.persona, ref.persona),
-          );
-
-          const waking: Array<Item> = [];
-
-          for (const item of items) {
-            const waiting = Option.filter(
-              Arr.findFirst(parked, (run) => run.itemKey === item.key),
-              () => (item.signals ?? []).length > 0,
-            );
-
-            const carriesOn = yield* Option.match(waiting, {
-              onNone: () => Effect.succeed(true),
-              onSome: checkRun,
-            });
-
-            if (carriesOn) {
-              waking.push(item);
-            }
-          }
-
-          return waking;
-        });
-
       const tick = (repo: RepoState, schedule: FlowSchedule, options: TickOptions) =>
         Effect.gen(function* () {
           const { handle, own: settings, persona } = schedule;
@@ -1033,6 +1332,12 @@ export const runDaemon = Effect.gen(function* () {
 
           if (yield* Ref.get(draining)) {
             return { started: [], skipped: Option.some(DRAINING) } satisfies TickResult;
+          }
+
+          // A reload restarts the hub once no spoke is live, so it starts no
+          // new one meanwhile (ADR 23, decision 7).
+          if (yield* Ref.get(reloadPending)) {
+            return { started: [], skipped: Option.some(RELOADING) } satisfies TickResult;
           }
 
           // Not knowing whether a repo is paused starts nothing in it.
@@ -1088,11 +1393,6 @@ export const runDaemon = Effect.gen(function* () {
             schedule.waiting = routed.waiting;
           }
 
-          yield* (yield* RunFlowsCommands).DeliverSignalsCommand({
-            flow: ref,
-            items: yield* stillWaking(ref, plan.signalled),
-          });
-
           const started: Array<RunView> = [];
           let skipped = plan.skipped;
 
@@ -1114,12 +1414,41 @@ export const runDaemon = Effect.gen(function* () {
               break;
             }
 
-            const outcome = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+            // Recorded, with its execution attached, before its spoke is
+            // spawned: only the tick that recorded it starts one (ADR 23,
+            // decision 2), and a crash between leaves a run the next hub
+            // ends as interrupted.
+            const outcome = yield* (yield* RunFlowsCommands).StartSpokeRunCommand({
               flow: ref,
               item,
             });
 
             for (const run of Option.toArray(Option.filter(outcome.run, () => outcome.started))) {
+              const handedOver = yield* spokes
+                .start({
+                  runId: run.id,
+                  run,
+                  repo: repo.name,
+                  checkout: repo.enrolled.path,
+                  flow: handle.name,
+                  persona,
+                  item,
+                  tree: repo.tree,
+                })
+                .pipe(Effect.result);
+
+              if (Result.isFailure(handedOver)) {
+                yield* log(`could not start ${run.id} (${runLabel(run)}): ${handedOver.failure}`);
+                yield* RunsCommands.use((runs) =>
+                  runs.FinishRunCommand({
+                    runId: run.id,
+                    status: "failed",
+                    summary: handedOver.failure,
+                  }),
+                ).pipe(Effect.ignore);
+                continue;
+              }
+
               yield* log(`started ${run.id} (${runLabel(run)})`);
               started.push(run);
             }
@@ -1171,20 +1500,6 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // Polls running workflows and records the ones that finished. What the
-      // daemon does when one has is subscribeRunEndings', above.
-      yield* Effect.forkScoped(
-        Effect.forever(
-          Effect.gen(function* () {
-            for (const running of yield* active) {
-              yield* (yield* RunFlowsCommands).PollRunCommand({ runId: running.id });
-            }
-
-            yield* Effect.sleep("3 seconds");
-          }),
-        ),
-      );
-
       // The sweep behind the markers' release on RunFinished
       // (release-run-markers), logged as that is: tries releases that failed
       // again once their backoff is up, and releases what an ending left
@@ -1213,7 +1528,7 @@ export const runDaemon = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* wake.close;
             const now = yield* DateTime.now;
-            const ticking = !(yield* Ref.get(draining));
+            const ticking = !(yield* Ref.get(draining)) && !(yield* Ref.get(reloadPending));
 
             for (const repo of repos.filter(() => ticking)) {
               const ready = runnable(repo);
@@ -1656,7 +1971,7 @@ export const runDaemon = Effect.gen(function* () {
 
           yield* reloading(draining, "draining");
           yield* log(
-            `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (runs parked on a signal resume after)`,
+            `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (a run that parks ends at its park, and a later run takes its item up)`,
           );
         }
       });
@@ -1680,18 +1995,20 @@ export const runDaemon = Effect.gen(function* () {
             yield* Effect.sleep("2 seconds");
 
             // Draining waits on whole runs, not steps: one restarted between two
-            // steps would resume under the new binary.
+            // steps would resume under the new binary. A run that parked still
+            // has its spoke until the spoke has exited and the hub has ended
+            // the run at its park, so the drain waits for no live spoke too.
             if (yield* Ref.get(draining)) {
               const executing = (yield* active).filter((run) => !run.parked);
 
-              if (executing.length === 0) {
+              if (executing.length === 0 && (yield* spokes.live) === 0) {
                 yield* Deferred.succeed(reloaded, true);
               }
 
               return;
             }
 
-            if ((yield* Ref.get(reloadPending)) && (yield* Ref.get(busy)) === 0) {
+            if ((yield* Ref.get(reloadPending)) && (yield* spokes.live) === 0) {
               yield* Deferred.succeed(reloaded, true);
             }
           }),
@@ -1808,7 +2125,7 @@ export const runDaemon = Effect.gen(function* () {
         return {
           pid: process.pid,
           startedAt: DateTime.formatIso(startedAt),
-          busy: yield* Ref.get(busy),
+          busy: yield* spokes.live,
           reloadPending: yield* Ref.get(reloadPending),
           draining: yield* Ref.get(draining),
           repos: repos.map(

@@ -15,7 +15,6 @@ import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import review from "../packages/recipes/flows/review.ts";
-import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
@@ -63,7 +62,6 @@ import {
   type Scenario,
   stageElsewhere,
   stageSkipping,
-  type StopsAt,
   throughStage,
 } from "./compose-scenarios.ts";
 import { effect } from "./effect-test.ts";
@@ -163,20 +161,11 @@ const dropping =
   (source: string) =>
     source.replaceAll(new RegExp(`const ${id} = yield\\* [^\\n]*`, "g"), standIn);
 
-// Whether the run has parked on anything: where a sabotaged flow that waits
-// on a signal its scenario never gives is followed to, rather than for ever.
-const parkedAnywhere: StopsAt = (run) =>
-  Effect.map(
-    readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie),
-    ({ waits }) => waits.length > 0,
-  );
-
 const sabotaged = (
   title: string,
   target: Target,
   scenarioTitle: string,
   sabotage: (source: string) => string,
-  stopsAt?: StopsAt,
 ) => {
   effect(
     title,
@@ -200,16 +189,7 @@ const sabotaged = (
           settings,
         );
 
-        const fromFlow = yield* observe(
-          flow,
-          target.name,
-          setup,
-          target.work,
-          wake,
-          settings,
-          void 0,
-          stopsAt,
-        );
+        const fromFlow = yield* observe(flow, target.name, setup, target.work, wake, settings);
 
         expect(fromFlow).not.toEqual(fromRecipe);
       }),
@@ -807,14 +787,8 @@ describe("the comparison sees a plan flow that", () => {
     source.replaceAll('"changes": asked.changes', '"changes": Option.none()'),
   );
 
-  // The recipe ends at the questions; the sabotaged flow posts the plan and
-  // waits for a person's approval, which this scenario never gives.
-  sabotaged(
-    "posts a plan it has questions about",
-    target,
-    questions,
-    (source) => notTaking("plan.draft", "needs-clarification")(source),
-    parkedAnywhere,
+  sabotaged("posts a plan it has questions about", target, questions, (source) =>
+    notTaking("plan.draft", "needs-clarification")(source),
   );
 
   sabotaged(

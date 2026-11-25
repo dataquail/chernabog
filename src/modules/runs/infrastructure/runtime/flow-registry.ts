@@ -13,18 +13,21 @@ import * as Schema from "effect/Schema";
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { flowPlanOf } from "../../../../platform/flow-loader.ts";
 import { FlowPlan } from "../../domain/plan/flow-plan.value-object.ts";
+import { type RunSpokesClientService } from "../../domain/ports/clients/run-spokes.client.ts";
 import { type FlowRef } from "../../domain/run/work-item.value-object.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "./engine.ts";
 
 // The flows a process loaded, and the services each persona's runs of them
 // use, which fail with the setup error that stops the persona acting: none
-// for a persona the repo no longer has.
+// for a persona the repo no longer has. A hub adds the spokes its runs
+// execute in (ADR 23); any other process has none.
 export type FlowRegistry = {
   readonly handles: ReadonlyArray<FlowHandle>;
   readonly services: (
     repo: string,
     persona: Persona,
   ) => Option.Option<Effect.Effect<Context.Context<TriggerServices>, SetupError>>;
+  readonly spokes?: RunSpokesClientService;
 };
 
 // The registry's handle for a flow, if it loaded it.

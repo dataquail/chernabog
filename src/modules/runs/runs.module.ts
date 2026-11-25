@@ -1,14 +1,16 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { Exec } from "../../platform/exec.ts";
 import { GitHubApi } from "../../platform/github-api.ts";
-import { UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
+import { runnerOf, UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
 import { RunTriggersLive } from "./event-handlers/triggers/run.triggers.ts";
 import { FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
 import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
+import { RunSpokesClientLive } from "./infrastructure/clients/run-spokes.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
 import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.repository-live.ts";
 import { RunCreatedIssuesRepositoryLive } from "./infrastructure/repositories/run-created-issues.repository-live.ts";
@@ -16,6 +18,7 @@ import { RunLanesRepositoryLive } from "./infrastructure/repositories/run-lanes.
 import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
 import { RunNodesRepositoryLive } from "./infrastructure/repositories/run-nodes.repository-live.ts";
 import { RunPlansRepositoryLive } from "./infrastructure/repositories/run-plans.repository-live.ts";
+import { RunSpokesRepositoryLive } from "./infrastructure/repositories/run-spokes.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
@@ -55,6 +58,7 @@ const RunsStoresLive = Layer.mergeAll(
   RunMarkersRepositoryLive,
   RunNodesRepositoryLive,
   RunPlansRepositoryLive,
+  RunSpokesRepositoryLive,
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,
@@ -103,21 +107,30 @@ export const RunsModule = {
   events: RunTriggersLive.pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunsUnitOfWorkLive))),
 
   // The runtime a tick and a run drive: the flows a process loaded, with each
-  // persona's services, their workflows in the engine it runs, and cleaning up
-  // after a run that's cancelled. Which flows those are is the composition
-  // root's (the daemon's, a foreground run's, a rehearsal's, a cancel's), so
-  // each root passes its registry, and provides this beneath `engine`.
+  // persona's services, their workflows in the engine it runs, cleaning up
+  // after a run that's cancelled, and, in a hub, the spokes its runs execute
+  // in. Which flows those are is the composition root's (the daemon's, a
+  // foreground run's, a rehearsal's, a cancel's), so each root passes its
+  // registry, and provides this beneath `engine`.
   runtime: (registry: FlowRegistry) =>
     Layer.mergeAll(
       FlowsClientLive(registry),
       WorkflowsClientLive(registry.handles),
       RunCleanupClientLive(registry.services).pipe(Layer.provide(Exec.layer)),
+      RunSpokesClientLive(Option.fromUndefinedOr(registry.spokes)),
     ).pipe(Layer.provide(RunsRepositoryLive)),
 
   // The unit of work the runs' commands declare, for a test that drives their
   // handlers itself beside the module (test/sdk-fakes.ts's StateAt): the same
   // Layer value, so Effect builds it once.
   unitOfWork: RunsUnitOfWorkLive,
+
+  // Runs an effect in one unit of work over state.db, which each of the runs'
+  // commands it dispatches joins: for a composition root that must commit
+  // two of them together, as a hub folds a spoke's report with the fold
+  // position past it (ADR 23, decision 3). Over the SQL client the root
+  // holds state.db with.
+  inOneUnitOfWork: runnerOf(RunsUnitOfWorkLive),
 
   // The module's slice of the application's buses: the groups `layer`'s
   // dispatchers answer, and those dispatchers, as the tables a bus routes by;

@@ -25,8 +25,8 @@ import { type PlanTickPayload } from "./plan-tick.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
-// transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0010-commands-declare-their-unit-of-work.md).
+// transaction holds state.db's one connection, which the runs' steps
+// wait on (docs/adr/0010-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -47,7 +47,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
   const flows = yield* FlowsClient;
   const skips = yield* SkipsRepository;
 
-  const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed">) =>
+  const skip = (reason: string, plan: Pick<TickPlan, "routed">) =>
     Effect.gen(function* () {
       yield* skips.insertOne(
         SkipRoot.make({
@@ -67,11 +67,11 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
     const decision = decideTick({ ...input.conditions, now: yield* DateTime.now });
 
     if (!decision.go) {
-      return yield* skip(decision.reason, { signalled: [], routed: Option.none() });
+      return yield* skip(decision.reason, { routed: Option.none() });
     }
   }
 
-  const nothing = { signalled: [], routed: Option.none() };
+  const nothing = { routed: Option.none() };
 
   // A persona that can't run its flows says why itself, fix included.
   const failedReason = (what: string, failure: FlowFailed | PersonaNotReady) => {
@@ -154,7 +154,6 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
   const elsewhere = routed.elsewhere.map(Routing.describeElsewhere);
 
   const so = {
-    signalled: items,
     routed: Option.some({
       queued: routed.mine.map(describeQueued),
       elsewhere,

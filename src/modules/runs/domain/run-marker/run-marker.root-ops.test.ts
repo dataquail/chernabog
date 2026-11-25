@@ -52,6 +52,22 @@ describe("RunMarkerRootOps", () => {
     expect(RunMarkerRootOps.keptOn(marker, "failed")).toBe(false);
   });
 
+  test("an interruption keeps every marker but the one that queues its issue again", () => {
+    const label = RunMarkerRootOps.hold(holding(), AT);
+
+    const requeue = RunMarkerRootOps.hold(
+      { ...holding({ number: 12, label: "auto:eligible" }), name: "chernabog/requeue" },
+      AT,
+    );
+
+    expect(RunMarkerRootOps.keptOn(label, "interrupted")).toBe(true);
+    expect(RunMarkerRootOps.keptOn(requeue, "interrupted")).toBe(false);
+
+    for (const ending of ["done", "failed", "needs-human", "cancelled", "lost", "ended-at-park"]) {
+      expect(RunMarkerRootOps.keptOn(requeue, ending)).toBe(true);
+    }
+  });
+
   test("a release that fails is tried again after a backoff that doubles, up to an hour", () => {
     const once = RunMarkerRootOps.failed(RunMarkerRootOps.hold(holding(), AT), "boom", NOW);
 
