@@ -1,6 +1,7 @@
 // A test is an Effect: scoped, on the real clock, with Bun's platform services.
 
 import { BunServices } from "@effect/platform-bun";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,10 +16,17 @@ import { Home } from "../src/platform/home.ts";
 // its 5s on a busy machine. A test that names its own timeout keeps it.
 const TIMEOUT_MS = 15_000;
 
+// The timeout of the test an effect runs in, in milliseconds, for a wait in it
+// (runUntil's) to fail with what it saw just before Bun's timeout would fail
+// it with nothing: Bun doesn't interrupt the effect, which would poll on.
+export const TestTimeout = Context.Reference<number>("chernabog/test/TestTimeout", {
+  defaultValue: () => TIMEOUT_MS,
+});
+
 const withTimeout =
   <R>(test: <E>(name: string, fn: () => Effect.Effect<void, E, R>, timeout?: number) => void) =>
   <E>(name: string, fn: () => Effect.Effect<void, E, R>, timeout = TIMEOUT_MS) => {
-    test(name, fn, timeout);
+    test(name, () => Effect.provideService(fn(), TestTimeout, timeout), timeout);
   };
 
 export const effect = withTimeout(it.scopedLive.layer(BunServices.layer));

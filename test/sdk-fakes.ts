@@ -55,6 +55,7 @@ import { makeEventBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -107,6 +108,7 @@ import {
 } from "../src/modules/runs/runs.platform.ts";
 import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
+import { TestTimeout } from "./effect-test.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
 import { wakeParkedRuns } from "./wake-signals.ts";
 
@@ -1656,10 +1658,26 @@ const quietLog = Layer.succeed(
   }),
 );
 
-// Starts a run of the flow on the fake, and polls until `until` says it has got far enough,
-// at most `polls` times, 25ms apart: about five seconds, unless a slower case asks for more.
-// A run that never gets there fails the test, rather than handing back wherever it had got
-// to: a case that waited out the polls would pass on a run that stopped short.
+// How long before the test's timeout runUntil gives up, to say why first.
+const RUN_UNTIL_MARGIN_MS = 1_000;
+
+// Why runUntil gave up: the run as it last stood, for a test that would
+// otherwise only say it timed out.
+const notThereYet = (handle: FlowHandle, work: WorkItem, last: Option.Option<EngineRun>) =>
+  Option.match(last, {
+    onNone: () => `runUntil: the ${handle.name} run on ${work.key} never started`,
+    onSome: (run) =>
+      `runUntil: the ${handle.name} run on ${work.key} never got as far as the test waits for: ` +
+      `it is ${run.status}, at step ${Option.getOrElse(run.currentStep, () => "none")}, ` +
+      `summary ${Option.getOrElse(run.summary, () => "none")}`,
+  });
+
+// Starts a run of the flow on the fake, and polls it 25ms apart until `until` says it has
+// got far enough or it ended, and fails the test if it ended short of it, rather than handing
+// back wherever it had got to. No count of polls bounds it: a count is a wall-clock budget
+// that a loaded machine runs past, and it handed back a run still on its way as if it had
+// got there. The test's own timeout bounds it instead: a second before it, the wait fails
+// with the run as it last stood.
 export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
@@ -1667,7 +1685,6 @@ export const runUntil = (
   until: (
     run: EngineRun,
   ) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>,
-  polls = 200,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1690,18 +1707,29 @@ export const runUntil = (
       ),
     );
 
+    const timeout = yield* TestTimeout;
+    let last = Option.none<EngineRun>();
+
     const run = startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
       Effect.flatMap((started) =>
         pollRun(started).pipe(
+          Effect.tap((polled) =>
+            Effect.sync(() => {
+              last = Option.some(polled);
+            }),
+          ),
           Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
-            until: (step) => step.done,
-            times: polls,
+            until: (step) => step.done || !isRunning(step.polled),
           }),
         ),
       ),
+      Effect.timeoutOrElse({
+        duration: Duration.millis(Math.max(0, timeout - RUN_UNTIL_MARGIN_MS)),
+        orElse: () => Effect.die(new Error(notThereYet(handle, work, last))),
+      }),
       Effect.flatMap((step) =>
         Effect.gen(function* () {
           if (step.done) {
@@ -1719,7 +1747,7 @@ export const runUntil = (
           );
 
           return yield* Effect.die(
-            `runUntil: the run of ${handle.name} never got where the case waits for, in ${polls} polls; it is ${step.polled.status}, waiting on ${on}`,
+            `runUntil: the run of ${handle.name} never got where the case waits for; it is ${step.polled.status}, waiting on ${on}`,
           );
         }),
       ),

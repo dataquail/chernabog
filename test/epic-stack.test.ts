@@ -58,10 +58,6 @@ const SLUG = "dataquail/demo";
 // takes about five seconds alone: more than bun's default timeout.
 const STACK_TIMEOUT = 30_000;
 
-// Polling for the next park goes on as long as the case may run, rather than
-// runUntil's five seconds, which a busy machine's git outlasts.
-const STACK_POLLS = STACK_TIMEOUT / 25;
-
 // git runs for real.
 const atHome = effectAtHomeWith(Exec.layer);
 
@@ -343,7 +339,6 @@ const startEpic = (
 
               return false;
             }),
-          STACK_POLLS,
         );
 
         return { run, parks };
@@ -722,7 +717,6 @@ const mergedBelow = ({ refuseRetry = false, when, work }: MergedBelow) =>
         Effect.succeed(
           current.status !== "running" || Option.isSome(opened()) || Option.isSome(toPerson()),
         ),
-      STACK_POLLS,
     );
 
     expect(run.status).toBe("running");

@@ -370,7 +370,8 @@ for (const [form, loading] of forms) {
               polls += 1;
               parked = yield* parkedOnCi(polled);
 
-              return parked || polls >= 20;
+              // It may also end, handing the pull request to a person.
+              return parked || polls >= 20 || polled.status !== "running";
             }),
           );
 
