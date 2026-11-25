@@ -67,7 +67,7 @@ import { viewerAs, viewerLoginAs } from "../../platform/github-api.ts";
 import { GH_TOKEN_CREDENTIAL_HELPER } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
-import { stopWhenStdinCloses } from "../../platform/shutdown.ts";
+import { killGroupOnStop, stopWhenStdinCloses } from "../../platform/shutdown.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import { followOwnRun, startOwnRun } from "./own-hub.main.ts";
 import { tailer } from "./run.main.ts";
@@ -814,6 +814,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     const stopAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(options.stopAfter);
 
     if (spoke) {
+      yield* killGroupOnStop();
       yield* stopWhenStdinCloses();
     } else {
       yield* prepareHome(options);

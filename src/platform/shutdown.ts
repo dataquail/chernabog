@@ -108,20 +108,14 @@ const processStdin: StdinHost = {
     };
   },
   // A spoke leads its own process group (ADR 23, decision 1): it stops it
-  // all as its hub's stop would, SIGTERM to the group, and on its way out
-  // SIGKILLs what's left of it but itself, so nothing it started (an agent,
-  // git, a local gate) outlives it once its hub has gone, and it exits as a
-  // stop does. A process that leads no group stops itself alone.
+  // all as its hub's stop would, SIGTERM to the group, itself included, and
+  // `killGroupOnStop` SIGKILLs what's left on its way out. A process that
+  // leads no group stops itself alone.
   stop: () => {
     Effect.runSync(
       Effect.try(() => process.kill(-process.pid, "SIGTERM")).pipe(
-        Effect.match({
-          onFailure: () => process.kill(process.pid, "SIGTERM"),
-          onSuccess: () =>
-            process.once("exit", () => {
-              killGroupBut(process.pid);
-            }),
-        }),
+        Effect.catch(() => Effect.sync(() => process.kill(process.pid, "SIGTERM"))),
+        Effect.asVoid,
       ),
     );
   },
@@ -142,6 +136,60 @@ export const stopWhenStdinCloses = (host: StdinHost = processStdin) =>
           host.stop();
         }
       });
+    }),
+    (unwatch) => Effect.sync(unwatch),
+  );
+
+// The parts of the process a stop of its whole group uses, so a test can
+// stand in: its signals, running `sweep` as it exits, and SIGKILLing what's
+// left of the group it leads but itself.
+export type GroupStopHost = {
+  readonly on: (signal: Signal, listener: () => void) => void;
+  readonly off: (signal: Signal, listener: () => void) => void;
+  readonly atExit: (sweep: () => void) => void;
+  readonly sweep: () => void;
+};
+
+const processGroup: GroupStopHost = {
+  on: processHost.on,
+  off: processHost.off,
+  atExit: (sweep) => {
+    process.once("exit", sweep);
+  },
+  sweep: () => {
+    killGroupBut(process.pid);
+  },
+};
+
+// Once the process is stopped by SIGINT or SIGTERM, for as long as the scope
+// lasts, SIGKILLs what's left of the process group it leads as it exits. A
+// spoke stops on its hub's SIGTERM to its group (a stop, a cancel, a bound,
+// its stdin closing), and anything it started that ignores SIGTERM (an
+// agent, git, a local gate's command) would otherwise outlive it, unwatched
+// by any hub. A process that leads no group has nothing left to sweep.
+export const killGroupOnStop = (host: GroupStopHost = processGroup) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      let armed = false;
+
+      const listener = () => {
+        if (!armed) {
+          armed = true;
+          host.atExit(host.sweep);
+        }
+      };
+
+      const signals = ["SIGINT", "SIGTERM"] as const;
+
+      for (const signal of signals) {
+        host.on(signal, listener);
+      }
+
+      return () => {
+        for (const signal of signals) {
+          host.off(signal, listener);
+        }
+      };
     }),
     (unwatch) => Effect.sync(unwatch),
   );

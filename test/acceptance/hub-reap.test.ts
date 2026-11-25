@@ -334,4 +334,45 @@ describe("a hub killed while its spokes run", () => {
     expect(alive(spoke)).toBe(false);
     expect(existsSync(journalOf(runId))).toBe(false);
   }, 180_000);
+
+  test("a cancelled run's spoke leaves no child behind, even one that ignores SIGTERM", async () => {
+    const issue = sandbox.github.addIssue("orphan a child, then cancel", ["reap"]);
+    const runId = await inStep(issue, "hold");
+    const spoke = Option.getOrThrow(Arr.head(ranIn(issue))).pid;
+    const child = childOf(issue);
+    unlabel(issue);
+
+    expect([alive(spoke), alive(child)]).toEqual([true, true]);
+
+    // The spoke stops on the hub's SIGTERM, well within the grace, and
+    // SIGKILLs what's left of its group on its way out.
+    expect(await sandbox.runCli(["cancel", runId.slice(0, 8)])).toMatchObject({ code: 0 });
+    expect(alive(spoke)).toBe(false);
+    await waitFor(() => !alive(child), "the spoke's child to end", 5_000);
+  }, 120_000);
+
+  test("a hub that stops on SIGTERM leaves no child of a spoke behind, even one that ignores SIGTERM", async () => {
+    const orphan = sandbox.github.addIssue("orphan a child, then stop", ["reap"]);
+    const runId = await inStep(orphan, "hold");
+    const spoke = Option.getOrThrow(Arr.head(ranIn(orphan))).pid;
+    const child = childOf(orphan);
+
+    expect([alive(spoke), alive(child)]).toEqual([true, true]);
+
+    await stopDaemon();
+
+    // The hub SIGTERMs the spoke's group and waits for none of it; the spoke
+    // stops, and SIGKILLs what's left of its group on its way out.
+    await waitFor(() => !alive(spoke) && !alive(child), "the spoke and its child to end", 30_000);
+
+    await startDaemon();
+
+    // The next hub ends the run as interrupted, and a new run takes it up.
+    await waitFor(
+      () => finished(orphan).some((run) => run.status === "done"),
+      "a new run to finish the item",
+      120_000,
+    );
+    expect(Arr.head(finished(orphan))).toEqual(Option.some({ runId, status: "interrupted" }));
+  }, 240_000);
 });
