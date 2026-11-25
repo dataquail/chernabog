@@ -70,6 +70,8 @@ const ids = (runs: ReadonlyArray<{ readonly id: RunId }>) => runs.map((found) =>
 describe("recoverRunsHandler", () => {
   const engine = fakeEngine();
   engine.unloaded.push("demo/elsewhere");
+  // The run that had started kept its journal.
+  engine.journals.push(RunId.make("started"));
 
   effect(
     "executes a run a crash left without a workflow, ends one with no item, and leaves one it can't run",
@@ -84,6 +86,8 @@ describe("recoverRunsHandler", () => {
         expect(ids(recovered.abandoned)).toEqual(["legacy"]);
         expect(ids(recovered.left)).toEqual(["elsewhere"]);
         expect(engine.executed.map(String)).toEqual(["kept"]);
+        expect(ids(recovered.resumed)).toEqual(["started"]);
+        expect(engine.resumed).toEqual(["execution-started"]);
 
         const legacy = Option.getOrThrow(
           (yield* findRunHandler({ runId: RunId.make("legacy") })).run,
@@ -119,4 +123,66 @@ describe("recoverRunsHandler", () => {
         ),
       ),
   );
+
+  effect(
+    "starts again from its item a running run whose journal is gone, and ends one with no item",
+    () => {
+      const restarted = fakeEngine();
+
+      return Effect.gen(function* () {
+        const recovered = yield* recoverRunsHandler();
+
+        expect(ids(recovered.repeated)).toEqual(["item"]);
+        expect(restarted.executed.map(String)).toEqual(["item"]);
+        expect(ids(recovered.abandoned)).toEqual(["no-item"]);
+
+        const ended = Option.getOrThrow(
+          (yield* findRunHandler({ runId: RunId.make("no-item") })).run,
+        );
+
+        expect([ended.status, ended.summary]).toEqual([
+          "failed",
+          Option.some(
+            "its journal was gone after a restart, and it kept no work item to start it from",
+          ),
+        ]);
+        expect((yield* DispatchedEvents).map((event) => event.eventId)).toEqual([
+          "no-item:finished",
+        ]);
+      }).pipe(
+        Effect.provide(
+          runtime(restarted, {
+            runs: [
+              run("item", { item: Option.some(item("pr-1")) }),
+              run("no-item", { itemKey: "pr-2" }),
+            ],
+          }),
+        ),
+      );
+    },
+  );
+
+  effect("deletes the journals of runs that aren't running, and keeps a running run's", () => {
+    const swept = fakeEngine();
+    swept.journals.push(RunId.make("live"), RunId.make("done"), RunId.make("unknown"));
+
+    return Effect.gen(function* () {
+      const recovered = yield* recoverRunsHandler();
+
+      expect(recovered.swept).toEqual(["done", "unknown"]);
+      expect(swept.discarded.map(String)).toEqual(["done", "unknown"]);
+      expect(swept.journals.map(String)).toEqual(["live"]);
+      expect(ids(recovered.resumed)).toEqual(["live"]);
+      expect((yield* recoverRunsHandler()).swept).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        runtime(swept, {
+          runs: [
+            run("live"),
+            run("done", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00.000Z") }),
+          ],
+        }),
+      ),
+    );
+  });
 });

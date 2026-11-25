@@ -22,6 +22,10 @@ export type FakeEngine = {
   readonly notes: Array<string>;
   readonly outcomes: Record<string, WorkflowOutcome>;
   readonly unloaded: Array<string>;
+  // The runs with a journal, which executing makes and discarding deletes,
+  // and those discarded, in order.
+  readonly journals: Array<RunId>;
+  readonly discarded: Array<RunId>;
 };
 
 export const fakeEngine = (): FakeEngine => ({
@@ -32,6 +36,8 @@ export const fakeEngine = (): FakeEngine => ({
   notes: [],
   outcomes: {},
   unloaded: [],
+  journals: [],
+  discarded: [],
 });
 
 // The core the fake engine's workflows run under.
@@ -52,17 +58,33 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
         Effect.sync(() => {
           engine.executed.push(runId);
 
+          if (!engine.journals.includes(runId)) {
+            engine.journals.push(runId);
+          }
+
           return `execution-${runId}`;
         }),
       poll: (_flow, executionId) => Effect.sync(() => Record.get(engine.outcomes, executionId)),
-      resume: (_flow, executionId) =>
+      resume: (_flow, runId, executionId) =>
         Effect.sync(() => {
           engine.resumed.push(executionId);
+
+          return engine.journals.includes(runId);
         }),
       interrupt: (_flow, executionId) =>
         Effect.sync(() => {
           engine.interrupted.push(executionId);
         }),
+      discard: (runId) =>
+        Effect.sync(() => {
+          const at = engine.journals.indexOf(runId);
+
+          if (at >= 0) {
+            engine.journals.splice(at, 1);
+            engine.discarded.push(runId);
+          }
+        }),
+      journals: Effect.sync(() => [...engine.journals]),
       wake: (deferred) =>
         Effect.sync(() => {
           engine.woken.push(deferred);

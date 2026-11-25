@@ -730,6 +730,19 @@ export const runDaemon = Effect.gen(function* () {
         yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
       }
 
+      // Transitional, until reaping (#664): a restart's runs go on from their journals.
+      for (const run of recovered.resumed) {
+        yield* log(`resumed ${run.id} (${runLabel(run)}) from its journal`);
+      }
+
+      for (const run of recovered.repeated) {
+        yield* log(`started ${run.id} (${runLabel(run)}) again: its journal was gone`);
+      }
+
+      for (const runId of recovered.swept) {
+        yield* log(`deleted the journal of ${runId}, which had ended`);
+      }
+
       const reloadPending = yield* Ref.make(false);
       // Set once chernabog's binary changes under the daemon: it starts no new
       // runs, and restarts on the new binary once none is executing.

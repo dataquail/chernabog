@@ -469,7 +469,7 @@ const runRehearsal = (
           services: (_repo, one) => servicesFrom(contexts)(one),
         },
         flows: [flowLayer(handle, servicesFrom(contexts))],
-        engine: EngineAt(`${scratch.root}/state.db`),
+        engine: EngineAt(scratch.root),
       }),
     );
 
