@@ -336,7 +336,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
-import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
 import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";

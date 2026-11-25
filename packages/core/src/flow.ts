@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -18,7 +19,7 @@ import type * as Scope from "effect/Scope";
 import * as Activity from "effect/workflow/Activity";
 import * as DurableClock from "effect/workflow/DurableClock";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
-import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
+import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import {
   AgentError,
@@ -363,6 +364,32 @@ const outcomeOfExit = <A, E>(exit: Exit.Exit<A, E>): Option.Option<StepOutcome> 
   return Option.some("failed");
 };
 
+// A step's call, which runs to its end when the run suspends around it. A
+// wake on one lane, such as its CI poll's clock, makes the engine interrupt
+// the whole run to replay it, and the interrupt would end the steps running on
+// the other lanes too: each would be recorded as suspended and start again
+// from the beginning in the replay, so a long step could never finish while a
+// sibling polls (#615). Instead the run waits for the step, and the replay
+// reads its saved result. The engine marks the run suspended before it
+// interrupts it; any other interrupt (the run stopped, its claim lost, a
+// sibling failed) still ends the step.
+const finishingThroughSuspension = <A, E, R>(call: Effect.Effect<A, E, R>) =>
+  WorkflowEngine.WorkflowInstance.use((instance) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.flatMap(Effect.forkChild(restore(call)), (fiber) =>
+        restore(Fiber.join(fiber)).pipe(
+          Effect.onInterrupt(() => {
+            if (instance.suspended) {
+              return Fiber.await(fiber);
+            }
+
+            return Fiber.interrupt(fiber);
+          }),
+        ),
+      ),
+    ),
+  );
+
 // One durable step of a workflow. It runs once; its result is saved, and a
 // replay returns the saved result. Names must be unique within a run, so a
 // step inside a loop carries its round: `fix-ci-2`. `success` is the result's
@@ -375,22 +402,24 @@ export const activity = <S extends Schema.Constraint = typeof Schema.Void, E = n
   success?: S,
 ) =>
   narrowed<E>(name)(
-    Activity.make({
-      name,
-      success,
-      error: ActivityError,
-      execute: withRunLog((log) => log.step(name)).pipe(
-        Effect.andThen(Effect.provideService(execute, CurrentActivity, Option.some(name))),
-        Effect.onExit((exit) =>
-          Option.match(outcomeOfExit(exit), {
-            onNone: () => Effect.void,
-            onSome: (outcome) => withRunLog((log) => log.stepFinished(name, outcome)),
-          }),
+    finishingThroughSuspension(
+      Activity.make({
+        name,
+        success,
+        error: ActivityError,
+        execute: withRunLog((log) => log.step(name)).pipe(
+          Effect.andThen(Effect.provideService(execute, CurrentActivity, Option.some(name))),
+          Effect.onExit((exit) =>
+            Option.match(outcomeOfExit(exit), {
+              onNone: () => Effect.void,
+              onSome: (outcome) => withRunLog((log) => log.stepFinished(name, outcome)),
+            }),
+          ),
+          Effect.ensuring(withRunLog((log) => log.stepDone(name))),
+          Effect.mapError(toActivityError(name)),
         ),
-        Effect.ensuring(withRunLog((log) => log.stepDone(name))),
-        Effect.mapError(toActivityError(name)),
-      ),
-    }),
+      }),
+    ),
   );
 
 // Runs .chernabog/stages/<name>.ts (or an executable <name>) in a child

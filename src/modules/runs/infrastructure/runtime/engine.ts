@@ -73,7 +73,7 @@ import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
-import { JournalsAt, RunJournals } from "./journals.ts";
+import { type EngineOptions, JournalsAt, RunJournals } from "./journals.ts";
 import { ProgressLive } from "./progress.ts";
 import {
   journalRecords,
@@ -93,6 +93,8 @@ import {
 import { prepareState } from "./state-stamp.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
+
+export type { EngineOptions } from "./journals.ts";
 
 // Lost: the run found, before a write, that another run took its work item over.
 export const RunResult = Schema.Struct({
@@ -132,7 +134,8 @@ export const StateDbAt = (root: string) =>
 
 // The workflow engine, journaling each run in a file of its own under `root`
 // (journals.ts), beside state.db there.
-export const EngineAt = (root: string) => Layer.merge(JournalsAt(root), StateDbAt(root));
+export const EngineAt = (root: string, options: EngineOptions = {}) =>
+  Layer.merge(JournalsAt(root, options), StateDbAt(root));
 
 // The engine under this machine's chernabog home.
 export const EngineLive = Layer.unwrap(Home.use((home) => Effect.succeed(EngineAt(home.root))));

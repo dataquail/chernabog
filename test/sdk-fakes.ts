@@ -89,6 +89,7 @@ import { RunsRepositoryLive } from "../src/modules/runs/infrastructure/repositor
 import { SkipsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/skips.repository-live.ts";
 import {
   EngineAt,
+  type EngineOptions,
   type FlowHandle,
   flowLayer,
   forEveryPersona,
@@ -1484,7 +1485,7 @@ export type EngineRun = RunView | ActiveRun;
 // The runs' stores and logs in a home's state.db, the bus their commands
 // dispatch on, the unit of work they declare, and the engine journalling
 // there: what a test that drives the runs' handlers itself reads and writes.
-export const StateAt = (home: string) =>
+export const StateAt = (home: string, engine: EngineOptions = {}) =>
   Layer.mergeAll(
     RunsRepositoryLive,
     RunCreatedIssuesRepositoryLive,
@@ -1500,7 +1501,7 @@ export const StateAt = (home: string) =>
     RunLogsClientLive,
     makeEventBus(),
     RunsModule.unitOfWork,
-  ).pipe(Layer.provideMerge(EngineAt(home)), Layer.provideMerge(Home.at(home, home)));
+  ).pipe(Layer.provideMerge(EngineAt(home, engine)), Layer.provideMerge(Home.at(home, home)));
 
 export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 
@@ -1515,6 +1516,7 @@ export const engineOver = <R>(
   servicesFor: ServicesFor<R>,
   home: string,
   onParked: OnParked = () => Effect.void,
+  engine: EngineOptions = {},
 ) =>
   Layer.mergeAll(
     applicationModules.engine,
@@ -1524,7 +1526,7 @@ export const engineOver = <R>(
     ),
   ).pipe(
     Layer.provideMerge(applicationModules.runtime(registry)),
-    Layer.provideMerge(StateAt(home)),
+    Layer.provideMerge(StateAt(home, engine)),
   );
 
 // What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.

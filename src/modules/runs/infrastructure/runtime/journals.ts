@@ -134,20 +134,31 @@ type Opened = {
 // would only hold up the run's ending.
 const TERMINATION = Duration.seconds(1);
 
+// How often a run's engine reads its journal for messages that came due,
+// such as a durable clock's: the cluster's own default unless a test, which
+// can't wait that long for a clock, says otherwise.
+export type EngineOptions = { readonly messagePoll?: Duration.Input };
+
 // The engine over one journal. Its runner keeps nothing of its own: the
 // journal is the run's alone, and no other process reads it.
-const engineOver = (filename: string) =>
+const engineOver = (filename: string, options: EngineOptions) =>
   ClusterWorkflowEngine.layer.pipe(
     Layer.provideMerge(
       SingleRunner.layer({
         runnerStorage: "memory",
-        shardingConfig: { entityTerminationTimeout: TERMINATION },
+        shardingConfig: {
+          entityTerminationTimeout: TERMINATION,
+          ...Option.match(Option.fromUndefinedOr(options.messagePoll), {
+            onNone: () => ({}),
+            onSome: (every) => ({ entityMessagePollInterval: every }),
+          }),
+        },
       }),
     ),
     Layer.provide(SqliteClient.layer({ filename })),
   );
 
-const journalsMade = (root: string) =>
+const journalsMade = (root: string, engineOptions: EngineOptions) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const paths = homePaths(root);
@@ -181,10 +192,10 @@ const journalsMade = (root: string) =>
         const registration = yield* registrationOf(workflow);
         const own = yield* Scope.fork(scope, "sequential");
 
-        const built = yield* Layer.buildWithScope(engineOver(paths.journal(runId)), own).pipe(
-          Effect.provideContext(platform),
-          Effect.orDie,
-        );
+        const built = yield* Layer.buildWithScope(
+          engineOver(paths.journal(runId), engineOptions),
+          own,
+        ).pipe(Effect.provideContext(platform), Effect.orDie);
 
         const engine = Context.get(built, WorkflowEngine.WorkflowEngine);
 
@@ -415,4 +426,5 @@ const journalsMade = (root: string) =>
   });
 
 // The workflow engine over a journal per run, in `journals/` under `root`.
-export const JournalsAt = (root: string) => Layer.effectContext(journalsMade(root));
+export const JournalsAt = (root: string, options: EngineOptions = {}) =>
+  Layer.effectContext(journalsMade(root, options));
