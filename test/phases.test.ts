@@ -910,3 +910,144 @@ describe("Phases.advanceRun", () => {
     }),
   );
 });
+
+describe("Phases.isWithPerson and Phases.withPerson", () => {
+  test("a person has an item whose record is with-person, and no other", () => {
+    expect(Phases.isWithPerson(Option.some(aRecord("with-person", Option.none())))).toBe(true);
+    expect(Phases.isWithPerson(Option.some(aRecord("handed-back", Option.none())))).toBe(false);
+    expect(Phases.isWithPerson(Option.none())).toBe(false);
+  });
+
+  effect("reads the item's record", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(ITEM, asPhase("with-person"), OTHER);
+      store.seed(PR_ITEM, asPhase("review-asked"), OTHER);
+
+      expect(yield* asRun(Phases.withPerson(ITEM), store.service)).toBe(true);
+      expect(yield* asRun(Phases.withPerson(PR_ITEM), store.service)).toBe(false);
+      expect(yield* asRun(Phases.withPerson(Phases.issueItem(4)), store.service)).toBe(false);
+    }),
+  );
+});
+
+describe("Phases.handedBackFrom", () => {
+  test("is the phase a handed-back record says the item went to the person from", () => {
+    expect(
+      Phases.handedBackFrom(aRecord("handed-back", Option.some({ from: "awaiting-ci" }))),
+    ).toEqual(Option.some("awaiting-ci"));
+  });
+
+  test("is none for one from no phase, and for any record but handed-back", () => {
+    // As a hand-back from no phase writes it: `"from": null`.
+    const fromNone = Schema.encodeSync(
+      Schema.Struct({ from: Schema.OptionFromNullOr(Schema.String) }),
+    )({ from: Option.none() });
+
+    expect(Phases.handedBackFrom(aRecord("handed-back", Option.some(fromNone)))).toEqual(
+      Option.none(),
+    );
+    expect(Phases.handedBackFrom(aRecord("handed-back", Option.none()))).toEqual(Option.none());
+    expect(Phases.handedBackFrom(aRecord("handed-back", Option.some({ from: 5 })))).toEqual(
+      Option.none(),
+    );
+    expect(
+      Phases.handedBackFrom(aRecord("with-person", Option.some({ why: "x", from: "awaiting-ci" }))),
+    ).toEqual(Option.none());
+  });
+});
+
+describe("an issue's handed-off record and the session that wrote its pull request", () => {
+  const session = (sessionId: string) => ({
+    adapter: "claude",
+    sessionId,
+    issue: 3,
+    branch: "auto/issue-3",
+  });
+
+  // A record of `phase` on `item`, written at `second` past the epoch.
+  const handedOff = (
+    phase: string,
+    second: number,
+    data: { readonly [key: string]: Json },
+  ): PhaseRecord => ({
+    ...aRecord(phase, Option.some(data)),
+    at: DateTime.makeUnsafe(second * 1000),
+  });
+
+  test("handedOffData names the pull request, and the session when there is one", () => {
+    expect(Phases.handedOffData(7, Option.none())).toEqual({ pullRequest: 7 });
+    expect(Phases.handedOffData(7, Option.some(session("s-1")))).toEqual({
+      pullRequest: 7,
+      author: session("s-1"),
+    });
+  });
+
+  test("authorOf is the session of the newest handed-off record naming the pull request", () => {
+    const all = new Map([
+      ["issue-1", handedOff("handed-off", 20, { pullRequest: 7, author: session("newer") })],
+      ["issue-2", handedOff("handed-off", 10, { pullRequest: 7, author: session("older") })],
+    ]);
+
+    expect(Phases.authorOf(all, 7)).toEqual(Option.some(session("newer")));
+  });
+
+  test("authorOf reads only handed-off records, and only those naming that pull request", () => {
+    const all = new Map([
+      ["issue-1", handedOff("handed-off", 10, { pullRequest: 8, author: session("other") })],
+      ["issue-2", handedOff("asked-questions", 20, { pullRequest: 7, author: session("not") })],
+    ]);
+
+    expect(Phases.authorOf(all, 7)).toEqual(Option.none());
+    expect(Phases.authorOf(all, 8)).toEqual(Option.some(session("other")));
+  });
+
+  test("authorOf is none for a hand-off whose record keeps no session", () => {
+    const all = new Map([
+      ["issue-1", handedOff("handed-off", 10, Phases.handedOffData(7, Option.none()))],
+    ]);
+
+    expect(Option.isSome(Phases.authorOf(all, 7))).toBe(false);
+  });
+
+  effect("recordHandedOff writes this hand-off over an earlier pull request's", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(ITEM, asPhase("handed-off"), OTHER, {
+        data: asData(Phases.handedOffData(7, Option.some(session("first")))),
+      });
+
+      yield* asRun(Phases.recordHandedOff(3, 8, Option.some(session("second"))), store.service);
+
+      expect(Phases.authorOf(store.records(), 8)).toEqual(Option.some(session("second")));
+      expect(Phases.authorOf(store.records(), 7)).toEqual(Option.none());
+    }),
+  );
+});
+
+describe("what a reconcile carries of the record it read", () => {
+  effect("that chernabog adopted the pull request, only when the record says it did", () =>
+    Effect.gen(function* () {
+      const store = progressStore({ checked: false });
+      store.seed(PR_ITEM, asPhase("review-asked"), OTHER, { data: asData({ adopted: true }) });
+
+      yield* Phases.reconcile(
+        PR_ITEM,
+        recordOf(store, PR_ITEM),
+        "changes-asked",
+        "observer:reviewed",
+      ).pipe(Effect.provideService(Progress, store.service));
+      expect(dataOf(store, PR_ITEM)).toEqual(Option.some({ adopted: true }));
+
+      store.seed(PR_ITEM, asPhase("review-asked"), OTHER, { data: asData({ adopted: false }) });
+
+      yield* Phases.reconcile(
+        PR_ITEM,
+        recordOf(store, PR_ITEM),
+        "changes-asked",
+        "observer:reviewed",
+      ).pipe(Effect.provideService(Progress, store.service));
+      expect(dataOf(store, PR_ITEM)).toEqual(Option.none());
+    }),
+  );
+});

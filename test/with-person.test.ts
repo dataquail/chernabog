@@ -627,3 +627,188 @@ describe("progress backfill's items with a person", () => {
     }),
   );
 });
+
+describe("what a hand-back reads of GitHub", () => {
+  const REVIEWER_PERSONA = "chernabog-reviewer";
+
+  // The issue with a person, from no phase, on a repo run as two personas.
+  const twoPersonas = () => {
+    const fake = makeFake("approve", { personas: ["chernabog-bot", REVIEWER_PERSONA] });
+    fake.recordPhase(ISSUE_ITEM, WITH_PERSON, {
+      data: Phases.withPersonData("stuck", Option.none()),
+    });
+    fake.setLabels(ISSUE, []);
+
+    return fake;
+  };
+
+  effect("admin and maintain access count as write does", () =>
+    Effect.gen(function* () {
+      for (const permission of ["admin", "maintain"]) {
+        const fake = withPerson([], Option.none());
+        listing(fake, ISSUE, unlabeled(PERSON));
+        fake.timeline.permissions.set(PERSON, permission);
+
+        yield* handingBack(fake);
+
+        expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+      }
+    }),
+  );
+
+  effect("triage access doesn't", () =>
+    Effect.gen(function* () {
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled(PERSON));
+      fake.timeline.permissions.set(PERSON, "triage");
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+
+  effect("any of the repo's personas is trusted, not only the one acting", () =>
+    Effect.gen(function* () {
+      const fake = twoPersonas();
+      listing(fake, ISSUE, unlabeled(REVIEWER_PERSONA));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+
+  effect("any persona's projection putting the label back keeps the person's hand-back", () =>
+    Effect.gen(function* () {
+      const fake = twoPersonas();
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.needsHuman]);
+      listing(fake, ISSUE, unlabeled(PERSON), labeled(REVIEWER_PERSONA));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+
+  effect("a removal GitHub dates at or after the record counts", () =>
+    Effect.gen(function* () {
+      for (const removed of ["2026-06-01T00:00:00Z", "2026-06-02T00:00:00Z"]) {
+        const fake = makeFake("approve");
+        fake.setLabels(ISSUE, []);
+        fake.recordPhase(ISSUE_ITEM, WITH_PERSON, {
+          at: DateTime.makeUnsafe("2026-06-01T00:00:00Z"),
+          data: Phases.withPersonData("stuck", Option.none()),
+        });
+        listing(fake, ISSUE, {
+          event: "unlabeled",
+          label: { name: DEFAULT_LABELS.needsHuman },
+          actor: { login: PERSON },
+          created_at: removed,
+        });
+
+        yield* handingBack(fake);
+
+        expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+      }
+    }),
+  );
+
+  effect("a removal on the thirtieth page of events counts; past it, nothing is read", () =>
+    Effect.gen(function* () {
+      const filler = (count: number) =>
+        Array.from({ length: count }, (): Json => ({ event: "commented" }));
+
+      const last = withPerson([], Option.none());
+      listing(last, ISSUE, ...filler(2900), unlabeled(PERSON));
+      yield* handingBack(last);
+      expect(last.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+
+      const past = withPerson([], Option.none());
+      listing(past, ISSUE, ...filler(3000), unlabeled(PERSON));
+      yield* handingBack(past);
+      expect(past.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+
+  effect("only a with-person record is handed back", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(ISSUE_ITEM, "awaiting-ci");
+      fake.setLabels(ISSUE, []);
+      listing(fake, ISSUE, unlabeled(PERSON));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe("awaiting-ci");
+    }),
+  );
+
+  effect("a closed issue, or a closed pull request, stays with a person", () =>
+    Effect.gen(function* () {
+      const issue = withPerson([], Option.none());
+      listing(issue, ISSUE, unlabeled(PERSON));
+      issue.states.issue = "closed";
+      yield* handingBack(issue);
+      expect(issue.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+
+      const pull = makeFake("approve");
+      pull.recordPhase(PR_ITEM, WITH_PERSON, {
+        data: Phases.withPersonData("a dispute", Option.none()),
+      });
+      pull.setLabels(PULL, []);
+      listing(pull, PULL, unlabeled(PERSON));
+      pull.states.pull = "closed";
+      yield* handingBack(pull);
+      expect(pull.phases()[PR_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+
+  effect("a pull request's labels are its own, not its issue's", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(PR_ITEM, WITH_PERSON, {
+        data: Phases.withPersonData("a dispute", Option.none()),
+      });
+      fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      fake.setLabels(ISSUE, []);
+      listing(fake, PULL, unlabeled(PERSON));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[PR_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+
+  effect("an issue GitHub knows no more, or a team's own item, is left; the rest go on", () =>
+    Effect.gen(function* () {
+      const GONE = 99;
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled(PERSON));
+      fake.recordPhase(Phases.issueItem(GONE), WITH_PERSON);
+      fake.timeline.gone.add(GONE);
+      listing(fake, GONE, unlabeled(PERSON));
+      fake.recordPhase("spec-checkout", WITH_PERSON);
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[Phases.issueItem(GONE)]).toBe(WITH_PERSON);
+      expect(fake.phases()["spec-checkout"]).toBe(WITH_PERSON);
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+
+  effect("a with-person record that keeps no data is handed back from no phase", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(ISSUE_ITEM, WITH_PERSON);
+      fake.setLabels(ISSUE, []);
+      listing(fake, ISSUE, unlabeled(PERSON));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+      expect(handedBackFrom(fake, ISSUE_ITEM)).toEqual(Option.some(Option.none()));
+    }),
+  );
+});

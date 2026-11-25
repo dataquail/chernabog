@@ -26,6 +26,7 @@ import {
   type LinkedIssue,
   MergeRefused,
   type MergeRequest,
+  NotFound,
   Phase,
   PhaseData,
   PhaseWriter,
@@ -564,11 +565,13 @@ export const makeFake = (
 
   // Each issue's and pull request's events, as GitHub lists them oldest
   // first, a page of 100 at a time; each login's permission on the repo
-  // ("read" for any other); and the numbers whose events GitHub fails to list.
+  // ("read" for any other); the numbers whose events GitHub fails to list;
+  // and the issues GitHub knows no more, deleted or moved away.
   const timeline = {
     events: new Map<number, ReadonlyArray<Json>>(),
     permissions: new Map<string, string>(),
     failing: new Set<number>(),
+    gone: new Set<number>(),
   };
 
   // GitHub lists a label added or removed through the API as an event of
@@ -833,15 +836,21 @@ export const makeFake = (
           [issue()].filter((queued) => queued.state === "open" && queued.labels.includes(label)),
         ),
       issue: (number) =>
-        Effect.sync(() =>
-          Option.getOrElse(
-            Option.map(Option.fromUndefinedOr(graph.made.get(number)), (made) => ({
-              ...made,
-              labels: labelsOf(number),
-            })),
-            issue,
-          ),
-        ),
+        Effect.suspend(() => {
+          if (timeline.gone.has(number)) {
+            return Effect.fail(new NotFound({ what: `issue #${number}` }));
+          }
+
+          return Effect.succeed(
+            Option.getOrElse(
+              Option.map(Option.fromUndefinedOr(graph.made.get(number)), (made) => ({
+                ...made,
+                labels: labelsOf(number),
+              })),
+              issue,
+            ),
+          );
+        }),
       issuesLabelled: (label) =>
         Effect.sync(() => allIssues().filter((found) => found.labels.includes(label))),
       createIssue: (created) =>
