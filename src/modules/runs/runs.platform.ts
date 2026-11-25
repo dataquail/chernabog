@@ -154,7 +154,7 @@ export {
   withRepo,
   withRepoReservedFor,
 } from "./infrastructure/runtime/repo-runtime.ts";
-export { runLogWriting } from "./infrastructure/runtime/runlog.ts";
+export { noHooks, runLogWriting } from "./infrastructure/runtime/runlog.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";
 export {
   checkThreadsSetup,

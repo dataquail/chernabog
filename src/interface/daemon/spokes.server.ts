@@ -6,7 +6,7 @@
 //
 // What later layers hook into: `start`'s handle (the PID and process group
 // `om_spokes` records, #664), `stop` (cancel, #662, and the bounds, #663),
-// and `onExit` (a park's ending, #660, and the final fold, #661).
+// and `onExit` (the final fold, #661).
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

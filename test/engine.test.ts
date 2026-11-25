@@ -56,6 +56,7 @@ import {
   flowHandle,
   flowLayer,
   forEveryPersona,
+  type OnParked,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
@@ -323,6 +324,7 @@ const withEngine = <A, E, R>(
   program: Effect.Effect<A, E, R>,
   personas = Effect.map(Layer.build(repoServices), forEveryPersona),
   flowsOf = handle,
+  onParked: OnParked = () => Effect.void,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -331,7 +333,13 @@ const withEngine = <A, E, R>(
 
     // These tests start and poll runs themselves, so the runtime runs no trigger or gate.
     const engine = yield* Layer.build(
-      engineOver(flowsOf, { handles: [flowsOf], services: () => Option.none() }, servicesFor, home),
+      engineOver(
+        flowsOf,
+        { handles: [flowsOf], services: () => Option.none() },
+        servicesFor,
+        home,
+        onParked,
+      ),
     );
 
     const platform = yield* Effect.context<BunServices.BunServices>();
@@ -539,6 +547,52 @@ describe("the engine", () => {
       ]);
     }),
   );
+  effect(
+    "tells the process executing a run that it parked, once its wait is recorded, and never a run that ends",
+    () =>
+      Effect.gen(function* () {
+        const told: Array<string> = [];
+
+        const tells = Effect.gen(function* () {
+          const done = yield* runToEnd(item("one"));
+          const parked = yield* started(item("wait"));
+
+          const waits = yield* listRunWaitsHandler({ runId: parked.id, signal: "pushed" }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (found) => found.waits.length > 0,
+              times: POLLS,
+            }),
+          );
+
+          // Told just after its wait is recorded, on the run's own fiber.
+          yield* Effect.sync(() => told.length).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (count) => count > 0,
+              times: POLLS,
+            }),
+          );
+
+          return { done, parked, waits };
+        });
+
+        const { value } = yield* withEngine(
+          tells,
+          Effect.map(Layer.build(repoServices), forEveryPersona),
+          handle,
+          (runId) =>
+            Effect.sync(() => {
+              told.push(runId);
+            }),
+        );
+
+        expect(value.waits.waits.map((wait) => wait.signal)).toEqual(["pushed"]);
+        expect(told).toEqual([value.parked.id]);
+        expect(told).not.toContain(value.done.id);
+      }),
+  );
+
   effect("a cancelled waiting run stops, its journal goes, and no signal wakes it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

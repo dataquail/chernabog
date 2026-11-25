@@ -1,7 +1,9 @@
 // The daemon as a hub (ADR 23, #659), through the real CLI against the fake
 // GitHub: each run it starts executes in a spoke, a child process of its own,
 // which the machine's concurrency counts; the run ends as its spoke reported
-// once the spoke has exited. A daemon that stops ends its spokes, and the
+// once the spoke has exited. A run that parks ends its spoke at the park,
+// and the signal it waits on starts a new spoke from the phase it recorded,
+// across a restart too (#660). A daemon that stops ends its spokes, and the
 // next one ends their runs as interrupted, so their phases repeat in new runs
 // from what the ledger recorded.
 
@@ -21,8 +23,11 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // which phase the ledger had for the item, then records its phase. An issue
 // titled "hold ..." with no phase yet holds the run in a long step, so a test
 // can stop the daemon under it; one titled "slow ..." takes a few seconds,
-// saying when it started and ended. The flow takes its label off once done,
-// so its trigger offers each issue until a run gets that far.
+// saying when it started and ended. One titled "park ..." parks on `go`,
+// recording `waiting`: its trigger holds it there until the issue is
+// labelled `go`, and then offers it, for a run that takes it up from that
+// record. The flow takes its label off once done, so its trigger offers each
+// issue until a run gets that far.
 const HUB = `import { activity, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -33,7 +38,16 @@ export default defineFlow({
   trigger: Effect.gen(function* () {
     const issues = yield* (yield* GitHub).queuedIssuesLabelled("hub");
 
-    return issues.map((issue) => Implement.issueItem(issue));
+    return yield* Effect.forEach(issues, (issue) =>
+      Effect.map(Phases.current(\`issue-\${issue.number}\`), (found) => {
+        const item = Implement.issueItem(issue);
+        const waits =
+          Option.exists(found, (record) => record.phase === "waiting") &&
+          !issue.labels.includes("go");
+
+        return waits ? { ...item, held: "waits for go" } : item;
+      }),
+    );
   }).pipe(reportAs("trigger")),
   workflow: (item) =>
     Effect.gen(function* () {
@@ -53,6 +67,10 @@ export default defineFlow({
 
       yield* Issue.comment(issue, \`pid \${pid} from \${before}\`);
       yield* activity("record-phase", Phases.record(item.key, "working"));
+
+      if (title.startsWith("park") && before !== "waiting") {
+        yield* Phases.park({ step: "park", item: item.key, phase: "waiting", data: {} }, ["go"], "go");
+      }
 
       if (title.startsWith("hold") && before === "none") {
         yield* activity("hold", Effect.sleep("60 seconds"));
@@ -246,5 +264,86 @@ describe("the daemon as a hub of spokes", () => {
     expect(finished(issue).map((run) => run.status)).toEqual(["interrupted", "done"]);
     expect(ranIn(issue).map((ran) => ran.before)).toEqual(["none", "working"]);
     expect(ranIn(issue).map((ran) => ran.pid)).not.toContain(await daemonPid());
+  }, 180_000);
+
+  // Parks an issue's run, and waits until its spoke has ended the run at the
+  // park and exited: the PID its run ran in.
+  const parkedRun = async (issue: number) => {
+    await waitFor(
+      () => finished(issue).some((run) => run.status === "ended-at-park"),
+      "the run to end at its park",
+      60_000,
+    );
+
+    const parked = Option.getOrThrow(Arr.head(ranIn(issue)));
+    await waitFor(() => !alive(parked.pid), "the parked run's spoke to exit", 30_000);
+
+    return parked;
+  };
+
+  // The phases the issue's record moved to, as each advance announced it.
+  const phasesOf = (issue: number) =>
+    sandbox.github.dispatches
+      .filter((sent) => sent.item === `issue-${issue}`)
+      .map((sent) => sent.to);
+
+  test("a run that parks ends its spoke, and its signal starts a new spoke from the phase it recorded", async () => {
+    const issue = sandbox.github.addIssue("park on go", ["hub"]);
+    const parked = await parkedRun(issue);
+
+    expect(parked.before).toBe("none");
+    expect(phasesOf(issue)).toEqual(["working", "waiting"]);
+    // Its claim went with its run, so a run anywhere may take the item up.
+    await waitFor(
+      () => Option.isNone(sandbox.github.refSha(claimRef(issue))),
+      "the parked run's claim to be released",
+    );
+
+    // Nothing runs for the item while it waits: its trigger holds it.
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    expect(ranIn(issue)).toHaveLength(1);
+
+    sandbox.github.issue(issue).labels.push("go");
+
+    await waitFor(
+      () => finished(issue).some((run) => run.status === "done"),
+      "a new run to take the item up",
+      60_000,
+    );
+
+    const taken = ranIn(issue);
+    expect(finished(issue).map((run) => run.status)).toEqual(["ended-at-park", "done"]);
+    expect(taken.map((ran) => ran.before)).toEqual(["none", "waiting"]);
+    // A spoke of its own, neither the parked run's nor the daemon.
+    expect(new Set(taken.map((ran) => ran.pid)).size).toBe(2);
+    expect(taken.map((ran) => ran.pid)).not.toContain(await daemonPid());
+    // Both runs' journals went with them.
+    expect(
+      finished(issue).filter((run) =>
+        existsSync(join(sandbox.home, "journals", `${run.runId}.db`)),
+      ),
+    ).toEqual([]);
+  }, 180_000);
+
+  test("a park outlasts the daemon: the next one starts the run that takes it up", async () => {
+    const issue = sandbox.github.addIssue("park through a restart", ["hub"]);
+    const parked = await parkedRun(issue);
+
+    await stopDaemon();
+    sandbox.github.issue(issue).labels.push("go");
+    await startDaemon();
+
+    await waitFor(
+      () => finished(issue).some((run) => run.status === "done"),
+      "the restarted daemon to take the item up",
+      90_000,
+    );
+
+    const taken = ranIn(issue);
+    expect(finished(issue).map((run) => run.status)).toEqual(["ended-at-park", "done"]);
+    expect(taken.map((ran) => ran.before)).toEqual(["none", "waiting"]);
+    expect(taken.map((ran) => ran.pid).slice(0, 1)).toEqual([parked.pid]);
+    expect(new Set(taken.map((ran) => ran.pid)).size).toBe(2);
+    expect(taken.map((ran) => ran.pid)).not.toContain(await daemonPid());
   }, 180_000);
 });

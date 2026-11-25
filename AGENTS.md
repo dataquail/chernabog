@@ -811,9 +811,13 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
 #361's storage test and #362's map of every recipe's handoffs.
 
 - **A run that parks ends there**, on a daemon as in a CI job (ADR 21,
-  decision 4): its spoke reports `ended-at-park` and exits, and the hub ends
-  the run with `CancelRunCommand` `endAs ended-at-park`; the validity loop
-  (`endParked`) does the same for a parked run with no live spoke. That status keeps every
+  decision 4; ADR 23, decision 2): its spoke reports `ended-at-park` and
+  exits, and the hub ends the run with `CancelRunCommand` `endAs
+ended-at-park`; the validity loop (`endParked`) does the same for a parked
+  run with no live spoke. No run sleeps in a process: when what it waits on
+  settles, the source that reads its record offers the item, and the hub
+  starts a new run in a new spoke from there, after a restart too
+  (`test/acceptance/hub-spokes.test.ts`). That status keeps every
   marker, worktree and session for the run that takes the item up from its
   record, as `lost` does (`RunMarkerRootOps.keptOn`), and releases the claim
   ref. A test that needs a run to stay in flight uses a durable `sleep`, not
@@ -1006,7 +1010,8 @@ How a CI run differs from a daemon run:
   spoke follows it (`PollExecutionQuery`) to its boundary, ending nothing in
   state.db: it reports how its run ended (`ReportRunEndedCommand`, a
   `RunEnded` row in the journal's `spoke_reports`), and a park as
-  `ended-at-park`. It stops as on SIGTERM when its stdin closes. Until #661
+  `ended-at-park`, which it hears from its own engine (`flowLayer`'s
+  `onParked`, once the wait is recorded), not from state.db. It stops as on SIGTERM when its stdin closes. Until #661
   it writes its steps, lanes, markers and the rest to `state.db` itself
   beside the daemon (WAL, `STATE_DB_BUSY_TIMEOUT`); then the hub folds its
   journal's reports.

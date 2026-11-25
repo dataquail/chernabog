@@ -1804,7 +1804,7 @@ export const runDaemon = Effect.gen(function* () {
 
           yield* reloading(draining, "draining");
           yield* log(
-            `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (runs parked on a signal resume after)`,
+            `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (a run that parks ends at its park, and a later run takes its item up)`,
           );
         }
       });
@@ -1828,11 +1828,13 @@ export const runDaemon = Effect.gen(function* () {
             yield* Effect.sleep("2 seconds");
 
             // Draining waits on whole runs, not steps: one restarted between two
-            // steps would resume under the new binary.
+            // steps would resume under the new binary. A run that parked still
+            // has its spoke until the spoke has exited and the hub has ended
+            // the run at its park, so the drain waits for no live spoke too.
             if (yield* Ref.get(draining)) {
               const executing = (yield* active).filter((run) => !run.parked);
 
-              if (executing.length === 0) {
+              if (executing.length === 0 && (yield* spokes.live) === 0) {
                 yield* Deferred.succeed(reloaded, true);
               }
 
