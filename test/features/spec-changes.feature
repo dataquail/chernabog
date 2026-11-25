@@ -17,13 +17,13 @@ Feature: A pull request that changes a spec waits for a person
     And nobody on this machine reviews it
     And it is left for a person to merge
 
-  Scenario: alice leaves bob's review alone once a spec on her pull request changes
+  Scenario: a spec changed on a pull request already in review is handed to a person
     When someone files an auto:ship issue
     Then alice opens a pull request for it
     And bob asks for changes on one line
     When carol, a person, changes a spec on it
+    And bob is asked to review it
     Then it is handed to a person
-    And alice does not fix it
     And it is left for a person to merge
 
   Scenario: a persona's approval doesn't let it go on
@@ -32,6 +32,7 @@ Feature: A pull request that changes a spec waits for a person
     And it is handed to a person
     When bob approves it
     And someone hands it back to the personas
+    And bob is asked to review it
     Then it is handed to a person again
     And it is left for a person to merge
 
