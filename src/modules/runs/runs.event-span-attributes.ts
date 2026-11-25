@@ -65,7 +65,13 @@ export const runsCommandSpanAttributes = {
 export const runFlowsCommandSpanAttributes = {
   CheckRunLeasesCommand: ofRun,
   DeliverSignalsCommand: ofFlowRef,
-  ExecuteRunCommand: ofRun,
+  ExecuteRunCommand: (message: {
+    readonly run: { readonly id: RunId; readonly repo: string; readonly flow: string };
+  }) => ({
+    "run.id": message.run.id,
+    "run.repo": message.run.repo,
+    "run.flow": message.run.flow,
+  }),
   GateFlowCommand: ofFlowRef,
   PlanTickCommand: ofFlowRef,
   PollRunCommand: ofRun,
@@ -90,6 +96,7 @@ export const runFlowsQuerySpanAttributes = {
   CheckRunValidityQuery: ofRun,
   PollExecutionQuery: ofRun,
   ReadSpokeEndingQuery: ofRun,
+  ReadSpokeReportsQuery: ofRun,
 } as const;
 
 export const runLogsQuerySpanAttributes = {

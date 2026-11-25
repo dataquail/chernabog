@@ -488,12 +488,13 @@ export const openSandbox = (
   // What a hub does before it starts a spoke (ADR 23, decision 2, step 1),
   // standing in for the daemon's: records a run of `flow` on `item` in this
   // machine's state.db, as the implicit persona, attaches the execution its
-  // run keys, and answers its id. In a child process of its own, as the CLI
-  // is, through the runs module's own StartRunCommand and
+  // run keys, and answers its id and the hand-over the hub would write for its
+  // spoke: the run as recorded, and the item. In a child process of its own,
+  // as the CLI is, through the runs module's own StartRunCommand and
   // AttachExecutionCommand handlers.
-  const recordRun = (flow: string, item: Json) =>
+  const recordRun = (flow: string, item: Json) => {
     // Evaluated from the repo's root, so its packages resolve from there.
-    execFileSync(
+    const handOver = execFileSync(
       process.execPath,
       [
         "-e",
@@ -501,17 +502,19 @@ export const openSandbox = (
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { BUNDLED_CORE_VERSION } from "${ROOT}src/kernel/core-support.value-object.ts";
 import { RunId } from "${ROOT}src/kernel/run-id.id.ts";
 import { attachExecutionHandler } from "${ROOT}src/modules/runs/commands/attach-execution.handler.ts";
 import { startRunHandler } from "${ROOT}src/modules/runs/commands/start-run.handler.ts";
 import { workflowNamed } from "${ROOT}src/modules/runs/infrastructure/runtime/engine.ts";
+import { SpokeHandOverJson } from "${ROOT}src/modules/runs/domain/run/spoke-hand-over.value-object.ts";
 import { StateAt } from "${ROOT}test/sdk-fakes.ts";
 
 const item = JSON.parse(process.env.RECORD_ITEM);
 const id = RunId.make(crypto.randomUUID());
 
-await Effect.runPromise(
+const run = await Effect.runPromise(
   startRunHandler({
     id,
     coreVersion: BUNDLED_CORE_VERSION,
@@ -531,7 +534,7 @@ await Effect.runPromise(
   ),
 );
 
-process.stdout.write(id);
+process.stdout.write(Schema.encodeSync(SpokeHandOverJson)({ run, item }));
 `,
       ],
       {
@@ -545,6 +548,13 @@ process.stdout.write(id);
         },
       },
     ).trim();
+
+    const runId = Schema.decodeSync(
+      Schema.fromJsonString(Schema.Struct({ run: Schema.Struct({ id: Schema.String }) })),
+    )(handOver).run.id;
+
+    return { runId, handOver };
+  };
 
   // The CLI as a hub starts a spoke on this machine: its stdin a pipe the
   // test holds open, as a hub holds a spoke's, and closes to stop it.

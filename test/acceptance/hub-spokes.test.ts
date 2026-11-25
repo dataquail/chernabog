@@ -5,7 +5,9 @@
 // and the signal it waits on starts a new spoke from the phase it recorded,
 // across a restart too (#660). A daemon that stops ends its spokes, and the
 // next one ends their runs as interrupted, so their phases repeat in new runs
-// from what the ledger recorded.
+// from what the ledger recorded. The hub tails each spoke's journal and folds
+// what it reports into state.db, so status and /events show a run's steps
+// while its spoke runs (#661).
 
 import { type ChildProcess, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -212,6 +214,72 @@ describe("the daemon as a hub of spokes", () => {
     expect(existsSync(join(sandbox.home, "journals", `${run.runId}.db`))).toBe(false);
     expect(readdirSync(join(sandbox.home, "spokes"))).toEqual([]);
   }, 90_000);
+
+  test("status and /events show a spoke's step while it runs, from what it reported", async () => {
+    const events = await fetch("http://daemon/events", { unix: socket() });
+    const reader = (events.body ?? new ReadableStream()).getReader();
+    let heard = "";
+    // The read in flight, kept across waits so no chunk is dropped.
+    let reading = reader.read();
+
+    // What the stream has said by the time it says `text`, or by 60 seconds.
+    const until = async (text: string) => {
+      const deadline = Date.now() + 60_000;
+
+      while (!heard.includes(text) && Date.now() < deadline) {
+        const chunk = await Promise.race([
+          reading.then((read) => Option.some(read.value)),
+          Bun.sleep(1000).then(() => Option.none()),
+        ]);
+
+        for (const value of Option.toArray(chunk)) {
+          heard += new TextDecoder().decode(value);
+          reading = reader.read();
+        }
+      }
+
+      return heard;
+    };
+
+    const issue = sandbox.github.addIssue("hold while status looks", ["hub"]);
+
+    // The run in flight for the issue, as the hub's status has it.
+    const inFlight = async () =>
+      Arr.findFirst(
+        DaemonStatus.pipe(Schema.decodeUnknownSync)(
+          await (await fetch("http://daemon/status", { unix: socket() })).json(),
+        ).active,
+        (run) => run.itemKey === `issue-${issue}`,
+      );
+
+    let found = Option.none<{ readonly id: string; readonly step: Option.Option<string> }>();
+    const deadline = Date.now() + 60_000;
+
+    while (
+      !Option.exists(found, (seen) => Option.contains(seen.step, "hold")) &&
+      Date.now() < deadline
+    ) {
+      await Bun.sleep(250);
+      found = Option.map(await inFlight(), (seen) => ({ id: seen.id, step: seen.currentStep }));
+    }
+
+    const run = Option.getOrThrow(found);
+    expect(run.step).toEqual(Option.some("hold"));
+    const spoke = Option.getOrThrow(Arr.head(ranIn(issue)));
+
+    // What status shows came from the spoke's journal while the spoke still
+    // runs: it writes nothing to state.db, and the hub folded its reports.
+    expect(alive(spoke.pid)).toBe(true);
+    expect(await until(`"step":"hold"`)).toContain("event: RunEnteredStep");
+    expect(heard).toContain(`"runId":"${run.id}","step":"claim"`);
+    expect(heard).toContain(`"runId":"${run.id}","step":"hold"`);
+
+    await reader.cancel();
+
+    const cancelled = await sandbox.runCli(["cancel", run.id.slice(0, 8)]);
+    expect(cancelled.code).toBe(0);
+    await waitFor(() => !alive(spoke.pid), "the cancelled run's spoke to exit", 30_000);
+  }, 120_000);
 
   test("keeps no more spokes live than the machine's concurrency", async () => {
     const first = sandbox.github.addIssue("slow one", ["hub"]);

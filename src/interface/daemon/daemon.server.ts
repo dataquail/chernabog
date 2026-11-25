@@ -4,6 +4,7 @@
 
 import { describeError } from "@chernabog/core";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import { CommandBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -70,11 +71,13 @@ import {
   RunFlowsQueries,
   runIsAbout,
   RunLeases,
+  runLogFor,
   RunsCommands,
   RunsQueries,
   RunValidity,
   type RunView,
   servicesFrom,
+  type SpokeReport,
   validityDue,
 } from "../../modules/runs/runs.platform.ts";
 import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.ts";
@@ -138,7 +141,7 @@ import {
 } from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
-import { hubSpokes } from "./spokes.server.ts";
+import { hubSpokes, ReportFold, reportFold } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -855,10 +858,64 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      const spokes = yield* hubSpokes({
+      // A line in a run's log, from the hub.
+      const noteInRun = (runId: RunId, line: string) =>
+        runLogFor(runId).pipe(
+          Effect.flatMap((runLog) => runLog.log(line)),
+          Effect.ignoreCause,
+        );
+
+      // Folds one of a spoke's reports into state.db (ADR 23, decisions 3 and
+      // 8): the runs' command it carries, decoded with that command's own
+      // schema and dispatched on the hub's bus, so what it records reaches
+      // status and /events as a dispatch in the hub would. A report the hub
+      // can't read or refuses is said in the run's log and skipped, never
+      // retried. The spoke's ending is read apart, once it has exited.
+      const foldReport = (runId: RunId, report: SpokeReport) =>
+        ReportFold.$match(reportFold(report), {
+          Ending: () => Effect.void,
+          Skip: ({ why }) => noteInRun(runId, why),
+          Dispatch: ({ command, payload }) =>
+            Effect.gen(function* () {
+              const dispatched = yield* Effect.result(
+                (yield* CommandBus).execute(command, payload),
+              );
+
+              if (Result.isFailure(dispatched)) {
+                yield* noteInRun(
+                  runId,
+                  `the hub refused ${report.tag}: ${describeError(dispatched.failure)}`,
+                );
+              }
+            }),
+        }).pipe(
+          Effect.catchCause((cause) =>
+            log(`could not fold ${report.tag} of ${shortRunId(runId)}: ${String(cause)}`),
+          ),
+        );
+
+      const spokes = yield* hubSpokes<
+        | CommandBus
+        | FileSystem.FileSystem
+        | Home
+        | RunFlowsCommands
+        | RunFlowsQueries
+        | RunsCommands
+        | RunsQueries
+      >({
         home: (yield* Home).root,
         variables: (yield* HostEnvironment).variables,
         log,
+        reports: (runId, after) =>
+          RunFlowsQueries.use((runs) => runs.ReadSpokeReportsQuery({ runId, after })).pipe(
+            Effect.map((found) => found.reports),
+            Effect.catchCause((cause) =>
+              log(`could not read the reports of ${shortRunId(runId)}: ${String(cause)}`).pipe(
+                Effect.as([]),
+              ),
+            ),
+          ),
+        apply: foldReport,
         onExit: endSpokeRun,
       });
 
@@ -1247,6 +1304,7 @@ export const runDaemon = Effect.gen(function* () {
               const handedOver = yield* spokes
                 .start({
                   runId: run.id,
+                  run,
                   repo: repo.name,
                   checkout: repo.enrolled.path,
                   flow: handle.name,

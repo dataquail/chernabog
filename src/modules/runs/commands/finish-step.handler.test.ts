@@ -64,6 +64,23 @@ describe("finishStepHandler", () => {
     ),
   );
 
+  effect("a step reported with when it ended keeps that time, not the fold's", () =>
+    Effect.gen(function* () {
+      yield* finishStepHandler({
+        runId: a,
+        step: "ci",
+        outcome: "ok",
+        at: "2026-10-20T00:01:00.000Z",
+      });
+
+      const found = yield* (yield* RunStepsRepository).findMany(RunStepSpecifications.forRun(a));
+
+      expect(found.map((step) => step.finishedAt)).toEqual([
+        Option.some("2026-10-20T00:01:00.000Z"),
+      ]);
+    }).pipe(Effect.provide(steps([entered("ci", "2026-10-20T00:00:03.000Z")]))),
+  );
+
   effect("a step entered again, as after a restart, ends its latest entry alone", () =>
     Effect.gen(function* () {
       yield* finishStepHandler({ runId: a, step: "ci", outcome: "ok" });

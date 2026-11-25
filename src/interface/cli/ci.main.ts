@@ -310,16 +310,18 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
       ),
       run: Flag.String("run").pipe(
         Flag.withDescription(
-          "A hub's hand-over, which makes this a spoke on a machine: the run it recorded, to execute against the machine's home, with the item it is for as --work-item-file or --work-item. The spoke stops as on SIGTERM when its stdin closes",
+          "A hub's hand-over, which makes this a spoke on a machine: the run it recorded, to execute against the machine's home, with the run as the hub recorded it and the item it is for as --hand-over-file or --hand-over. The spoke stops as on SIGTERM when its stdin closes",
         ),
         Flag.optional,
       ),
-      workItem: Flag.String("work-item").pipe(
-        Flag.withDescription("The handed-over run's work item, as JSON"),
+      handOver: Flag.String("hand-over").pipe(
+        Flag.withDescription("The hub's hand-over: the run it recorded and its work item, as JSON"),
         Flag.optional,
       ),
-      workItemFile: Flag.String("work-item-file").pipe(
-        Flag.withDescription("A file holding the handed-over run's work item, as JSON"),
+      handOverFile: Flag.String("hand-over-file").pipe(
+        Flag.withDescription(
+          "A file holding the hub's hand-over: the run it recorded and its work item, as JSON",
+        ),
         Flag.optional,
       ),
     },
@@ -348,8 +350,8 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             repo,
             workflowRun: fromEnv("GITHUB_RUN_ID"),
             run: options.run,
-            workItem: options.workItem,
-            workItemFile: options.workItemFile,
+            handOver: options.handOver,
+            handOverFile: options.handOverFile,
             logs: Option.orElse(options.logs, () =>
               Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
             ),

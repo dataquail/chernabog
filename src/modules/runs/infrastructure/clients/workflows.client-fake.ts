@@ -10,6 +10,7 @@ import {
   WorkflowsClient,
 } from "../../domain/ports/clients/workflows.client.ts";
 import { type SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts";
+import { type SpokeReport } from "../../domain/run/spoke-report.value-object.ts";
 
 // What a test's workflow engine did and was told: the runs it executed, the
 // executions it resumed and interrupted, the deferreds it woke and the lines it noted, and
@@ -31,6 +32,8 @@ export type FakeEngine = {
   readonly inSpokes: Array<RunId>;
   // The endings each run's spoke reported, in order.
   readonly reports: Map<RunId, Array<SpokeEnding>>;
+  // The reports each run's spoke wrote in its journal, which a test sets.
+  readonly journalReports: Map<RunId, Array<SpokeReport>>;
 };
 
 export const fakeEngine = (): FakeEngine => ({
@@ -45,6 +48,7 @@ export const fakeEngine = (): FakeEngine => ({
   discarded: [],
   inSpokes: [],
   reports: new Map(),
+  journalReports: new Map(),
 });
 
 // The core the fake engine's workflows run under.
@@ -100,6 +104,10 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
         }),
       reportedEnding: (runId) =>
         Effect.sync(() => Option.fromUndefinedOr((engine.reports.get(runId) ?? []).at(-1))),
+      reports: (runId, after) =>
+        Effect.sync(() =>
+          (engine.journalReports.get(runId) ?? []).filter((report) => report.seq > after),
+        ),
       wake: (deferred) =>
         Effect.sync(() => {
           engine.woken.push(deferred);

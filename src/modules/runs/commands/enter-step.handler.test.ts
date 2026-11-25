@@ -80,6 +80,17 @@ describe("enterStepHandler", () => {
     }).pipe(Effect.provide(steps([run("a")]))),
   );
 
+  effect("a step reported with when it was entered keeps that time, not the fold's", () =>
+    Effect.gen(function* () {
+      const a = RunId.make("a");
+      yield* enterStepHandler({ runId: a, step: "claim", at: "2026-10-20T00:00:05.000Z" });
+
+      expect(
+        (yield* readRunHistoryHandler({ runId: a })).steps.map((found) => found.enteredAt),
+      ).toEqual(["2026-10-20T00:00:05.000Z"]);
+    }).pipe(Effect.provide(steps([run("a")]))),
+  );
+
   effect("a run that ended takes no step, and stays as it ended", () =>
     Effect.gen(function* () {
       const refused = yield* Effect.flip(enterStepHandler({ runId: ended.id, step: "late" }));
