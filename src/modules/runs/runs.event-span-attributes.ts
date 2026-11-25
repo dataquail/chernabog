@@ -68,7 +68,6 @@ export const runsCommandSpanAttributes = {
 
 export const runFlowsCommandSpanAttributes = {
   CheckRunLeasesCommand: ofRun,
-  DeliverSignalsCommand: ofFlowRef,
   ExecuteRunCommand: (message: {
     readonly run: { readonly id: RunId; readonly repo: string; readonly flow: string };
   }) => ({
@@ -78,10 +77,7 @@ export const runFlowsCommandSpanAttributes = {
   }),
   GateFlowCommand: ofFlowRef,
   PlanTickCommand: ofFlowRef,
-  PollRunCommand: ofRun,
   ReportRunEndedCommand: ofRun,
-  ResumeRunCommand: ofRun,
-  StartFlowRunCommand: ofFlowRef,
   StartSpokeRunCommand: ofFlowRef,
 } as const;
 

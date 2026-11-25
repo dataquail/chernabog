@@ -1,15 +1,12 @@
 // Runs' workflows in the Effect workflow engine this process runs, each
-// journaled in a file of its own (journals.ts): started, polled and resumed
-// through the handle of the flow they run, woken through the durable
-// deferreds they wait on, and their journals let go of once they end.
+// journaled in a file of its own (journals.ts): started and polled through
+// the handle of the flow they run, and their journals let go of once they
+// end. Nothing resumes a run from its journal (ADR 23, decision 3).
 
-import { signalDeferred } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Schema from "effect/Schema";
-import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { BUNDLED_CORE } from "../../../../platform/flow-deps.ts";
@@ -24,8 +21,6 @@ import {
 } from "../runtime/engine.ts";
 import { handleOf } from "../runtime/flow-registry.ts";
 import { RunJournals } from "../runtime/journals.ts";
-
-const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
 
 // A run's payload: its persona rides in it, so a resumed run acts as the same one.
 const payloadOf = (flow: FlowRef, runId: string, item: WorkItem) =>
@@ -80,21 +75,6 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
                 ),
               ),
           }).pipe(Effect.provideContext(engine)),
-        // Opening the run's journal resumes what it holds; one already open
-        // is resumed in place.
-        resume: (flow, runId, executionId) =>
-          handle(flow).pipe(
-            Effect.flatMap((found) =>
-              journals
-                .open(found.workflow, runId, executionId)
-                .pipe(
-                  Effect.tap((opened) =>
-                    Effect.when(found.workflow.resume(executionId), Effect.succeed(opened)),
-                  ),
-                ),
-            ),
-            Effect.provideContext(engine),
-          ),
         discard: (runId) => journals.discard(runId),
         journals: Effect.map(journals.list, (runs) => runs.map((runId) => RunId.make(runId))),
         executing: (runId) => journals.isOpen(runId),
@@ -111,13 +91,6 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
           })
             .interrupt(executionId)
             .pipe(Effect.andThen(stopExecution(executionId)), Effect.provideContext(engine)),
-        wake: (deferred, token) =>
-          Effect.gen(function* () {
-            yield* DurableDeferred.succeed(signalDeferred(deferred), {
-              token: yield* decodeToken(token),
-              value: true,
-            });
-          }).pipe(Effect.orDie, Effect.provideContext(engine)),
         note: (runId, line) =>
           runLogFor(runId).pipe(
             Effect.flatMap((log) => log.log(line)),

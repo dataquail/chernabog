@@ -13,14 +13,12 @@ import { type SpokeEnding } from "../../domain/run/spoke-ending.value-object.ts"
 import { type SpokeReport } from "../../domain/run/spoke-report.value-object.ts";
 
 // What a test's workflow engine did and was told: the runs it executed, the
-// executions it resumed and interrupted, the deferreds it woke and the lines it noted, and
+// executions it interrupted and the lines it noted, and
 // the outcome each execution ends with, and the flows (as repo/flow) it has
 // no workflow for, which a test sets.
 export type FakeEngine = {
   readonly executed: Array<RunId>;
-  readonly resumed: Array<string>;
   readonly interrupted: Array<string>;
-  readonly woken: Array<string>;
   readonly notes: Array<string>;
   readonly outcomes: Record<string, WorkflowOutcome>;
   readonly unloaded: Array<string>;
@@ -38,9 +36,7 @@ export type FakeEngine = {
 
 export const fakeEngine = (): FakeEngine => ({
   executed: [],
-  resumed: [],
   interrupted: [],
-  woken: [],
   notes: [],
   outcomes: {},
   unloaded: [],
@@ -77,12 +73,6 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
           return `execution-${runId}`;
         }),
       poll: (_flow, executionId) => Effect.sync(() => Record.get(engine.outcomes, executionId)),
-      resume: (_flow, runId, executionId) =>
-        Effect.sync(() => {
-          engine.resumed.push(executionId);
-
-          return engine.journals.includes(runId);
-        }),
       interrupt: (_flow, executionId) =>
         Effect.sync(() => {
           engine.interrupted.push(executionId);
@@ -108,10 +98,6 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
         Effect.sync(() =>
           (engine.journalReports.get(runId) ?? []).filter((report) => report.seq > after),
         ),
-      wake: (deferred) =>
-        Effect.sync(() => {
-          engine.woken.push(deferred);
-        }),
       note: (runId, line) =>
         Effect.sync(() => {
           engine.notes.push(`${runId}: ${line}`);

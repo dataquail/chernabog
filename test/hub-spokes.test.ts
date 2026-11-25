@@ -14,17 +14,19 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import {
-  activityOf,
   foldInUnitOfWork,
   foldSpoke,
+  ReportFold,
+  reportFold,
+} from "../src/interface/daemon/report-fold.server.ts";
+import {
+  activityOf,
   hubSpokes,
   isSpoke,
   journalSignature,
   type LeftSpoke,
   measureOf,
   nextActivity,
-  ReportFold,
-  reportFold,
   spokeArgs,
   spokeEnvironment,
   type SpokeHandOver,

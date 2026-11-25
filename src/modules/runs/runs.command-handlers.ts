@@ -18,8 +18,6 @@ import { CheckRunLeasesCommand } from "./commands/check-run-leases.command.ts";
 import { checkRunLeasesHandler } from "./commands/check-run-leases.handler.ts";
 import { DeclareLaneCommand } from "./commands/declare-lane.command.ts";
 import { declareLaneHandler } from "./commands/declare-lane.handler.ts";
-import { DeliverSignalsCommand } from "./commands/deliver-signals.command.ts";
-import { deliverSignalsHandler } from "./commands/deliver-signals.handler.ts";
 import { EnterStepCommand } from "./commands/enter-step.command.ts";
 import { enterStepHandler } from "./commands/enter-step.handler.ts";
 import { ExecuteRunCommand } from "./commands/execute-run.command.ts";
@@ -44,8 +42,6 @@ import { ParkRunCommand } from "./commands/park-run.command.ts";
 import { parkRunHandler } from "./commands/park-run.handler.ts";
 import { PlanTickCommand } from "./commands/plan-tick.command.ts";
 import { planTickHandler } from "./commands/plan-tick.handler.ts";
-import { PollRunCommand } from "./commands/poll-run.command.ts";
-import { pollRunHandler } from "./commands/poll-run.handler.ts";
 import { PruneRunLogsCommand } from "./commands/prune-run-logs.command.ts";
 import { pruneRunLogsHandler } from "./commands/prune-run-logs.handler.ts";
 import { RecordCreatedIssueCommand } from "./commands/record-created-issue.command.ts";
@@ -58,24 +54,20 @@ import { RecordSpokeCommand } from "./commands/record-spoke.command.ts";
 import { recordSpokeHandler } from "./commands/record-spoke.handler.ts";
 import { RecordTokenUsageCommand } from "./commands/record-token-usage.command.ts";
 import { recordTokenUsageHandler } from "./commands/record-token-usage.handler.ts";
-import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
-import { recoverRunsHandler } from "./commands/recover-runs.handler.ts";
 import { ReleaseMarkersCommand } from "./commands/release-markers.command.ts";
 import { releaseMarkersHandler } from "./commands/release-markers.handler.ts";
 import { ReleaseRunWaitCommand } from "./commands/release-run-wait.command.ts";
 import { releaseRunWaitHandler } from "./commands/release-run-wait.handler.ts";
 import { ReportRunEndedCommand } from "./commands/report-run-ended.command.ts";
 import { reportRunEndedHandler } from "./commands/report-run-ended.handler.ts";
-import { ResumeRunCommand } from "./commands/resume-run.command.ts";
-import { resumeRunHandler } from "./commands/resume-run.handler.ts";
 import { SaveRunPlanCommand } from "./commands/save-run-plan.command.ts";
 import { saveRunPlanHandler } from "./commands/save-run-plan.handler.ts";
-import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
-import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
 import { StartSpokeRunCommand } from "./commands/start-spoke-run.command.ts";
 import { startSpokeRunHandler } from "./commands/start-spoke-run.handler.ts";
+import { SweepJournalsCommand } from "./commands/sweep-journals.command.ts";
+import { sweepJournalsHandler } from "./commands/sweep-journals.handler.ts";
 import {
   runFlowsCommandSpanAttributes,
   runsCommandSpanAttributes,
@@ -211,42 +203,35 @@ export const RunsCommandsLive = Layer.effect(
 export const runFlowsCommandGroup = Command.group(
   CancelRunCommand,
   CheckRunLeasesCommand,
-  DeliverSignalsCommand,
   ExecuteRunCommand,
   GateFlowCommand,
   PlanTickCommand,
-  PollRunCommand,
-  RecoverRunsCommand,
   ReleaseMarkersCommand,
   ReportRunEndedCommand,
-  ResumeRunCommand,
-  StartFlowRunCommand,
   StartSpokeRunCommand,
+  SweepJournalsCommand,
 );
 
 const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
   CancelRunCommand: (payload) => cancelRunHandler(payload),
   CheckRunLeasesCommand: (payload) => checkRunLeasesHandler(payload),
-  DeliverSignalsCommand: (payload) => deliverSignalsHandler(payload),
   ExecuteRunCommand: (payload) => executeRunHandler(payload),
   GateFlowCommand: (payload) => gateFlowHandler(payload),
   PlanTickCommand: (payload) => planTickHandler(payload),
-  PollRunCommand: (payload) => pollRunHandler(payload),
-  RecoverRunsCommand: () => recoverRunsHandler(),
   ReleaseMarkersCommand: () => releaseMarkersHandler(),
   ReportRunEndedCommand: (payload) => reportRunEndedHandler(payload),
-  ResumeRunCommand: (payload) => resumeRunHandler(payload),
-  StartFlowRunCommand: (payload) => startFlowRunHandler(payload),
   StartSpokeRunCommand: (payload) => startSpokeRunHandler(payload),
+  SweepJournalsCommand: () => sweepJournalsHandler(),
 });
 
 // The runs module's slice of the write side over the loaded flows, which the
 // daemon dispatches to check and renew its runs' leases, to plan each tick of
-// a flow, to deliver its signals, to ask its gate, to start its runs, to poll
-// them until they end, to recover the starts a crash interrupted, to release
-// the markers ended runs hold and to end a run, `run` and `rehearse` to start
-// one, deliver its signals and poll it (and `run` to recover and resume one
-// and release what it held), and `cancel` to end one with the daemon stopped.
+// a flow, to ask its gate, to record the runs its spokes execute, to sweep
+// the journals of ended runs, to release the markers ended runs hold and to
+// end a run; a spoke to execute the run it was handed and report how it
+// ended; the foreground `run`, `rehearse` and `ci run` under Actions, each its
+// own hub, to record a run, execute it and end it; and `cancel` to end one
+// with the daemon stopped.
 export class RunFlowsCommands extends Context.Service<
   RunFlowsCommands,
   Command.Dispatcher<typeof runFlowsCommandGroup>

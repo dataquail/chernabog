@@ -3,11 +3,10 @@
 // chernabog home, created when the run executes and deleted when it ends.
 // state.db keeps the machine's own records and holds no engine tables.
 //
-// A process may hold several journals at once (the in-process path the daemon
-// no longer takes, until #665 deletes it), so the one WorkflowEngine it
-// provides routes each execution to an engine of its own: a cluster engine
-// over a single runner over that run's journal. A spoke, which runs one run,
-// gets exactly one. A spoke also writes its reports here (`spoke_reports`):
+// The one WorkflowEngine a process provides routes each execution to an
+// engine of its own: a cluster engine over a single runner over that run's
+// journal. A spoke, and a process that is its own hub, executes one run and
+// gets exactly one; a test's engine may hold several. A spoke also writes its reports here (`spoke_reports`):
 // each record of its run that state.db keeps, which the hub tails and folds
 // into state.db as the only writer there, and last how its run ended,
 // which the hub reads once the spoke has exited.
@@ -86,13 +85,6 @@ const runOfPayload = Schema.decodeUnknownSync(RunOfPayload);
 export class RunJournals extends Context.Service<
   RunJournals,
   {
-    // Opens a run's journal, if there is one, which resumes the execution in
-    // it; whether there was one. One already open is left as it is.
-    readonly open: (
-      workflow: Workflow.Any,
-      runId: string,
-      executionId: string,
-    ) => Effect.Effect<boolean>;
     // Lets go of a run's journal: its execution is interrupted and its engine
     // closed, and only then are its files deleted, so nothing is still
     // writing one that's gone. Nothing for a run with none.
@@ -252,21 +244,6 @@ const journalsMade = (root: string) =>
       ).pipe(Effect.orDie);
 
     const journals = RunJournals.of({
-      open: (workflow, runId, executionId) =>
-        Effect.gen(function* () {
-          if (opened.has(runId)) {
-            return true;
-          }
-
-          if (!(yield* fs.exists(paths.journal(runId)).pipe(Effect.orDie))) {
-            return false;
-          }
-
-          const made = yield* openEngine(workflow, runId);
-          track(made, runId, executionId);
-
-          return true;
-        }).pipe(lock.withPermits(1)),
       // The run's engine leaves the maps under the lock, so no new call
       // reaches it; it closes outside the lock, so another run's start never
       // waits on it.

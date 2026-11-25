@@ -3,15 +3,15 @@
 // the agent sessions it opened,
 // and what it reads back of them within itself.
 //
-// A process that is its own hub (the foreground `run`, `rehearse`, `ci run`
-// under Actions) dispatches each record on the runs' commands at once, into
-// its state.db. A spoke never writes state.db (ADR 23, decision 3): it
-// appends each record to its run's journal, `spoke_reports`, as the runs'
-// command it would have dispatched, encoded with that command's own schema,
-// and the hub tails the journal and folds the records into state.db
-// (decision 8). What a spoke reads back (the markers it holds, a session's
-// token cursor) it reads from its own reports, and its run's record from what
-// its hub handed it.
+// Every run appends each record to its run's journal, `spoke_reports`, as the
+// runs' command it would have dispatched, encoded with that command's own
+// schema, and its hub tails the journal and folds the records into state.db
+// (ADR 23, decisions 3, 8 and 9): the daemon for a spoke, and a process that
+// is its own hub (the foreground `run`, `rehearse`, `ci run` under Actions)
+// for its own run. What a run reads back of its records (the markers it
+// holds, a session's token cursor) it reads from its own reports. Its run's
+// record a spoke reads from what its hub handed it, and a process that is its
+// own hub from its state.db.
 
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Arr from "effect/Array";
@@ -90,46 +90,13 @@ export type RunRecordsService = {
   readonly cursor: (adapter: string, sessionId: string) => Effect.Effect<Option.Option<string>>;
 };
 
-// A spoke provides it, over its journal (`RunRecordsInJournal`); without it,
-// the engine dispatches a run's records on the runs' commands
-// (`dispatchingRecords`).
+// A spoke provides it, over its journal and its hand-over
+// (`RunRecordsInJournal`); without it, the engine keeps a run's records in its
+// journal and reads its record from this process's state.db
+// (`journalRecords`).
 export class RunRecords extends Context.Service<RunRecords, RunRecordsService>()(
   "chernabog/RunRecords",
 ) {}
-
-// A step, subject or anything else reported after its run ended changes
-// nothing: the commands that refuse one refuse it here too, and that is all.
-const quietly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.ignore({ log: false }));
-
-// Each record dispatched on the runs' commands at once, into this process's
-// state.db, and read back from there: a process that is its own hub.
-export const dispatchingRecords = (
-  commands: RunsCommands["Service"],
-  queries: RunsQueries["Service"],
-): RunRecordsService => ({
-  run: (runId) => queries.FindRunQuery({ runId }).pipe(Effect.map((found) => found.run)),
-  enterStep: (entering) => quietly(commands.EnterStepCommand(entering)),
-  finishStep: (finishing) => commands.FinishStepCommand(finishing),
-  declareLane: (lane) => commands.DeclareLaneCommand(lane),
-  nameSubject: (subject) => quietly(commands.NameSubjectCommand(subject)),
-  holdMarker: (holding) => commands.HoldMarkerCommand(holding).pipe(Effect.asVoid),
-  forgetMarker: (forgetting) => commands.ForgetMarkerCommand(forgetting),
-  recordCreatedIssue: (created) => commands.RecordCreatedIssueCommand(created),
-  recordNode: (node) => commands.RecordNodeCommand(node),
-  saveRunPlan: (plan) => commands.SaveRunPlanCommand(plan),
-  recordTokenUsage: (call) => commands.RecordTokenUsageCommand(call),
-  parkRun: (parking) => commands.ParkRunCommand(parking).pipe(Effect.asVoid),
-  openedSession: () => Effect.void,
-  held: (runId, name) =>
-    queries
-      .ListRunMarkersQuery({ runId, name: Option.some(name) })
-      .pipe(Effect.map((found) => found.markers.map((marker) => marker.args))),
-  cursor: (adapter, sessionId) =>
-    queries
-      .ReadTokenUsageCursorQuery({ adapter, sessionId })
-      .pipe(Effect.map((found) => found.cursor)),
-});
 
 // The arguments of the markers named `name` a run's reports leave it holding:
 // each hold, less those forgotten after it, in the order it held them.
@@ -215,6 +182,79 @@ const stateCursors = (database: string) =>
       );
   });
 
+// A run's records in its journal (ADR 23, decision 3), for its hub to fold:
+// its record and a token cursor its reports don't have are what `reads` says.
+const recordsIn = (
+  journals: RunJournals["Service"],
+  reads: {
+    readonly run: (runId: RunId) => Effect.Effect<Option.Option<RunView>>;
+    readonly cursor: (adapter: string, sessionId: string) => Effect.Effect<Option.Option<string>>;
+  },
+): RunRecordsService => {
+  const append =
+    <M extends Parameters<typeof encodeSpokeReport>[0]>(command: M) =>
+    (payload: Parameters<typeof encodeSpokeReport<M>>[1] & { readonly runId: RunId }) =>
+      journals.append(payload.runId, command.tag, encodeSpokeReport(command, payload));
+
+  // A step's own time, since the hub folds it later.
+  const stamped = <P>(payload: P) =>
+    Effect.map(DateTime.now, (now) => ({ ...payload, at: DateTime.formatIso(now) }));
+
+  const reportsOf = (runId: RunId) => journals.reports(runId, 0);
+
+  return {
+    run: reads.run,
+    enterStep: (entering) => Effect.flatMap(stamped(entering), append(EnterStepCommand)),
+    finishStep: (finishing) => Effect.flatMap(stamped(finishing), append(FinishStepCommand)),
+    declareLane: append(DeclareLaneCommand),
+    nameSubject: append(NameSubjectCommand),
+    holdMarker: append(HoldMarkerCommand),
+    forgetMarker: append(ForgetMarkerCommand),
+    recordCreatedIssue: append(RecordCreatedIssueCommand),
+    recordNode: append(RecordNodeCommand),
+    saveRunPlan: append(SaveRunPlanCommand),
+    recordTokenUsage: append(RecordTokenUsageCommand),
+    parkRun: append(ParkRunCommand),
+    openedSession: (runId, opened) =>
+      journals.append(runId, AGENT_SESSION_OPENED, encodeSessionOpened(opened)),
+    held: (runId, name) => Effect.map(reportsOf(runId), (reports) => heldIn(reports, name)),
+    cursor: (adapter, sessionId) => reads.cursor(adapter, sessionId),
+  };
+};
+
+// The cursor a run's own reports hold for a session, or else what `otherwise` reads.
+const cursorOr =
+  (
+    journals: RunJournals["Service"],
+    runId: RunId,
+    otherwise: (adapter: string, sessionId: string) => Effect.Effect<Option.Option<string>>,
+  ) =>
+  (adapter: string, sessionId: string) =>
+    Effect.flatMap(journals.reports(runId, 0), (reports) =>
+      Option.match(cursorIn(reports, adapter, sessionId), {
+        onNone: () => otherwise(adapter, sessionId),
+        onSome: Effect.succeedSome,
+      }),
+    );
+
+// The records of a run in a process that is its own hub: in the run's journal,
+// which the process folds into its state.db itself, and read from that
+// state.db. A cursor comes from the run's own reports first, which hold what
+// it read that isn't folded yet.
+export const journalRecords = (
+  journals: RunJournals["Service"],
+  queries: RunsQueries["Service"],
+  runId: RunId,
+): RunRecordsService =>
+  recordsIn(journals, {
+    run: (asked) => queries.FindRunQuery({ runId: asked }).pipe(Effect.map((found) => found.run)),
+    cursor: cursorOr(journals, runId, (adapter, sessionId) =>
+      queries
+        .ReadTokenUsageCursorQuery({ adapter, sessionId })
+        .pipe(Effect.map((found) => found.cursor)),
+    ),
+  });
+
 // A spoke's records, in its run's journal; its run's record is what its hub
 // handed it, and state.db is read only for a token cursor its own reports
 // don't have.
@@ -225,41 +265,12 @@ export const RunRecordsInJournal = (handOver: SpokeHandOver, database: string) =
       const journals = yield* RunJournals;
       const fromState = yield* stateCursors(database);
 
-      const append =
-        <M extends Parameters<typeof encodeSpokeReport>[0]>(command: M) =>
-        (payload: Parameters<typeof encodeSpokeReport<M>>[1] & { readonly runId: RunId }) =>
-          journals.append(payload.runId, command.tag, encodeSpokeReport(command, payload));
-
-      // A step's own time, since the hub folds it later.
-      const stamped = <P>(payload: P) =>
-        Effect.map(DateTime.now, (now) => ({ ...payload, at: DateTime.formatIso(now) }));
-
-      const reportsOf = (runId: RunId) => journals.reports(runId, 0);
-
-      return RunRecords.of({
-        run: (runId) =>
-          Effect.succeed(Option.liftPredicate(handOver.run, (run) => run.id === runId)),
-        enterStep: (entering) => Effect.flatMap(stamped(entering), append(EnterStepCommand)),
-        finishStep: (finishing) => Effect.flatMap(stamped(finishing), append(FinishStepCommand)),
-        declareLane: append(DeclareLaneCommand),
-        nameSubject: append(NameSubjectCommand),
-        holdMarker: append(HoldMarkerCommand),
-        forgetMarker: append(ForgetMarkerCommand),
-        recordCreatedIssue: append(RecordCreatedIssueCommand),
-        recordNode: append(RecordNodeCommand),
-        saveRunPlan: append(SaveRunPlanCommand),
-        recordTokenUsage: append(RecordTokenUsageCommand),
-        parkRun: append(ParkRunCommand),
-        openedSession: (runId, opened) =>
-          journals.append(runId, AGENT_SESSION_OPENED, encodeSessionOpened(opened)),
-        held: (runId, name) => Effect.map(reportsOf(runId), (reports) => heldIn(reports, name)),
-        cursor: (adapter, sessionId) =>
-          Effect.flatMap(reportsOf(handOver.run.id), (reports) =>
-            Option.match(cursorIn(reports, adapter, sessionId), {
-              onNone: () => fromState(adapter, sessionId),
-              onSome: Effect.succeedSome,
-            }),
-          ),
-      });
+      return RunRecords.of(
+        recordsIn(journals, {
+          run: (runId) =>
+            Effect.succeed(Option.liftPredicate(handOver.run, (run) => run.id === runId)),
+          cursor: cursorOr(journals, handOver.run.id, fromState),
+        }),
+      );
     }),
   );

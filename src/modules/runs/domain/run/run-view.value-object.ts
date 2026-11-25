@@ -79,16 +79,9 @@ export class AdoptedRuns extends Schema.Class<AdoptedRuns, { readonly brand: "Ad
   runs: Schema.Array(RunId),
 }) {}
 
-// The runs a crash left recorded without a workflow: the ones whose workflow
-// started now, the ones that ended because they can't start one (recorded
-// before runs kept their work item), and the ones left as they are because
-// this process hasn't loaded their flow.
-export class RecoveredRuns extends Schema.Class<RecoveredRuns, { readonly brand: "RecoveredRuns" }>(
-  "RecoveredRuns",
+// The journals of runs that had ended, deleted.
+export class SweptJournals extends Schema.Class<SweptJournals, { readonly brand: "SweptJournals" }>(
+  "SweptJournals",
 )({
-  executed: Schema.Array(RunView),
-  abandoned: Schema.Array(RunView),
-  left: Schema.Array(RunView),
-  // The journals of runs that had ended, deleted.
   swept: Schema.Array(Schema.String),
 }) {}

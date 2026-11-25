@@ -92,7 +92,7 @@ describe("telemetry", () => {
 
     // The command that starts the run names its repo and flow, and the event
     // it publishes names the run too, under the command's span.
-    const starting = named(records, "command.StartFlowRunCommand");
+    const starting = named(records, "command.StartSpokeRunCommand");
     const started = named(records, "event.RunStarted");
     const runId = String(started.attributes?.["run.id"]);
 

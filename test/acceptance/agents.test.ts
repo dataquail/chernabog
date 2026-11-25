@@ -40,7 +40,7 @@ describe("implement on Codex", () => {
     expect(call).toContain("--output-schema");
   }, 60_000);
 
-  test("a run killed mid-agent resumes the same Codex thread", async () => {
+  test("a run killed mid-agent ends interrupted, and its phase repeats in a new run", async () => {
     const sandbox = sandboxFor({}, { account: "codex" });
     sandbox.github.addIssue("Survive a crash on Codex", ["auto:eligible"]);
     const hang = join(sandbox.root, "hang-once");
@@ -65,13 +65,19 @@ describe("implement on Codex", () => {
     );
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
+    // The run it left ends interrupted and keeps what it put on the issue,
+    // the claim's label swap included, so a person queues it again.
+    const labels = sandbox.github.issue(1).labels;
+    labels.splice(0, labels.length, "auto:eligible");
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
-    expect(output).toContain("resuming");
+    expect(output).toContain("as interrupted");
     expect(code).toBe(0);
-    const [start = "", resume = ""] = sandbox.codexCalls();
-    expect(start).toStartWith("start ");
-    expect(resume).toStartWith("resume ");
-    expect(resume.split(" ")[1]).toBe(start.split(" ")[1]);
+    // Nothing resumes a run from its journal (ADR 23, decision 3): the new
+    // run starts its agent call again.
+    const [initial = "", again = ""] = sandbox.codexCalls();
+    expect(initial).toStartWith("start ");
+    expect(again).toStartWith("start ");
+    expect(output).toContain("done: #1:");
   }, 90_000);
 });
 

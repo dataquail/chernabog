@@ -49,8 +49,10 @@ import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { attachExecutionHandler } from "../src/modules/runs/commands/attach-execution.handler.ts";
 import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
-import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
+import { executeRunHandler } from "../src/modules/runs/commands/execute-run.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
+import { sweepJournalsHandler } from "../src/modules/runs/commands/sweep-journals.handler.ts";
+import { WorkflowsClient } from "../src/modules/runs/domain/ports/clients/workflows.client.ts";
 import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
 import {
   flowHandle,
@@ -71,6 +73,7 @@ import {
   deliverSignals,
   engineOver,
   type EngineRun,
+  foldRun,
   pollRun,
   repoAs,
   startRun,
@@ -557,7 +560,8 @@ describe("the engine", () => {
           const done = yield* runToEnd(item("one"));
           const parked = yield* started(item("wait"));
 
-          const waits = yield* listRunWaitsHandler({ runId: parked.id, signal: "pushed" }).pipe(
+          const waits = yield* foldRun(parked.id).pipe(
+            Effect.andThen(listRunWaitsHandler({ runId: parked.id, signal: "pushed" })),
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
               until: (found) => found.waits.length > 0,
@@ -600,7 +604,8 @@ describe("the engine", () => {
       const cancels = Effect.gen(function* () {
         const run = yield* started(item("wait"));
 
-        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+        yield* foldRun(run.id).pipe(
+          Effect.andThen(listRunWaitsHandler({ runId: run.id, signal: "pushed" })),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,
@@ -630,56 +635,6 @@ describe("the engine", () => {
       expect(value.execution).toEqual(Option.none());
       expect(yield* fs.exists(homePaths(home).journal(value.run.id))).toBe(false);
     }),
-  );
-
-  effect(
-    "a start a crash interrupted runs once on recovery, whether or not its workflow had started",
-    () =>
-      Effect.gen(function* () {
-        const recorded = (key: string) =>
-          startRunHandler({
-            id: RunId.make(key),
-            coreVersion: BUNDLED_CORE,
-            repo: "demo",
-            persona: IMPLICIT,
-            flow: "demo",
-            itemKey: key,
-            itemTitle: Option.none(),
-            itemUrl: Option.none(),
-            item: Option.some(item(key)),
-          });
-
-        const recovers = Effect.gen(function* () {
-          // Killed after the run was recorded, before its workflow executed.
-          yield* recorded("before");
-
-          // Killed after its workflow executed, before the execution was attached.
-          yield* recorded("after");
-
-          const execution = yield* handle.workflow.execute(
-            { runId: "after", item: item("after") },
-            { discard: true },
-          );
-
-          const recovered = yield* recoverRunsHandler();
-          const ended = yield* Effect.forEach(recovered.executed, toEnd);
-
-          return { execution, recovered, ended };
-        });
-
-        const { value } = yield* withEngine(recovers);
-
-        expect(value.recovered.executed.map((run) => String(run.id)).toSorted()).toEqual([
-          "after",
-          "before",
-        ]);
-        expect(
-          value.recovered.executed.find((run) => run.id === RunId.make("after"))?.executionId,
-        ).toEqual(Option.some(value.execution));
-        expect(value.ended.map((run) => run.status)).toEqual(["done", "done"]);
-        expect(executed.filter((line) => line.startsWith("after:"))).toEqual(["after:after"]);
-        expect(executed.filter((line) => line.startsWith("before:"))).toEqual(["before:before"]);
-      }),
   );
 });
 
@@ -729,7 +684,8 @@ const tablesIn = (file: string, prefix: string) => {
 
 // Waits until the run is parked on its signal.
 const waiting = (run: EngineRun) =>
-  listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+  foldRun(run.id).pipe(
+    Effect.andThen(listRunWaitsHandler({ runId: run.id, signal: "pushed" })),
     Effect.repeat({
       schedule: Schedule.spaced("25 millis"),
       until: ({ waits }) => waits.length > 0,
@@ -852,9 +808,8 @@ describe("a run's journal", () => {
       // As for a journal a crash kept the run's ending from deleting.
       yield* fs.writeFileString(paths.journal("ended-long-ago"), "");
 
-      const recovered = yield* processAt(home, recoverRunsHandler());
+      const recovered = yield* processAt(home, sweepJournalsHandler());
 
-      expect(recovered.executed).toEqual([]);
       expect(recovered.swept).toEqual(["ended-long-ago"]);
       // The running run's journal stays for the hub to end the run with.
       expect(
@@ -882,31 +837,45 @@ describe("a run and the .chernabog/ tree it started from", () => {
   );
 
   effect(
-    "resumes against the tree it recorded: an older one's flow, or the handle's for its own tree or none",
+    "executes against the tree it recorded: an older one's flow, or the handle's for its own tree or none",
     () =>
       Effect.gen(function* () {
-        const recorded = (key: string, configTree: Option.Option<string>) =>
-          startRunHandler({
-            id: RunId.make(key),
-            coreVersion: BUNDLED_CORE,
-            configTree,
-            repo: "demo",
-            persona: IMPLICIT,
-            flow: "demo",
-            itemKey: key,
-            itemTitle: Option.none(),
-            itemUrl: Option.none(),
-            item: Option.some(item(key)),
-          });
+        // A run recorded with its tree, as a hub records it, and executed
+        // here, as its spoke executes it.
+        const recordedAndExecuted = (key: string, configTree: Option.Option<string>) =>
+          Effect.gen(function* () {
+            const run = yield* startRunHandler({
+              id: RunId.make(key),
+              coreVersion: BUNDLED_CORE,
+              configTree,
+              repo: "demo",
+              persona: IMPLICIT,
+              flow: "demo",
+              itemKey: key,
+              itemTitle: Option.none(),
+              itemUrl: Option.none(),
+              item: Option.some(item(key)),
+            });
+
+            const executionId = yield* (yield* WorkflowsClient).executionIdOf(
+              { repo: "demo", flow: "demo", persona: IMPLICIT },
+              run.id,
+              item(key),
+            );
+
+            const attached = yield* attachExecutionHandler({ runId: run.id, executionId });
+
+            return yield* executeRunHandler({ run: attached, item: item(key) });
+          }).pipe(Effect.orDie);
 
         const resumes = Effect.gen(function* () {
-          yield* recorded("older-tree", Option.some("older"));
-          yield* recorded("current-tree", Option.some("current"));
-          yield* recorded("no-tree", Option.none());
+          const runs = [
+            yield* recordedAndExecuted("older-tree", Option.some("older")),
+            yield* recordedAndExecuted("current-tree", Option.some("current")),
+            yield* recordedAndExecuted("no-tree", Option.none()),
+          ];
 
-          const recovered = yield* recoverRunsHandler();
-
-          return yield* Effect.forEach(recovered.executed, toEnd);
+          return yield* Effect.forEach(runs, toEnd);
         });
 
         const { value } = yield* withEngine(

@@ -50,7 +50,7 @@ import {
   RunFlowsQueries,
   runLogFile,
   RunLogLimit,
-  RunsQueries,
+  type RunView,
   servicesFrom,
   SpokeEnding,
   SpokeEngineLive,
@@ -69,6 +69,7 @@ import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { stopWhenStdinCloses } from "../../platform/shutdown.ts";
 import { engineRuntime } from "../application-runtime.ts";
+import { followOwnRun, startOwnRun } from "./own-hub.main.ts";
 import { tailer } from "./run.main.ts";
 
 // How long a CI run's claim lasts unless the job renews it: short, so a job
@@ -444,67 +445,63 @@ export const asCiJob = (repo: EffectiveRepo): EffectiveRepo => ({
   })),
 });
 
-// Follows a run until it ends, parks on a signal, loses its claim or runs out
-// of the job's time, renewing its claim's short lease as it goes.
-const followToBoundary = (runId: RunId, leaseTtl: Duration.Duration, stopAt: number) =>
+// Follows a job's run to its boundary: it ends, parks on a signal, loses its
+// claim or runs out of the job's time, renewing its claim's short lease as it
+// goes. The job is the run's own hub (ADR 23, decision 9): the run executes
+// here in a journal of its own, which the job folds into its state.db.
+const followToBoundary = (
+  run: RunView,
+  parked: ReadonlySet<RunId>,
+  leaseTtl: Duration.Duration,
+  stopAt: number,
+) =>
   Effect.gen(function* () {
-    const commands = yield* RunFlowsCommands;
-    const queries = yield* RunsQueries;
-    const tail = tailer(yield* runLogFile(runId));
+    const tail = tailer(yield* runLogFile(run.id));
     const renewEvery = Duration.toMillis(leaseTtl) / 3;
     let renewedAt = yield* Clock.currentTimeMillis;
 
-    for (;;) {
-      yield* tail;
-      const polled = yield* commands.PollRunCommand({ runId });
-
-      for (const run of Option.toArray(polled.run)) {
-        if (run.status !== "running") {
-          yield* tail;
-
-          return {
-            kind: "ended",
-            status: run.status,
-            summary: Option.getOrElse(run.summary, () => ""),
-          } satisfies CiRunEnding;
-        }
-      }
-
-      const active = yield* queries.ListActiveRunsQuery({
-        repo: Option.none(),
-        persona: Option.none(),
-        flow: Option.none(),
-      });
-
-      if (active.runs.some((run) => run.id === runId && run.parked)) {
-        yield* tail;
-
-        return { kind: "parked" } satisfies CiRunEnding;
-      }
-
+    // Out of the job's time, or its claim taken: the job stops there.
+    const stop = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
 
       if (now >= stopAt) {
-        return { kind: "out-of-time" } satisfies CiRunEnding;
+        return Option.some<CiRunEnding>({ kind: "out-of-time" });
       }
 
-      if (now - renewedAt >= renewEvery) {
-        renewedAt = now;
+      if (now - renewedAt < renewEvery) {
+        return Option.none<CiRunEnding>();
+      }
 
-        const leases = yield* commands.CheckRunLeasesCommand({
-          runId,
-          renew: Option.some(leaseTtl),
+      renewedAt = now;
+
+      const leases = yield* (yield* RunFlowsCommands).CheckRunLeasesCommand({
+        runId: run.id,
+        renew: Option.some(leaseTtl),
+      });
+
+      if (Predicate.isTagged(leases, "Lost")) {
+        return Option.some<CiRunEnding>({
+          kind: "elsewhere",
+          why: `${leases.reason}: ${GOT_THERE_FIRST}`,
         });
-
-        if (Predicate.isTagged(leases, "Lost")) {
-          return {
-            kind: "elsewhere",
-            why: `${leases.reason}: ${GOT_THERE_FIRST}`,
-          } satisfies CiRunEnding;
-        }
       }
 
-      yield* Effect.sleep("1 second");
+      return Option.none<CiRunEnding>();
+    });
+
+    const boundary = yield* followOwnRun(run, parked, stop, tail);
+
+    switch (boundary.kind) {
+      case "ended":
+        return {
+          kind: "ended",
+          status: boundary.status,
+          summary: boundary.summary,
+        } satisfies CiRunEnding;
+      case "parked":
+        return { kind: "parked" } satisfies CiRunEnding;
+      case "stopped":
+        return boundary.stop;
     }
   });
 
@@ -515,7 +512,7 @@ const ClaimArgs = Schema.Struct({ item: Schema.String, runId: Schema.String });
 // journal.
 const releaseClaims = (runId: RunId, context: RepoContext) =>
   Effect.gen(function* () {
-    const held = yield* (yield* recordsOfRun).held(runId, Claims.refMarker.name);
+    const held = yield* (yield* recordsOfRun(runId)).held(runId, Claims.refMarker.name);
 
     for (const marker of held) {
       for (const args of Option.toArray(Schema.decodeUnknownOption(ClaimArgs)(marker))) {
@@ -922,10 +919,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
         } satisfies CiRunEnding;
       }
 
-      const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
-        flow: refOf(handle, persona),
-        item: item.value,
-      });
+      const run = yield* startOwnRun(refOf(handle, persona), item.value);
 
       if (Option.isNone(run)) {
         return {
@@ -937,7 +931,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
       started = Option.some(run.value.id);
       yield* Console.log(`started ${run.value.id} (${runLabel(run.value)}) for ${options.item}`);
 
-      return yield* followToBoundary(run.value.id, repo.leases.ttl, stopAt);
+      return yield* followToBoundary(run.value, parked, repo.leases.ttl, stopAt);
     });
 
     const program: Effect.Effect<

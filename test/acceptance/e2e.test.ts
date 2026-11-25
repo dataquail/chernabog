@@ -91,7 +91,7 @@ describe("a run killed mid-agent", () => {
     await sandbox.github.stop();
   });
 
-  test("resumes after the last completed step, and the agent resumes its session", async () => {
+  test("ends interrupted when killed, and its phase repeats in a new run", async () => {
     const issue = sandbox.github.addIssue("Survive a crash", ["auto:eligible"]);
     const hang = join(sandbox.root, "hang-once");
     writeFileSync(hang, "");
@@ -107,24 +107,27 @@ describe("a run killed mid-agent", () => {
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
 
+    // The run it left keeps what it put on the issue, the claim's label swap
+    // included, so a person queues it again.
+    const labels = sandbox.github.issue(issue).labels;
+    labels.splice(0, labels.length, "auto:eligible");
+
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
-    expect(output).toContain("resuming");
+    expect(output).toContain("as interrupted");
     expect(output).toContain("done: #1:");
     expect(code).toBe(0);
 
+    // Nothing resumes a run from its journal (ADR 23, decision 3): the new run
+    // claims again and starts its agent call again, and opens one pull request.
     const calls = sandbox.claudeCalls();
     expect(calls).toHaveLength(2);
-    expect(calls[0]).toStartWith("start ");
-    expect(calls[1]).toStartWith("resume ");
-    const [start = "", resume = ""] = calls;
-    expect(resume.split(" ")[1]).toBe(start.split(" ")[1]);
+    expect(calls.every((call) => call.startsWith("start "))).toBe(true);
 
-    // The claim ran once, before the crash, and was not repeated.
     const claims = sandbox.github
       .commentsOn(issue)
       .filter((comment) => comment.body.includes("chernabog-claim"));
 
-    expect(claims).toHaveLength(1);
+    expect(claims).toHaveLength(2);
     expect(sandbox.github.pulls.size).toBe(1);
   }, 90_000);
 });

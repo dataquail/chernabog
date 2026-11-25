@@ -37,10 +37,12 @@ export const EndAs = Schema.Struct({
 
 export type EndAs = typeof EndAs.Type;
 
+// A session, and whether a person works in it.
 const OpenSessionView = Schema.Struct({
   sessionId: Schema.String,
   launcher: Schema.String,
   handle: Schema.String,
+  withPerson: Schema.Boolean,
 });
 
 // A cancelled run and what cancelling it cleaned up: the worktrees removed,

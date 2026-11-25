@@ -58,10 +58,10 @@ describe("a module's wiring", () => {
         flow: Option.none(),
       });
 
-      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
+      const swept = yield* (yield* RunFlowsCommands).SweepJournalsCommand();
 
       expect(active.runs).toEqual([]);
-      expect(recovered.executed).toEqual([]);
+      expect(swept.swept).toEqual([]);
     }).pipe(Effect.provide(engineInScratch)),
   );
 });

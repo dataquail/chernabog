@@ -35,12 +35,8 @@ export type WorkflowsClientService = {
     flow: FlowRef,
     executionId: string,
   ) => Effect.Effect<Option.Option<WorkflowOutcome>>;
-  // Resumes a run's execution from its journal, opening the journal if this
-  // process hasn't, as after a restart; whether the run had a journal here.
-  readonly resume: (flow: FlowRef, runId: RunId, executionId: string) => Effect.Effect<boolean>;
   // Interrupts an execution that executes in this process, for good: the
-  // engine keeps the interrupt in its journal, so a resume in this process
-  // stops at once. An agent call in progress stops at once, leaving its
+  // engine keeps the interrupt in its journal. An agent call in progress stops at once, leaving its
   // session open; any other activity in progress finishes first. It reaches
   // nothing in a journal this process hasn't open: a spoke's workflow stops
   // when its spoke is ended (RunSpokesClient, ADR 23 decision 5), and a
@@ -65,8 +61,6 @@ export type WorkflowsClientService = {
   // for the hub to fold into state.db (ADR 23, decisions 3 and 8); none for a
   // run with no journal.
   readonly reports: (runId: RunId, after: number) => Effect.Effect<ReadonlyArray<SpokeReport>>;
-  // Completes a durable deferred a run waits on, waking it.
-  readonly wake: (deferred: string, token: string) => Effect.Effect<void>;
   // Adds a line to a run's log.
   readonly note: (runId: RunId, line: string) => Effect.Effect<void>;
 };
