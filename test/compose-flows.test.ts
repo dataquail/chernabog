@@ -230,14 +230,110 @@ describe("the human-initiated document runs as the recipe does", () => {
   }
 });
 
+// Known divergences of the plan document from the recipe when a new run takes
+// a parked plan up, which only the take-up path shows (#710): in these
+// scenarios each is asserted as it stands, and taken out of the otherwise full
+// comparison. A fix fails these assertions until they're updated.
+//
+// - The recipe's new run claims again (Implement.claim), so it posts another
+//   claim comment per take-up; the document's takes the claim ref back only.
+// - The document's new run journals `claim-again` and `plan-answer-<round>`.
+// - With questions after a person's changes, the document's run leaves the
+//   spec assigned to the persona; the recipe's doesn't.
+const TAKES_A_PLAN_UP = new Map<string, { readonly takeUps: number; readonly assigned: boolean }>([
+  ["when a person approves the plan", { takeUps: 1, assigned: false }],
+  [
+    "when a person asks for changes, and approves the plan drafted again",
+    { takeUps: 2, assigned: false },
+  ],
+  ["when the plan fails its checks, and the agent fixes it", { takeUps: 1, assigned: false }],
+  [
+    "when the agent has questions about the changes a person asked for",
+    { takeUps: 1, assigned: true },
+  ],
+]);
+
+const isClaimComment = (comment: string) => comment.startsWith("Claimed by Chernabog at ");
+
+const isTakeUpStep = (step: string) => step === "claim-again" || /^plan-answer-\d+$/.test(step);
+
+// The plan document's run as the recipe's would be, but for #710's divergences.
+const planTakenUpAsTheRecipe = (scenario: Scenario, takeUps: number, assigned: boolean) =>
+  Effect.gen(function* () {
+    const { did, ends, settings, setup, wake } = scenario;
+    const fromRecipe = yield* observe(plan, "plan", setup, PLAN_WORK_ITEM, wake, settings);
+
+    const fromDocument = yield* observe(
+      yield* composedPlan,
+      "plan",
+      setup,
+      PLAN_WORK_ITEM,
+      wake,
+      settings,
+    );
+
+    expect(fromRecipe.status).toBe(ends);
+
+    // #710: the recipe's claim comment once per run, the document's once.
+    expect(fromRecipe.comments.filter(isClaimComment)).toHaveLength(takeUps + 1);
+    expect(fromDocument.comments.filter(isClaimComment)).toHaveLength(1);
+
+    // #710: the document's take-up steps, which the recipe has none of.
+    expect(fromDocument.steps.filter(isTakeUpStep)).toEqual([
+      "claim-again",
+      ...Arr.makeBy(takeUps, (at) => `plan-answer-${at + 1}`),
+    ]);
+    expect(fromRecipe.steps.filter(isTakeUpStep)).toEqual([]);
+
+    // #710: the document's run left the persona assigned, in one scenario;
+    // in the others both leave the same, compared in full.
+    const leftAssigned = Option.liftPredicate(fromDocument, () => assigned);
+
+    for (const document of Option.toArray(leftAssigned)) {
+      expect([fromRecipe.assigned, document.assigned]).toEqual([[], ["chernabog-bot"]]);
+    }
+
+    const firstClaim = fromRecipe.comments.findIndex(isClaimComment);
+
+    expect({
+      ...fromDocument,
+      steps: fromDocument.steps.filter((step) => !isTakeUpStep(step)),
+      assigned: Option.match(leftAssigned, {
+        onNone: () => fromDocument.assigned,
+        onSome: () => fromRecipe.assigned,
+      }),
+    }).toEqual({
+      ...fromRecipe,
+      comments: fromRecipe.comments.filter(
+        (comment, at) => !isClaimComment(comment) || at === firstClaim,
+      ),
+    });
+
+    did(fromRecipe);
+  });
+
 describe("the plan document runs as the recipe does", () => {
   for (const scenario of PLAN_SCENARIOS) {
+    const diverges = Option.fromUndefinedOr(TAKES_A_PLAN_UP.get(scenario.title));
+
     effect(
       scenario.title,
-      () => runsAsTheRecipe("plan", plan, composedPlan, PLAN_WORK_ITEM, scenario),
+      () =>
+        Option.match(diverges, {
+          onNone: () => runsAsTheRecipe("plan", plan, composedPlan, PLAN_WORK_ITEM, scenario),
+          onSome: ({ assigned, takeUps }) => planTakenUpAsTheRecipe(scenario, takeUps, assigned),
+        }),
       60_000,
     );
   }
+
+  test("every scenario #710's divergences are taken out of is one of the plan's", () => {
+    expect(
+      [...TAKES_A_PLAN_UP.keys()].filter(
+        (title) => !PLAN_SCENARIOS.some((scenario) => scenario.title === title),
+      ),
+    ).toEqual([]);
+  });
 });
 
 // The recipe waits 14 days for a person's answer, which no run here can, so

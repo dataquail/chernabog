@@ -1533,6 +1533,16 @@ export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 // at its park.
 const parkedRuns = new Set<RunId>();
 
+// What each run that ended at its park was waiting on then, by run: its waits
+// go with it, and a test may ask which signal it parked on (parkedOn).
+const waitsAtPark = new Map<
+  RunId,
+  ReadonlyArray<{ readonly signal: string; readonly deferred: string }>
+>();
+
+// The waits a run that ended at its park was parked on; none for any other run.
+export const parkedOn = (runId: RunId) => waitsAtPark.get(runId) ?? [];
+
 const parksHere: OnParked = (runId) =>
   Effect.sync(() => {
     parkedRuns.add(runId);
@@ -1659,6 +1669,14 @@ export const pollRun = (run: EngineRun) =>
         if (Option.isNone(outcome.ended) && parkedRuns.has(run.id)) {
           // What its journal holds by its park first, as the own hub folds before it ends one.
           yield* foldRun(run.id);
+
+          waitsAtPark.set(
+            run.id,
+            (yield* readRunHistoryHandler({ runId: run.id })).waits.map((wait) => ({
+              signal: wait.signal,
+              deferred: wait.deferred,
+            })),
+          );
 
           // Its claims go, as a spoke's do when its run stops at a park, so the
           // run that takes its item up may claim it (ci-run.main.ts's wrap-up).
