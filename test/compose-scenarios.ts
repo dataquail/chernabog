@@ -389,6 +389,26 @@ export const IMPLEMENT_SCENARIOS = scenarios((scenario) => {
     "needs-human",
   );
 
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = queued();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ci-1-1");
+    },
+  );
+
   scenario(
     "when CI is red and stays red",
     () => {
@@ -1108,6 +1128,26 @@ export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
     toPerson,
   );
 
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = changesAsked();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ci-1-1");
+    },
+  );
+
   scenario(
     "when CI is red and stays red",
     () => {
@@ -1338,6 +1378,26 @@ export const RESOLVE_CONFLICTS_SCENARIOS = scenarios((scenario) => {
     (recipe) => {
       toPerson(recipe);
       expect(recipe.pushes).toBe(0);
+    },
+  );
+
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = conflicting();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.summary).toBe(`#${PULL}: merged main and resolved its conflicts`);
     },
   );
 
@@ -1862,6 +1922,26 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
       return fake;
     },
     "done",
+  );
+
+  // GitHub runs no CI on a head that conflicts with its base, so the wait
+  // ends there and resolve-conflicts takes the conflict (#603).
+  scenario(
+    "when the pull request conflicts with its base while CI is pending",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.merge.stateAfterPush = Option.some("dirty");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.steps).toContain("ci-1-1");
+    },
   );
 
   scenario(

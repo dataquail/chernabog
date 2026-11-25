@@ -1422,10 +1422,21 @@ export const openPullRequest = (
 
 const CI_POLL = Duration.minutes(1);
 
+// A poll's reading of CI. A pending one says when the round's wait began,
+// by the first poll's clock, and whether ciTimeout has passed since; one from
+// before those were recorded has neither. Conflicting is CI pending on a head
+// that conflicts with its base, where GitHub runs no pull_request workflow, so
+// it won't settle (#603).
 const CiReading = Schema.Union([
-  Schema.Struct({ state: Schema.Literal("pending"), waitingOn: Schema.Array(Schema.String) }),
+  Schema.Struct({
+    state: Schema.Literal("pending"),
+    waitingOn: Schema.Array(Schema.String),
+    since: Schema.optionalKey(Schema.String),
+    overdue: Schema.optionalKey(Schema.Boolean),
+  }),
   Schema.Struct({ state: Schema.Literal("green") }),
   Schema.Struct({ state: Schema.Literal("red"), failedChecks: Schema.Array(Schema.String) }),
+  Schema.Struct({ state: Schema.Literal("conflicting") }),
 ]);
 
 type CiReading = typeof CiReading.Type;
@@ -1466,19 +1477,55 @@ const parkOnCi = (park: CiParking, round: number, timeout: Duration.Duration, op
     named(options, `ci-${round}`),
   );
 
-// Polls the pull request's checks durably until they stop pending, or
-// ciTimeout passes. In a CI job, with somewhere to park, a first reading
-// still pending parks instead (parkOnCi).
+// One poll of the pull request's CI, for a round whose wait began `began`
+// (none for its first poll, which begins it now).
+const readChecks = (
+  pullRequest: number,
+  began: Option.Option<string>,
+  timeout: Duration.Duration,
+) =>
+  Effect.gen(function* () {
+    const reading = yield* Ci.pullRequestState(pullRequest);
+
+    if (reading.state === "green") {
+      return { state: "green" } as const;
+    }
+
+    if (reading.state === "red") {
+      return { state: "red", failedChecks: reading.failedChecks } as const;
+    }
+
+    if (yield* Ci.conflicting(pullRequest)) {
+      return { state: "conflicting" } as const;
+    }
+
+    const since = yield* Option.match(began, {
+      onNone: () => Effect.map(DateTime.now, DateTime.formatIso),
+      onSome: Effect.succeed,
+    });
+
+    const overdue = yield* Phases.pastSince(DateTime.make(since), timeout);
+
+    return { state: "pending", waitingOn: reading.waitingOn, since, overdue } as const;
+  });
+
+// Polls the pull request's checks durably until they stop pending, ciTimeout
+// passes from when the round's wait began, or the pull request conflicts with
+// its base, where CI won't run. In a CI job, with somewhere to park, a first
+// reading still pending parks instead (parkOnCi).
 const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
   Effect.gen(function* () {
     const { timeout } = yield* Settings.ci;
     const parking = Option.fromUndefinedOr(options.park);
 
+    // A backstop for a wait whose readings say neither when it began nor
+    // whether it is overdue, which a run from before they did replays.
     const maxPolls = Math.max(
       1,
       Math.ceil(Duration.toMillis(timeout) / Duration.toMillis(CI_POLL)),
     );
 
+    let began = Option.none<string>();
     let reading: CiReading = { state: "pending", waitingOn: [] };
 
     for (let poll = 1; reading.state === "pending"; poll++) {
@@ -1486,7 +1533,7 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
         return { state: "left" } as const;
       }
 
-      if (poll > maxPolls) {
+      if (poll > maxPolls || reading.overdue === true) {
         return yield* new CiTimedOut({
           pullRequest,
           after: Duration.format(timeout),
@@ -1507,9 +1554,13 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
 
       reading = yield* activity(
         named(options, `ci-${round}-${poll}`),
-        Ci.pullRequestState(pullRequest),
+        readChecks(pullRequest, began, timeout),
         CiReading,
       );
+
+      if (reading.state === "pending" && Option.isNone(began)) {
+        began = Option.fromUndefinedOr(reading.since);
+      }
     }
 
     return reading;
@@ -1518,10 +1569,18 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
 // Why an item a CI job parked on its pull request's CI (awaitingCi) can't
 // start yet, for a source to hold it with: the checks are still pending.
 // None once they're green or red, when the job that resumes it reads them.
+// None too once the pull request conflicts with its base, where CI won't
+// run, for the job to end its wait.
 export const waitingOnCi = (pullRequest: number) =>
-  Effect.map(Ci.pullRequestState(pullRequest), (reading) =>
-    Option.liftPredicate(`waits on CI for #${pullRequest}`, () => reading.state === "pending"),
-  );
+  Effect.gen(function* () {
+    const reading = yield* Ci.pullRequestState(pullRequest);
+
+    if (reading.state !== "pending" || (yield* Ci.conflicting(pullRequest))) {
+      return Option.none<string>();
+    }
+
+    return Option.some(`waits on CI for #${pullRequest}`);
+  });
 
 // As waitingOnCi, for a parked wait whose record's `data` says when it began:
 // none once ciTimeout has passed since, too, when the run that takes it up
@@ -1594,6 +1653,8 @@ const waitForCiIn = <E, R>(
         return Option.some(round);
       }
 
+      // Green, or conflicting with its base, where CI won't run: nothing to
+      // fix, and the flow goes on, as resolve-conflicts takes the conflict.
       if (reading.state !== "red") {
         return Option.none<number>();
       }

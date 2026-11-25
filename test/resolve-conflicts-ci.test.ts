@@ -284,6 +284,44 @@ for (const [form, loading] of forms) {
       ENGINE_TIMEOUT,
     );
 
+    // GitHub runs no CI on a head that conflicts with its base, so a wait on
+    // it would never settle (#603).
+    effect(
+      "whose base moves again before CI starts, ends its wait, records the review phase again, and leaves the new conflict to the next run",
+      () =>
+        Effect.gen(function* () {
+          const fake = conflicting("review-asked");
+          fake.merge.afterPush = Option.some(PENDING);
+          fake.merge.stateAfterPush = Option.some("dirty");
+          const run = yield* runToEnd(yield* handle, fake, work);
+
+          expect(run.status).toBe("done");
+          expect(summaryOf(run)).toBe(`#${PULL}: merged main and resolved its conflicts`);
+          expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+          expect(Option.map(recordNow(fake), (found) => found.phase)).toEqual(
+            Option.some("review-asked"),
+          );
+        }),
+      ENGINE_TIMEOUT,
+    );
+
+    effect(
+      "parked, is offered once the pull request conflicts with its base again, and the run that takes it up ends the wait",
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* parkedEarlier(PENDING, Duration.minutes(1));
+          fake.merge.state = "dirty";
+          const run = yield* resumed(fake);
+
+          expect(run.status).toBe("done");
+          expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+          expect(Option.map(recordNow(fake), (found) => found.phase)).toEqual(
+            Option.some("review-asked"),
+          );
+        }),
+      ENGINE_TIMEOUT,
+    );
+
     effect(
       "still pending past ciTimeout, counted from when the wait began, goes to a person",
       () =>
