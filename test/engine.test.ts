@@ -557,6 +557,53 @@ describe("the engine", () => {
   );
 
   effect(
+    "a run that has ended never runs its flow again: its execution completes at once (#611)",
+    () =>
+      Effect.gen(function* () {
+        const ends = Effect.gen(function* () {
+          yield* startRunHandler({
+            id: RunId.make("ended"),
+            coreVersion: BUNDLED_CORE,
+            repo: "demo",
+            persona: IMPLICIT,
+            flow: "demo",
+            itemKey: "ended",
+            itemTitle: Option.none(),
+            itemUrl: Option.none(),
+            item: Option.some(item("ended")),
+          });
+
+          // Cancelled while nothing ran it, as a run whose workflow is caught in a
+          // replay loop is: then the engine delivers its run again.
+          yield* cancelRunHandler({
+            target: CancelTarget.cases.ById.make({ asked: "ended" }),
+            by: "alice",
+            closeSessions: false,
+            endAs: Option.none(),
+          });
+
+          const execution = yield* handle.workflow.execute(
+            { runId: "ended", item: item("ended") },
+            { discard: true },
+          );
+
+          return yield* handle.workflow.poll(execution).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: Option.isSome,
+              times: POLLS,
+            }),
+          );
+        });
+
+        const { value } = yield* withEngine(ends);
+
+        expect(Option.map(value, (result) => result._tag)).toEqual(Option.some("Complete"));
+        expect(executed.filter((line) => line.startsWith("ended:"))).toEqual([]);
+      }),
+  );
+
+  effect(
     "a start a crash interrupted runs once on recovery, whether or not its workflow had started",
     () =>
       Effect.gen(function* () {

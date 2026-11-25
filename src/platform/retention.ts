@@ -26,6 +26,9 @@ export type RetentionPolicy = {
 };
 
 // What the daemon keeps of <home>/telemetry: 30 days, and at most 500 MB.
+// Today's folder, which the sweep never touches, is held to the same cap as
+// it is written (FileTelemetry's maxBytesPerDay), so a runaway can't fill the
+// disk before the day turns over (#611).
 export const TELEMETRY_RETENTION: RetentionPolicy = {
   maxAgeDays: 30,
   maxBytes: 500 * 1024 * 1024,

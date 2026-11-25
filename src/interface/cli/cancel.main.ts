@@ -137,7 +137,11 @@ export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string
         return ["its workflow stopped in the engine"];
       }
 
-      return ["its workflow is interrupted in the engine, which never resumes it"];
+      // Said as it is (#611): cancel waited and the workflow went on. Its next
+      // pass, which finds the run ended, ends it without running its flow.
+      return [
+        "its workflow hadn't stopped in the engine 10 seconds after the interrupt; it ends, without running its flow, the next time the daemon runs it, and daemon.log says if it keeps restarting instead",
+      ];
     },
   });
 

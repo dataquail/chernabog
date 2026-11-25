@@ -63,7 +63,9 @@ Look before you guess. Everything below is under the chernabog home,
 `~/.config/chernabog` (`CHERNABOG_HOME` moves it; a sandbox's is its `home/`).
 
 - **`daemon.log`**: what the daemon says, a timestamped line each: runs started
-  and finished, skipped ticks, restarts, retention sweeps. Today's (UTC);
+  and finished, skipped ticks, restarts, retention sweeps, and a run whose
+  workflow keeps restarting without finishing a pass, which the engine then
+  slows (`PassPacing`, #611). Today's (UTC);
   earlier days' are `daemon.<YYYY-MM-DD>.log`, deleted after 30 days.
 - **`daemon.out.log`**: the daemon's stdout and stderr as the service manager
   catches them, which is mostly a crash. Emptied past 10 MB.
@@ -83,7 +85,9 @@ Look before you guess. Everything below is under the chernabog home,
   The daemon sweeps it when it starts and every 24 hours
   (`TELEMETRY_RETENTION`, `src/platform/retention.ts`): day folders older than
   30 days go, then the oldest while the rest hold more than 500 MB, never
-  today's.
+  today's. Today's is held to 500 MB as it is written: past it, a process
+  stops writing telemetry until the next UTC day, and the daemon says so in
+  `daemon.log`.
 
 A **span** line is `type: "span"`, `traceId`, `spanId`, `parentSpanId` (absent
 on a root), `name`, `startTime`, `endTime` (ISO), `durationMs`, `status`

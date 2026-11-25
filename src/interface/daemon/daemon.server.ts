@@ -584,7 +584,7 @@ export const runDaemon = Effect.gen(function* () {
   const flowLayers = handles.flatMap((handle) =>
     Option.toArray(
       Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) =>
-        flowLayer(handle, servicesFrom(personas), hooks),
+        flowLayer(handle, servicesFrom(personas), hooks, log),
       ),
     ),
   );

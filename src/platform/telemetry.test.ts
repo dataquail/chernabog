@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { effect } from "../../test/effect-test.ts";
-import { FileTelemetry } from "./telemetry.ts";
+import { FileTelemetry, type FileTelemetryOptions } from "./telemetry.ts";
 
 // What a test reads of a line, decoded as any reader of the files would.
 const TelemetryLine = Schema.Struct({
@@ -41,6 +41,10 @@ const traced = <A, E>(
   program: Effect.Effect<A, E>,
   warn: (line: string) => void = () => {},
 ) => program.pipe(Effect.provide(FileTelemetry.layer({ dir, process: "cli", warn })));
+
+// Runs `program` under the telemetry layer as `options` set it up.
+const tracedWith = <A, E>(options: FileTelemetryOptions, program: Effect.Effect<A, E>) =>
+  program.pipe(Effect.provide(FileTelemetry.layer(options)));
 
 // Every record under `dir`, by the day folder it was written in.
 const recordsByDay = (dir: string) =>
@@ -226,5 +230,95 @@ describe("FileTelemetry", () => {
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("telemetry");
     }),
+  );
+
+  effect("a day past its cap stops being written, and says so once, on stderr and the log", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+      const warnings: Array<string> = [];
+      const said: Array<string> = [];
+
+      yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+
+      yield* tracedWith(
+        {
+          dir,
+          process: "cli",
+          maxBytesPerDay: 1000,
+          warn: (line) => warnings.push(line),
+          log: (line) => Effect.sync(() => said.push(line)),
+        },
+        Effect.gen(function* () {
+          for (const index of [1, 2, 3, 4, 5, 6]) {
+            yield* Effect.log(`line ${index} ${"x".repeat(200)}`);
+            // Each line is flushed on its own, as a long-running daemon's are.
+            yield* TestClock.adjust("1 second");
+          }
+        }),
+      );
+
+      const written = (yield* recordsByDay(dir))["2026-11-22"] ?? [];
+
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.length).toBeLessThan(6);
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain("writes no more telemetry until the next UTC day");
+      expect(warnings).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("what other processes wrote to the day counts toward its cap", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      const said: Array<string> = [];
+
+      yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+      yield* fs.makeDirectory(`${dir}/2026-11-22`, { recursive: true });
+      yield* fs.writeFileString(`${dir}/2026-11-22/daemon-1.jsonl`, "y".repeat(1000));
+
+      yield* tracedWith(
+        {
+          dir,
+          process: "cli",
+          maxBytesPerDay: 1000,
+          log: (line) => Effect.sync(() => said.push(line)),
+        },
+        Effect.log("one line"),
+      );
+
+      expect(yield* fs.readDirectory(`${dir}/2026-11-22`)).toEqual(["daemon-1.jsonl"]);
+      expect(said).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("a capped day leaves the next day to be written", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+      const said: Array<string> = [];
+
+      yield* TestClock.setTime(Date.parse("2026-11-22T23:59:58Z"));
+
+      yield* tracedWith(
+        {
+          dir,
+          process: "cli",
+          maxBytesPerDay: 200,
+          log: (line) => Effect.sync(() => said.push(line)),
+        },
+        Effect.gen(function* () {
+          yield* Effect.log(`too much ${"x".repeat(500)}`);
+          yield* TestClock.adjust("1 second");
+          yield* TestClock.adjust("1 minute");
+          yield* Effect.log("a new day");
+        }),
+      );
+
+      const byDay = yield* recordsByDay(dir);
+
+      expect(Object.keys(byDay)).toEqual(["2026-11-23"]);
+      expect(byDay["2026-11-23"]?.map((record) => record.message)).toEqual(["a new day"]);
+      expect(said).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

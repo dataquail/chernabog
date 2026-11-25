@@ -34,6 +34,7 @@ import {
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
@@ -70,6 +71,7 @@ import {
   NodeEntered,
   NodeFinished,
 } from "../../domain/run/node-did.value-object.ts";
+import { PassPacing, type UnfinishedPass } from "../../domain/run/pass-pacing.value-object.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
@@ -560,6 +562,57 @@ const markerHolds = (runId: RunId, flow: Flow) =>
     });
   });
 
+// Each execution's last pass in this process that ended interrupted, without
+// a result, by execution id; a pass that ends any other way takes its entry out.
+const unfinishedPasses = new Map<string, UnfinishedPass>();
+
+// Says a run's workflow keeps restarting, as the daemon writes it to daemon.log.
+export type RestartingSaid = (line: string) => Effect.Effect<void>;
+
+// A run's workflow, paced (#611). The engine replays a workflow whose pass
+// ended interrupted, without a result, at once, so a pass that keeps ending
+// that way would replay many times a second, for good. After enough quick
+// restarts in a row each next pass waits, longer each time (PassPacing), and
+// says so, to `said` and the run's log; being told to stop ends the wait.
+const pacingPasses =
+  (executionId: string, runId: string, said: RestartingSaid) =>
+  <A, E, R>(pass: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const next = PassPacing.next(
+        Option.fromUndefinedOr(unfinishedPasses.get(executionId)),
+        yield* Clock.currentTimeMillis,
+      );
+
+      unfinishedPasses.delete(executionId);
+
+      for (const wait of Option.toArray(next.wait)) {
+        const line = `run ${runId}: its workflow restarted ${next.quick} times in a row without finishing a pass; waiting ${Duration.format(Duration.millis(wait))} before the next`;
+
+        yield* said(line);
+        yield* runLogFor(runId).pipe(
+          Effect.flatMap((log) => log.log(line)),
+          Effect.ignore,
+        );
+        yield* Effect.raceFirst(
+          Effect.sleep(Duration.millis(wait)),
+          Effect.suspend(() => Deferred.await(stoppingOf(executionId).asked)),
+        );
+      }
+
+      return yield* pass.pipe(
+        Effect.onExit((exit) =>
+          Effect.gen(function* () {
+            if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+              unfinishedPasses.set(executionId, {
+                endedAt: yield* Clock.currentTimeMillis,
+                quick: next.quick,
+              });
+            }
+          }),
+        ),
+      );
+    });
+
 // A flow's workflow, registered in the engine. Its runs take their steps,
 // markers and subjects through the runs' dispatchers, which the composition
 // root provides from the runs module.
@@ -567,11 +620,25 @@ export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
   hooks: StepHooks = noHooks,
+  restarting: RestartingSaid = () => Effect.void,
 ) =>
   handle.workflow.toLayer((payload, executionId) =>
     Effect.gen(function* () {
       const runId = RunId.make(payload.runId);
       const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
+
+      // A run that has ended (cancelled, superseded, lost, ended at a park…)
+      // never runs its flow again: its workflow ends here with a result, which
+      // the engine keeps, so neither a redelivery nor a restart brings it back
+      // (#611). Cancel's interrupt ends the pass in flight, and this is the next.
+      for (const ended of Option.toArray(
+        Option.filter(row, (found) => found.status !== "running"),
+      )) {
+        return {
+          status: "skipped",
+          summary: `the run had already ended (${ended.status}), so its workflow ends without running`,
+        } satisfies RunResult;
+      }
 
       // A run started under a core this binary doesn't provide is never
       // replayed under this one: it goes to a person before any of its flow runs.
@@ -782,7 +849,11 @@ export const flowLayer = <R>(
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
 
       return outcome;
-    }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
+    }).pipe(
+      Effect.catchTag("RunFailed", Effect.fail),
+      Effect.orDie,
+      pacingPasses(executionId, payload.runId, restarting),
+    ),
   );
 
 export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): WorkflowOutcome => {

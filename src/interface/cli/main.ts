@@ -44,6 +44,7 @@ import {
   syncLabels,
 } from "../../modules/runs/runs.platform.ts";
 import { trustEndpoints } from "../../modules/trust/interface/cli/trust.endpoint-groups.ts";
+import { dailyLogWriting } from "../../platform/daily-log.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -504,14 +505,23 @@ const telemetryProcess = (args: ReadonlyArray<string>): TelemetryProcess =>
 
 // The tracer, and a logger beside the console's, writing this process's spans
 // and logs under the home's telemetry/ (CHERNABOG_HOME moves it, as the tests'
-// sandboxes do), for as long as the command runs.
+// sandboxes do), for as long as the command runs. The daemon says in
+// daemon.log when it stops writing a day that holds too much (#611).
 const TelemetryLive = Layer.unwrap(
   Effect.gen(function* () {
     const { root } = yield* Home;
+    const paths = homePaths(root);
     // The arguments the command line is parsed from, as Command.run reads them.
     const args = yield* (yield* Stdio.Stdio).args;
+    const writer = telemetryProcess(args);
 
-    return FileTelemetry.layer({ dir: homePaths(root).telemetry, process: telemetryProcess(args) });
+    if (writer === "daemon") {
+      const { log } = yield* dailyLogWriting(paths.daemonLog);
+
+      return FileTelemetry.layer({ dir: paths.telemetry, process: writer, log });
+    }
+
+    return FileTelemetry.layer({ dir: paths.telemetry, process: writer });
   }),
 );
 

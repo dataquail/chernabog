@@ -8,6 +8,12 @@
 // CLI call that ends at once loses nothing. Writing is best effort: a failure
 // is said on stderr once and its records are dropped, never failing the
 // program they describe.
+//
+// A day is bounded as it is written, not only by the retention sweep, which
+// never touches today's folder: once the folder holds more than `maxBytesPerDay`,
+// counting what other processes wrote there before this one first wrote that
+// day, this process writes nothing more to it, and says so once, on `warn`
+// and on `log`. It writes again on the next UTC day.
 
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -22,6 +28,8 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Tracer from "effect/Tracer";
 
+import { TELEMETRY_RETENTION } from "./retention.ts";
+
 export type TelemetryProcess = "daemon" | "cli";
 
 export type FileTelemetryOptions = {
@@ -30,6 +38,12 @@ export type FileTelemetryOptions = {
   readonly process: TelemetryProcess;
   // Where the one warning about a failed write goes; stderr by default.
   readonly warn?: (line: string) => void;
+  // How many bytes a day's folder may hold before this process stops writing
+  // to it: TELEMETRY_RETENTION's cap by default.
+  readonly maxBytesPerDay?: number;
+  // Where the process says, too, that it stopped writing a day, such as the
+  // daemon's daemon.log; nowhere else by default.
+  readonly log?: (line: string) => Effect.Effect<void>;
 };
 
 type SpanStatus = "ok" | "error" | "unfinished";
@@ -44,6 +58,12 @@ const NANOS_PER_MILLI = BigInt(1_000_000);
 const dateOfNanos = (nanos: bigint) => new Date(Number(nanos / NANOS_PER_MILLI));
 
 const dayOf = (date: Date) => date.toISOString().slice(0, 10);
+
+const MEGABYTE = 1024 * 1024;
+
+// What a day's lines take on disk, as they are appended.
+const bytesOf = (lines: ReadonlyArray<string>) =>
+  lines.reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0);
 
 const stderr = (line: string) => {
   process.stderr.write(`${line}\n`);
@@ -99,12 +119,19 @@ const make = (options: FileTelemetryOptions) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const warn = options.warn ?? stderr;
+    const maxBytesPerDay = options.maxBytesPerDay ?? TELEMETRY_RETENTION.maxBytes;
+    const sayInLog = options.log ?? (() => Effect.void);
     const fileName = `${options.process}-${process.pid}.jsonl`;
     const writing = yield* Semaphore.make(1);
 
     const pending: Array<Pending> = [];
     const open = new Set<RecordedSpan>();
     let warned = false;
+    // What each day's folder holds, as far as this process knows: what was
+    // there when it first wrote the day, then what it wrote since.
+    const heldOn = new Map<string, number>();
+    // The days this process stopped writing.
+    const capped = new Set<string>();
 
     const warnOnce = (line: string) => {
       if (!warned) {
@@ -160,23 +187,66 @@ const make = (options: FileTelemetryOptions) =>
       pending.push({ day: dayOf(log.date), line });
     });
 
-    const writeDay = (day: string, lines: ReadonlyArray<string>) => {
-      const folder = `${options.dir}/${day}`;
-      const file = `${folder}/${fileName}`;
+    // What the day's folder holds now, for a day this process hasn't written yet.
+    const heldBefore = (folder: string) =>
+      Effect.gen(function* () {
+        let bytes = 0;
 
-      return fs.makeDirectory(folder, { recursive: true, mode: 0o700 }).pipe(
-        Effect.andThen(
-          fs.writeFileString(file, `${lines.join("\n")}\n`, { flag: "a", mode: 0o600 }),
-        ),
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            warnOnce(
-              `chernabog: telemetry couldn't be written to ${file}, and is being dropped: ${Cause.pretty(cause)}`,
-            );
-          }),
-        ),
-      );
-    };
+        for (const entry of yield* fs.readDirectory(folder)) {
+          const info = yield* fs.stat(`${folder}/${entry}`);
+
+          if (info.type === "File") {
+            bytes += Number(info.size);
+          }
+        }
+
+        return bytes;
+      }).pipe(Effect.orElseSucceed(() => 0));
+
+    // Stops writing the day for good, and says so once.
+    const cap = (day: string, folder: string, held: number) =>
+      Effect.suspend(() => {
+        capped.add(day);
+        const line = `telemetry: ${folder} holds ${Math.round(held / MEGABYTE)} MB, past the ${Math.round(maxBytesPerDay / MEGABYTE)} MB a day may hold; this ${options.process} (pid ${process.pid}) writes no more telemetry until the next UTC day`;
+        warn(`chernabog: ${line}`);
+
+        return sayInLog(line);
+      });
+
+    const writeDay = (day: string, lines: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const folder = `${options.dir}/${day}`;
+        const file = `${folder}/${fileName}`;
+
+        if (capped.has(day)) {
+          return;
+        }
+
+        const held = heldOn.get(day) ?? (yield* heldBefore(folder));
+        const bytes = bytesOf(lines);
+
+        if (held + bytes > maxBytesPerDay) {
+          return yield* cap(day, folder, held + bytes);
+        }
+
+        yield* fs.makeDirectory(folder, { recursive: true, mode: 0o700 }).pipe(
+          Effect.andThen(
+            fs.writeFileString(file, `${lines.join("\n")}\n`, { flag: "a", mode: 0o600 }),
+          ),
+          Effect.tap(
+            Effect.sync(() => {
+              heldOn.set(day, held + bytes);
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.sync(() => {
+              warnOnce(
+                `chernabog: telemetry couldn't be written to ${file}, and is being dropped: ${Cause.pretty(cause)}`,
+              );
+            }),
+          ),
+        );
+      });
 
     // Takes everything buffered and writes it, a day's lines at a time. The
     // lines leave the buffer before the write, so once a flush starts it
