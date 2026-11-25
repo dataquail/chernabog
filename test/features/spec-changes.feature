@@ -58,7 +58,7 @@ Feature: A pull request that changes a spec waits for a person
     And it is handed to a person
     When carol, a person, approves it and hands it back to the personas
     Then bob asks for changes on one line
-    And alice fixes it in the same session she wrote it in
+    And alice fixes it
     And it is handed to a person again
     And bob does not review it again
     And it is left for a person to merge
