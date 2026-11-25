@@ -56,13 +56,21 @@ export type StatePrepared = { readonly kept: Option.Option<string> };
 // Readies `database` for this binary, under the chernabog home at `root`:
 // refused when a newer chernabog stamped it; copied and stamped when an older
 // one did, or none did.
-export const prepareState = (root: string, database: string) =>
+// `busyMillis` is how long its writes wait for another process's (interim,
+// until #661: a spoke writes state.db beside the daemon; engine.ts's
+// STATE_DB_BUSY_TIMEOUT).
+export const prepareState = (root: string, database: string, busyMillis = 0) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(database.slice(0, database.lastIndexOf("/")), { recursive: true });
 
     const db = yield* Effect.acquireRelease(
-      Effect.sync(() => new Database(database, { create: true })),
+      Effect.sync(() => {
+        const opened = new Database(database, { create: true });
+        opened.run(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(busyMillis))}`);
+
+        return opened;
+      }),
       (opened) =>
         Effect.sync(() => {
           opened.close();

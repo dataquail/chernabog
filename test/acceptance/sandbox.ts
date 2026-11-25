@@ -485,6 +485,66 @@ export const openSandbox = (
   const cli = cliOn(home, checkout);
   const runCli = collecting(cli);
 
+  // What a hub does before it starts a spoke (ADR 23, decision 2, step 1),
+  // standing in for #659's: records a run of `flow` on `item` in this
+  // machine's state.db, as the implicit persona, and answers its id. In a
+  // child process of its own, as the CLI is, through the runs module's own
+  // StartRunCommand handler.
+  const recordRun = (flow: string, item: Json) => {
+    const script = join(root, `record-run-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
+
+    writeFileSync(
+      script,
+      `import { BunServices } from "@effect/platform-bun";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { BUNDLED_CORE_VERSION } from "${ROOT}src/kernel/core-support.value-object.ts";
+import { RunId } from "${ROOT}src/kernel/run-id.id.ts";
+import { startRunHandler } from "${ROOT}src/modules/runs/commands/start-run.handler.ts";
+import { StateAt } from "${ROOT}test/sdk-fakes.ts";
+
+const item = JSON.parse(process.argv[3]);
+const id = RunId.make(crypto.randomUUID());
+
+await Effect.runPromise(
+  startRunHandler({
+    id,
+    coreVersion: BUNDLED_CORE_VERSION,
+    configTree: Option.none(),
+    repo: "demo",
+    persona: Option.none(),
+    flow: process.argv[2],
+    itemKey: item.key,
+    itemTitle: Option.fromUndefinedOr(item.title),
+    itemUrl: Option.fromUndefinedOr(item.url),
+    item: Option.some(item),
+  }).pipe(
+    Effect.provide(StateAt(${JSON.stringify(home)}).pipe(Layer.provideMerge(BunServices.layer))),
+    Effect.scoped,
+  ),
+);
+
+process.stdout.write(id);
+`,
+    );
+
+    return execFileSync(process.execPath, [script, flow, JSON.stringify(item)], {
+      cwd: ROOT,
+      encoding: "utf8",
+    }).trim();
+  };
+
+  // The CLI as a hub starts a spoke on this machine: its stdin a pipe the
+  // test holds open, as a hub holds a spoke's, and closes to stop it.
+  const spokeCli = (args: ReadonlyArray<string>) =>
+    spawn(program, [...programArgs, ...args], {
+      env: { ...env, CHERNABOG_HOME: home },
+      cwd: Option.getOrElse(Option.liftPredicate(checkout, existsSync), () => root),
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
   // Another machine on the same GitHub, with a home and a clone of its own,
   // set up as `other` says (as this one, unless given).
   const anotherMachine = (name: string, other: MachineOptions = machine) => {
@@ -680,6 +740,8 @@ export const openSandbox = (
     installCheckout,
     cli,
     runCli,
+    spokeCli,
+    recordRun,
     anotherMachine,
     claudeCalls,
     hookCalls,

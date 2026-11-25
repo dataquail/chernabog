@@ -299,6 +299,20 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
         ),
         Flag.withDefault(false),
       ),
+      run: Flag.String("run").pipe(
+        Flag.withDescription(
+          "A hub's hand-over, which makes this a spoke on a machine: the run it recorded, to execute against the machine's home, with the item it is for as --work-item-file or --work-item. The spoke stops as on SIGTERM when its stdin closes",
+        ),
+        Flag.optional,
+      ),
+      workItem: Flag.String("work-item").pipe(
+        Flag.withDescription("The handed-over run's work item, as JSON"),
+        Flag.optional,
+      ),
+      workItemFile: Flag.String("work-item-file").pipe(
+        Flag.withDescription("A file holding the handed-over run's work item, as JSON"),
+        Flag.optional,
+      ),
     },
     (options) =>
       Effect.gen(function* () {
@@ -323,6 +337,9 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             stopAfter: Duration.seconds(options.stopAfterSeconds),
             repo,
             workflowRun: fromEnv("GITHUB_RUN_ID"),
+            run: options.run,
+            workItem: options.workItem,
+            workItemFile: options.workItemFile,
             logs: Option.orElse(options.logs, () =>
               Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
             ),
@@ -332,7 +349,7 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
       }),
   ).pipe(
     Command.withDescription(
-      "The run job: one item on one runner, in a home of its own, to the next phase boundary: where a run would park on a signal, it lets go of the claim and exits 0",
+      "The run job: one item on one runner, in a home of its own, to the next phase boundary: where a run would park on a signal, it lets go of the claim and exits 0. With --run, a spoke on a machine: the run a hub recorded, in the machine's home and a journal of its own, to the next phase boundary",
     ),
   );
 

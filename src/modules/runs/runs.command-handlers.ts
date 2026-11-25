@@ -18,6 +18,8 @@ import { DeliverSignalsCommand } from "./commands/deliver-signals.command.ts";
 import { deliverSignalsHandler } from "./commands/deliver-signals.handler.ts";
 import { EnterStepCommand } from "./commands/enter-step.command.ts";
 import { enterStepHandler } from "./commands/enter-step.handler.ts";
+import { ExecuteRunCommand } from "./commands/execute-run.command.ts";
+import { executeRunHandler } from "./commands/execute-run.handler.ts";
 import { FinishRunCommand } from "./commands/finish-run.command.ts";
 import { finishRunHandler } from "./commands/finish-run.handler.ts";
 import { FinishStepCommand } from "./commands/finish-step.command.ts";
@@ -144,6 +146,7 @@ export const runFlowsCommandGroup = Command.group(
   CancelRunCommand,
   CheckRunLeasesCommand,
   DeliverSignalsCommand,
+  ExecuteRunCommand,
   GateFlowCommand,
   PlanTickCommand,
   PollRunCommand,
@@ -157,6 +160,7 @@ const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
   CancelRunCommand: (payload) => cancelRunHandler(payload),
   CheckRunLeasesCommand: (payload) => checkRunLeasesHandler(payload),
   DeliverSignalsCommand: (payload) => deliverSignalsHandler(payload),
+  ExecuteRunCommand: (payload) => executeRunHandler(payload),
   GateFlowCommand: (payload) => gateFlowHandler(payload),
   PlanTickCommand: (payload) => planTickHandler(payload),
   PollRunCommand: (payload) => pollRunHandler(payload),

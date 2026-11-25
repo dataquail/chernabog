@@ -82,3 +82,49 @@ export const withShutdownDeadline =
       () => self,
       (disarm) => Effect.sync(disarm),
     );
+
+// The parts of the process stopping when stdin closes uses, so a test can
+// stand in: watching stdin for its end (the function that stops watching),
+// and stopping as on SIGTERM.
+export type StdinHost = {
+  readonly watch: (closed: () => void) => () => void;
+  readonly stop: () => void;
+};
+
+const processStdin: StdinHost = {
+  watch: (closed) => {
+    process.stdin.once("end", closed);
+    process.stdin.once("close", closed);
+    process.stdin.resume();
+
+    return () => {
+      process.stdin.off("end", closed);
+      process.stdin.off("close", closed);
+      // Destroyed only once nothing listens, so it says nothing more, and a
+      // spoke that ended on its own doesn't wait on its stdin to exit.
+      process.stdin.destroy();
+    };
+  },
+  stop: () => {
+    process.kill(process.pid, "SIGTERM");
+  },
+};
+
+// Stops the process as on SIGTERM, deadline and all, once its stdin closes,
+// for as long as the scope lasts. A spoke's stdin is a pipe its hub holds
+// open, so a spoke dies with its hub, however the hub exits (ADR 23,
+// decision 7).
+export const stopWhenStdinCloses = (host: StdinHost = processStdin) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      let stopped = false;
+
+      return host.watch(() => {
+        if (!stopped) {
+          stopped = true;
+          host.stop();
+        }
+      });
+    }),
+    (unwatch) => Effect.sync(unwatch),
+  );

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
 
-import { armShutdownDeadline, type ShutdownHost } from "./shutdown.ts";
+import { effect } from "../../test/effect-test.ts";
+import {
+  armShutdownDeadline,
+  type ShutdownHost,
+  type StdinHost,
+  stopWhenStdinCloses,
+} from "./shutdown.ts";
 
 type Listener = () => void;
 
@@ -79,5 +86,61 @@ describe("armShutdownDeadline", () => {
 
     expect(fake.timers).toEqual([]);
     expect([...fake.listeners.values()].flat()).toEqual([]);
+  });
+});
+
+describe("stopWhenStdinCloses", () => {
+  // A stdin a test closes by hand, and the stops it caused.
+  const fakeStdin = () => {
+    let closed: Array<() => void> = [];
+    const stops: Array<string> = [];
+
+    const host: StdinHost = {
+      watch: (listener) => {
+        closed.push(listener);
+
+        return () => {
+          closed = closed.filter((one) => one !== listener);
+        };
+      },
+      stop: () => {
+        stops.push("SIGTERM");
+      },
+    };
+
+    const close = () => {
+      for (const listener of closed) {
+        listener();
+      }
+    };
+
+    return { host, close, stops };
+  };
+
+  effect("stops as on SIGTERM, once, when stdin closes", () => {
+    const stdin = fakeStdin();
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* stopWhenStdinCloses(stdin.host);
+          stdin.close();
+          stdin.close();
+        }),
+      );
+
+      expect(stdin.stops).toEqual(["SIGTERM"]);
+    });
+  });
+
+  effect("stops nothing when stdin closes after the scope has", () => {
+    const stdin = fakeStdin();
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(stopWhenStdinCloses(stdin.host));
+      stdin.close();
+
+      expect(stdin.stops).toEqual([]);
+    });
   });
 });

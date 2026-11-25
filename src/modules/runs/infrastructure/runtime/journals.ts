@@ -28,8 +28,9 @@ import * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 
 import { homePaths } from "../../../../platform/home.ts";
 
-// The files SQLite keeps for one journal: the database, and its write-ahead
-// log and shared memory beside it while it's open.
+// The files SQLite keeps for one journal: the database, and beside it while
+// it's open its write-ahead log and shared memory, or, outside WAL mode, its
+// rollback journal.
 const SQLITE_SIDECARS = ["", "-wal", "-shm", "-journal"];
 
 const JOURNAL = ".db";
