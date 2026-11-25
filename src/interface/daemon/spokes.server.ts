@@ -269,6 +269,9 @@ export const tailSpoke = (options: {
 
 export const hubSpokes = <R>(options: {
   readonly home: string;
+  // What a spoke runs, before its hand-over's arguments: the hub's own
+  // executable, unless a test gives another.
+  readonly command?: ReadonlyArray<string>;
   readonly variables: Readonly<Record<string, string>>;
   readonly log: (line: string) => Effect.Effect<void>;
   // The reports a run's spoke wrote after `after`, and what folding one into
@@ -302,16 +305,23 @@ export const hubSpokes = <R>(options: {
         readonly group: ProcessGroup;
         readonly fold: Effect.Effect<void>;
         readonly sessions: Array<AgentSessionOpened>;
-        readonly intended: Ref.Ref<Option.Option<RunStatus>>;
         readonly done: Deferred.Deferred<boolean>;
       }
     >();
 
     // Each spoke `end` ended, as it was ended, until its run's ending is
     // recorded and the hub forgets it.
-    const ended = new Map<RunId, EndedSpoke>();
+    // Registered by the first `end` the moment it is asked, before anything
+    // yields, so every later `end`, before or after the spoke leaves `live`,
+    // waits on the same answer.
+    const ended = new Map<
+      RunId,
+      { readonly endedFor: RunStatus; readonly result: Deferred.Deferred<EndedSpoke> }
+    >();
 
-    const [program, ...prefix] = selfCommand();
+    const [program, ...prefix] = Option.getOrElse(Option.fromUndefinedOr(options.command), () =>
+      selfCommand(),
+    );
 
     yield* fs.makeDirectory(paths.journals, { recursive: true }).pipe(Effect.ignore);
 
@@ -360,7 +370,6 @@ export const hubSpokes = <R>(options: {
         const folded = yield* Ref.make(0);
         const folding = yield* Semaphore.make(1);
         const sessions: Array<AgentSessionOpened> = [];
-        const intended = yield* Ref.make(Option.none<RunStatus>());
         const done = yield* Deferred.make<boolean>();
 
         // A session the spoke opened stays with the spoke; any other report
@@ -381,7 +390,7 @@ export const hubSpokes = <R>(options: {
           Effect.provideContext(context),
         );
 
-        live.set(handOver.runId, { group, fold, sessions, intended, done });
+        live.set(handOver.runId, { group, fold, sessions, done });
 
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
@@ -403,7 +412,14 @@ export const hubSpokes = <R>(options: {
             yield* fold;
             live.delete(handOver.runId);
             yield* fs.remove(handOverFile, { force: true }).pipe(Effect.ignore);
-            yield* options.onExit(handOver.runId, exit, yield* Ref.get(intended));
+            yield* options.onExit(
+              handOver.runId,
+              exit,
+              Option.map(
+                Option.fromUndefinedOr(ended.get(handOver.runId)),
+                (meant) => meant.endedFor,
+              ),
+            );
           }).pipe(Effect.ensuring(Deferred.succeed(done, true)), Effect.provideContext(context)),
           scope,
         );
@@ -425,35 +441,36 @@ export const hubSpokes = <R>(options: {
             Effect.forkIn(stopGroup(group, STOP_GRACE), scope).pipe(Effect.asVoid),
         }),
       end: (runId, ending) =>
-        Option.match(Option.fromUndefinedOr(live.get(runId)), {
-          onNone: () => Effect.sync(() => Option.fromUndefinedOr(ended.get(runId))),
-          onSome: (spoke) =>
-            Effect.gen(function* () {
-              // The first ending meant for it holds: a cancel and a lost
-              // lease at once end it as whichever asked first, and the other
-              // hears so.
-              const endedFor = yield* Ref.modify(spoke.intended, (meant) => {
-                const first = Option.getOrElse(meant, () => ending);
+        Effect.suspend(() =>
+          Option.match(Option.fromUndefinedOr(ended.get(runId)), {
+            // The first ending asked of it holds: a cancel and a lost lease at
+            // once end it as whichever asked first, and the other hears so.
+            onSome: (asked) => Effect.asSome(Deferred.await(asked.result)),
+            onNone: () =>
+              Option.match(Option.fromUndefinedOr(live.get(runId)), {
+                onNone: () => Effect.succeedNone,
+                onSome: (spoke) => {
+                  const result = Deferred.makeUnsafe<EndedSpoke>();
+                  ended.set(runId, { endedFor: ending, result });
 
-                return [first, Option.some(first)] as const;
-              });
+                  return Effect.gen(function* () {
+                    const exit = yield* stopGroup(spoke.group, STOP_GRACE);
+                    yield* Deferred.await(spoke.done);
 
-              const exit = yield* stopGroup(spoke.group, STOP_GRACE);
-              yield* Deferred.await(spoke.done);
+                    const answer: EndedSpoke = {
+                      endedFor: ending,
+                      exit: describeExit(exit),
+                      sessions: [...spoke.sessions],
+                    };
 
-              const result: EndedSpoke = {
-                endedFor,
-                exit: describeExit(exit),
-                sessions: [...spoke.sessions],
-              };
+                    yield* Deferred.succeed(result, answer);
 
-              if (!ended.has(runId)) {
-                ended.set(runId, result);
-              }
-
-              return Option.some(result);
-            }),
-        }),
+                    return Option.some(answer);
+                  }).pipe(Effect.uninterruptible);
+                },
+              }),
+          }),
+        ),
       forget: (runId) =>
         Effect.sync(() => {
           ended.delete(runId);

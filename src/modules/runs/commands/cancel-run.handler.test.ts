@@ -756,6 +756,10 @@ describe("cancelRunHandler", () => {
 
               return Option.some({ ...spoke, endedFor: Option.getOrElse(first, () => ending) });
             }).pipe(Effect.orDie),
+          forget: (runId) =>
+            Effect.sync(() => {
+              seen.push(`forgot ${runId}`);
+            }),
         });
       }),
     );
@@ -794,6 +798,7 @@ describe("cancelRunHandler", () => {
 
         // The spoke was ended while its run still ran, so what it reported
         // landed on a running run, and then the run was recorded.
+        // The hub forgets the spoke once RunFinished says the run ended.
         expect(spokeSeen).toEqual(["cancelled while running"]);
         expect(spokeEngine.discarded).toEqual([RunId.make("a")]);
         expect(spokeEngine.interrupted).toEqual([]);
@@ -854,6 +859,7 @@ describe("cancelRunHandler", () => {
   );
 
   const raceEngine = fakeEngine();
+  const raceSeen: Array<string> = [];
   raceEngine.journals.push(RunId.make("a"));
 
   effect("a spoke another ending was asked of first is that ending's: this one is refused", () =>
@@ -872,7 +878,30 @@ describe("cancelRunHandler", () => {
       expect(yield* statusOf("a")).toEqual(Option.some("running"));
       expect(raceEngine.discarded).toEqual([]);
       expect(yield* DispatchedEvents).toEqual([]);
-    }).pipe(Effect.provide(inSpoke(raceEngine, fakeHoldings(), [], Option.some("lost")))),
+      // The spoke is still the first ending's: this command forgets nothing.
+      expect(raceSeen).toEqual(["superseded while running"]);
+    }).pipe(Effect.provide(inSpoke(raceEngine, fakeHoldings(), raceSeen, Option.some("lost")))),
+  );
+
+  const failingSeen: Array<string> = [];
+
+  effect(
+    "a command that fails after ending the spoke forgets it, so a later ending isn't refused",
+    () =>
+      Effect.gen(function* () {
+        // Ended at its park, but no longer waiting: refused once the spoke is ended.
+        const refused = yield* Effect.flip(
+          cancelRunHandler({
+            target: byId("a"),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "ended-at-park", reason: "parked" }),
+          }),
+        );
+
+        expect(refused._tag).toBe("RunNotParked");
+        expect(failingSeen).toEqual(["ended-at-park while running", "forgot a"]);
+      }).pipe(Effect.provide(inSpoke(fakeEngine(), fakeHoldings(), failingSeen))),
   );
 
   const unexecuted = fakeEngine();

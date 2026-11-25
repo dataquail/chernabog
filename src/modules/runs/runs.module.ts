@@ -105,10 +105,11 @@ export const RunsModule = {
   events: RunTriggersLive.pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunsUnitOfWorkLive))),
 
   // The runtime a tick and a run drive: the flows a process loaded, with each
-  // persona's services, their workflows in the engine it runs, and cleaning up
-  // after a run that's cancelled, and, in a hub, the spokes its runs execute in. Which flows those are is the composition
-  // root's (the daemon's, a foreground run's, a rehearsal's, a cancel's), so
-  // each root passes its registry, and provides this beneath `engine`.
+  // persona's services, their workflows in the engine it runs, cleaning up
+  // after a run that's cancelled, and, in a hub, the spokes its runs execute
+  // in. Which flows those are is the composition root's (the daemon's, a
+  // foreground run's, a rehearsal's, a cancel's), so each root passes its
+  // registry, and provides this beneath `engine`.
   runtime: (registry: FlowRegistry) =>
     Layer.mergeAll(
       FlowsClientLive(registry),

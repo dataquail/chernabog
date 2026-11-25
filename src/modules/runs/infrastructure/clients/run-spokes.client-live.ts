@@ -20,5 +20,10 @@ export const RunSpokesClientLive = (spokes: Option.Option<RunSpokesClientService
           onNone: () => Effect.succeedNone,
           onSome: (hub) => hub.end(runId, ending),
         }),
+      forget: (runId) =>
+        Option.match(spokes, {
+          onNone: () => Effect.void,
+          onSome: (hub) => hub.forget(runId),
+        }),
     }),
   );

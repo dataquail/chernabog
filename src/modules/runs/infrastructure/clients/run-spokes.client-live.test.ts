@@ -12,19 +12,20 @@ import { RunSpokesClientLive } from "./run-spokes.client-live.ts";
 
 const run = RunId.make("run-1");
 
-const ended = (spokes: Option.Option<RunSpokesClientService>) =>
-  RunSpokesClient.use((client) => client.end(run, "cancelled")).pipe(
-    Effect.provide(RunSpokesClientLive(spokes)),
-  );
+// The run's spoke ended for a cancel, then forgotten, as its run ended.
+const endedThenForgotten = (spokes: Option.Option<RunSpokesClientService>) =>
+  RunSpokesClient.use((client) =>
+    client.end(run, "cancelled").pipe(Effect.tap(() => client.forget(run))),
+  ).pipe(Effect.provide(RunSpokesClientLive(spokes)));
 
 describe("RunSpokesClientLive", () => {
-  effect("a process with no spokes ends none", () =>
+  effect("a process with no spokes ends none, and has none to forget", () =>
     Effect.gen(function* () {
-      expect(yield* ended(Option.none())).toEqual(Option.none());
+      expect(yield* endedThenForgotten(Option.none())).toEqual(Option.none());
     }),
   );
 
-  effect("a hub's spokes end the run's, for the ending it is about to take", () =>
+  effect("a hub's spokes end the run's, for the ending it is about to take, and forget it", () =>
     Effect.gen(function* () {
       const asked: Array<string> = [];
 
@@ -35,12 +36,16 @@ describe("RunSpokesClientLive", () => {
 
             return Option.some({ endedFor: ending, exit: "killed by SIGTERM", sessions: [] });
           }),
+        forget: (runId) =>
+          Effect.sync(() => {
+            asked.push(`forget ${runId}`);
+          }),
       });
 
-      expect(yield* ended(Option.some(hub))).toEqual(
+      expect(yield* endedThenForgotten(Option.some(hub))).toEqual(
         Option.some({ endedFor: "cancelled", exit: "killed by SIGTERM", sessions: [] }),
       );
-      expect(asked).toEqual(["run-1 cancelled"]);
+      expect(asked).toEqual(["run-1 cancelled", "forget run-1"]);
     }),
   );
 });

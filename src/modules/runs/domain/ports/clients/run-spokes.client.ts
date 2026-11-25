@@ -16,6 +16,10 @@ export type RunSpokesClientService = {
   // asked to end for two endings at once ends for the first, which both hear
   // (`endedFor`). None when no spoke of the run is live here.
   readonly end: (runId: RunId, ending: RunStatus) => Effect.Effect<Option.Option<EndedSpoke>>;
+  // Forgets a spoke `end` ended: until then `end` answers for it with the
+  // ending it was first ended for. The hub forgets it once the run's ending
+  // is recorded; a command that ended it and then failed forgets it at once.
+  readonly forget: (runId: RunId) => Effect.Effect<void>;
 };
 
 export class RunSpokesClient extends Context.Service<RunSpokesClient, RunSpokesClientService>()(

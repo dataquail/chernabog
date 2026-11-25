@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import {
   foldSpoke,
+  hubSpokes,
   journalSignature,
   ReportFold,
   reportFold,
@@ -24,6 +25,7 @@ import {
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { JournalsAt, RunJournals } from "../src/modules/runs/infrastructure/runtime/journals.ts";
 import {
+  type RunStatus,
   RunView,
   type SpokeReport,
   SpokeReportCommand,
@@ -311,5 +313,58 @@ describe("tailing a live spoke's journal", () => {
 
       expect(yield* Ref.get(folds)).toBe(2);
     }),
+  );
+});
+
+describe("ending a live spoke", () => {
+  const runId = RunId.make("3f2a");
+
+  effect(
+    "a second ending asked once the spoke has left the live ones, before the first has its answer, hears the first",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-spokes-" });
+        // Told when the hub handles the spoke's exit, which then waits for `gate`:
+        // the window between the spoke leaving the live ones and the first
+        // ending having its answer.
+        const exiting = yield* Deferred.make<Option.Option<RunStatus>>();
+        const gate = yield* Deferred.make<boolean>();
+
+        const spokes = yield* hubSpokes({
+          home,
+          command: ["sh", "-c", "exec sleep 30"],
+          variables: {},
+          log: () => Effect.void,
+          reports: () => Effect.succeed([]),
+          apply: () => Effect.void,
+          onExit: (_run, _exit, intended) =>
+            Deferred.succeed(exiting, intended).pipe(Effect.andThen(Deferred.await(gate))),
+        });
+
+        yield* spokes.start(handOver({ checkout: home }));
+        expect(spokes.has(runId)).toBe(true);
+
+        const first = yield* Effect.forkChild(spokes.end(runId, "lost"));
+        // The hub won't end the run from the exit: the first ending is meant.
+        expect(yield* Deferred.await(exiting)).toEqual(Option.some("lost"));
+        expect(spokes.has(runId)).toBe(false);
+
+        const second = yield* Effect.forkChild(spokes.end(runId, "superseded"));
+        yield* Deferred.succeed(gate, true);
+
+        const [firstEnded, secondEnded] = [yield* Fiber.join(first), yield* Fiber.join(second)];
+
+        expect(Option.map(firstEnded, (ended) => ended.endedFor)).toEqual(Option.some("lost"));
+        expect(Option.map(secondEnded, (ended) => ended.endedFor)).toEqual(Option.some("lost"));
+        expect(Option.map(firstEnded, (ended) => ended.exit)).toEqual(
+          Option.some("killed by SIGTERM"),
+        );
+
+        // Once the run's ending is recorded the hub forgets the spoke, and no
+        // spoke of the run is left to end.
+        yield* spokes.forget(runId);
+        expect(yield* spokes.end(runId, "cancelled")).toEqual(Option.none());
+      }),
   );
 });

@@ -14,12 +14,14 @@ import { type RunStatus } from "../../domain/run/run-status.value-object.ts";
 export type FakeSpokes = {
   readonly live: Record<string, EndedSpoke>;
   readonly ended: Array<{ readonly runId: RunId; readonly ending: RunStatus }>;
+  readonly forgotten: Array<RunId>;
   readonly steps: Array<string>;
 };
 
 export const fakeSpokes = (held: Partial<FakeSpokes> = {}): FakeSpokes => ({
   live: {},
   ended: [],
+  forgotten: [],
   steps: [],
   ...held,
 });
@@ -39,6 +41,10 @@ export const RunSpokesClientFake = (spokes: FakeSpokes) =>
           }
 
           return found;
+        }),
+      forget: (runId) =>
+        Effect.sync(() => {
+          spokes.forgotten.push(runId);
         }),
     }),
   );

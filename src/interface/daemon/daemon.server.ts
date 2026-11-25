@@ -625,6 +625,13 @@ export const runDaemon = Effect.gen(function* () {
             onSome: (live) => live.end(runId, ending),
           }),
         ),
+      forget: (runId) =>
+        Effect.flatMap(Ref.get(hubSpokesHandle), (found) =>
+          Option.match(found, {
+            onNone: () => Effect.void,
+            onSome: (live) => live.forget(runId),
+          }),
+        ),
     },
   };
 
