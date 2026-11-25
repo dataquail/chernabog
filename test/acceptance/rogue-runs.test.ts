@@ -453,6 +453,16 @@ describe("the rogue-run rehearsal", () => {
       expect(endingBegan(run.runId)).toEqual(Option.none());
     }
 
+    // The last of what a fake tmux session printed, if it ran.
+    const tmuxOutput = (handle: string) => {
+      const out = join(sandbox.root, "tmux", `${handle}.out`);
+
+      return Option.match(Option.liftPredicate(out, existsSync), {
+        onNone: () => "(no output file)",
+        onSome: (file) => readFileSync(file, "utf8").slice(-2000),
+      });
+    };
+
     for (const rogue of rogues) {
       const run = Option.getOrThrow(finished(rogue.issue));
       const pid = Option.getOrThrow(said(rogue.issue, "pid"));
@@ -469,8 +479,15 @@ describe("the rogue-run rehearsal", () => {
       expect(alive(pid)).toBe(false);
       expect(existsSync(join(sandbox.home, "journals", `${run.runId}.db`))).toBe(false);
 
-      // Its agent session closed, by its handle.
-      expect(sandbox.daemonLog()).toContain(`closed its tmux session ${handle}`);
+      // Its agent session closed, by its handle. With what the fake tmux
+      // knew of the session, so a run where the hub didn't close it shows
+      // whether the session ever ran: its tmux calls and its output.
+      expect({
+        rogue: rogue.title,
+        closed: sandbox.daemonLog().includes(`closed its tmux session ${handle}`),
+        calls: sandbox.tmuxCalls().filter((call) => call.includes(handle)),
+        output: tmuxOutput(handle),
+      }).toMatchObject({ rogue: rogue.title, closed: true });
       expect(sandbox.tmuxCalls()).toContain(`kill-session -t =${handle}`);
       expect(existsSync(join(sandbox.root, "tmux", `${handle}.pid`))).toBe(false);
     }

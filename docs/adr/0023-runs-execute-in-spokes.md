@@ -136,7 +136,9 @@ takes up its phase again from the ledger, and every other run carries on.
    machine config's `spokes: silentExits` (3 by default) ends `failed`
    instead, saying how many in a row, so the item isn't offered again and a
    person sees why (`silentExitEnding`). A run of the item that ends any
-   other way, at a phase boundary or otherwise, starts the count again. The
+   other way, at a phase boundary or otherwise, starts the count again, and
+   so does the failed run that reached the limit, so a person who puts the
+   item back on its queue gets the full count of tries again. The
    item is its key, so for a flow whose key carries its phase (a review
    loop's `pr-7-changes-asked-1a2b3c4`) the count is per phase, and for one
    whose key doesn't (implement's `issue-7`) per item. The limit and the

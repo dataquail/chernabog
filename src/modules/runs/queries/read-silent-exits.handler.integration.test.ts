@@ -72,6 +72,20 @@ describe("readSilentExitsHandler", () => {
     }).pipe(Effect.provide(stores())),
   );
 
+  effect(
+    "starts again after the run that reached the limit and failed, once a person re-queued it",
+    () =>
+      Effect.gen(function* () {
+        const runs = yield* RunsRepository;
+        yield* runs.upsertOne(ended(1, "interrupted", 1));
+        yield* runs.upsertOne(ended(2, "interrupted", 2));
+        yield* runs.upsertOne(ended(3, "failed", 3));
+        yield* runs.upsertOne(run(4));
+
+        expect(yield* silentBefore(4)).toBe(0);
+      }).pipe(Effect.provide(stores())),
+  );
+
   effect("counts only runs of the same item, flow and persona, and none started after", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;

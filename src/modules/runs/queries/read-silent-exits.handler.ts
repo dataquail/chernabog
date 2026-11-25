@@ -7,9 +7,15 @@ import { RunEndingRow } from "../storage/run-ending.schema.ts";
 import { type ReadSilentExitsPayload } from "./read-silent-exits.query.ts";
 
 // The silent exits in a row, from the endings of the earlier runs of an
-// item, newest first.
+// item, newest first. One that reached the limit ended failed, which keeps
+// the item off its queue until a person puts it back: that starts the count
+// again, so the person's retry gets its tries.
 const inARow = (endings: ReadonlyArray<RunEndingRow>) => {
   for (const ending of endings) {
+    if (ending.status === "failed") {
+      return 0;
+    }
+
     if (Option.isSome(ending.silent_exits)) {
       return ending.silent_exits.value;
     }

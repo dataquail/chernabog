@@ -764,7 +764,8 @@ export const runDaemon = Effect.gen(function* () {
       // Ends a spoke's run once the spoke has exited, with the ending it
       // reported in its journal (ADR 23, decision 2), and lets the run's
       // ending delete the journal (discard-run-journal). A spoke that exited
-      // before it said ends its run failed, with how it exited; one whose run
+      // before it said ends its run through endSilentSpokeRun (interrupted,
+      // or failed once its item has done so too often in a row); one whose run
       // the hub already ended leaves it as it is, and one the hub ended for
       // an ending of its own (a cancel, a lost lease) leaves the run to
       // whoever asked, who ends it once the spoke is gone (decision 5).
