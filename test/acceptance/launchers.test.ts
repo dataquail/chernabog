@@ -168,7 +168,7 @@ describe("doctor", () => {
 describe("an interactive session outliving its run", () => {
   test("a rerun after the CLI is killed closes the session it left, then runs once", async () => {
     const sandbox = sandboxFor({}, { launcher: "tmux" });
-    const issue = sandbox.github.addIssue("Outlive the CLI", ["auto:eligible"]);
+    sandbox.github.addIssue("Outlive the CLI", ["auto:eligible"]);
     const hold = join(sandbox.root, "hold");
     writeFileSync(hold, "");
     const first = sandbox.cli(["run", "implement", "--repo", "demo"], { FAKE_CLAUDE_HOLD: hold });
@@ -179,11 +179,9 @@ describe("an interactive session outliving its run", () => {
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
 
-    // The run it left keeps what it put on the issue, the claim's label swap
-    // included, so a person queues it again. Its agent is still held in its
+    // The run it left ends interrupted, which puts its queue label back, so
+    // the trigger offers the issue again. Its agent is still held in its
     // session, which nobody watches now.
-    const labels = sandbox.github.issue(issue).labels;
-    labels.splice(0, labels.length, "auto:eligible");
 
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
 

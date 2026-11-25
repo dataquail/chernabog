@@ -692,6 +692,13 @@ assignment, a board Status, a claim ref or branch), with a named release.
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
   The daemon runs it every few seconds, `chernabog run` once its run ends, and
   `status` shows `ListUnreleasedMarkersQuery`.
+- **An interrupted run's item is offered again** (#665). A claim that takes
+  the label that queued an issue off it (`Implement.claim`, `Hybrid.claim`,
+  through `Implement.takeQueueLabel`) first holds core's `Markers.requeue`
+  for it, only for a label the issue carried. `RunMarkerRootOps.keptOn`
+  releases that marker on an `interrupted` ending alone, which puts the label
+  back, so the trigger offers the item and the phase repeats in a new run;
+  every other ending keeps it, and the label stays off.
 - **Cancel still does its own cleanup** (claim ref, assignment, branch) for
   runs from before markers; markers' releases are safe to repeat after it.
   Labels are the flow's: cancel never removes one, and a run's label marker

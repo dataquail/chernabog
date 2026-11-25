@@ -107,10 +107,8 @@ describe("a run killed mid-agent", () => {
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
 
-    // The run it left keeps what it put on the issue, the claim's label swap
-    // included, so a person queues it again.
-    const labels = sandbox.github.issue(issue).labels;
-    labels.splice(0, labels.length, "auto:eligible");
+    // The run it left ends interrupted, which puts its queue label back, so
+    // the trigger offers the issue again.
 
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
     expect(output).toContain("as interrupted");

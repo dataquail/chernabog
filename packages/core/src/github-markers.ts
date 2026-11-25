@@ -109,6 +109,26 @@ export const claimBranch = define(
     }),
 );
 
+// The label that queued an issue for a flow, which its claim took off, put
+// back on issue `number`. The engine releases it only when the run ends
+// interrupted (its process stopped, ADR 23 decision 7), so the item is where
+// its trigger offers it again and its phase repeats in a new run; on any other
+// ending it is kept, and nothing puts the label back. Unless the issue has
+// closed since.
+export const requeue = define(
+  "chernabog/requeue",
+  Schema.Struct({ number: Schema.Finite, label: Schema.String }),
+  (args) =>
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const issue = yield* github.issue(args.number);
+
+      if (issue.state !== "closed") {
+        yield* github.addLabel(args.number, args.label);
+      }
+    }).pipe(Effect.catchTag("NotFound", () => Effect.void)),
+);
+
 // Every marker the SDK defines, which the engine releases whatever the flow lists.
 export const builtIn: ReadonlyArray<Marker> = [
   label,
@@ -116,5 +136,6 @@ export const builtIn: ReadonlyArray<Marker> = [
   assignment,
   boardStatus,
   claimBranch,
+  requeue,
   Claims.refMarker,
 ];

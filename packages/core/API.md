@@ -463,6 +463,10 @@ export declare const claimBranch: import("./run-markers.ts").Definition<{
     readonly branch: string;
     readonly base?: string | undefined;
 }>;
+export declare const requeue: import("./run-markers.ts").Definition<{
+    readonly number: number;
+    readonly label: string;
+}>;
 export declare const builtIn: ReadonlyArray<Marker>;
 ```
 
