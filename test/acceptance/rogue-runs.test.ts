@@ -43,14 +43,19 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Logs a line a second, so it is never idle, for \`seconds\` (forever, unset),
-// holding \`held\` while it does.
-const working = (seconds: number, held?: unknown) =>
+// Logs a line a second, so it is never idle, for \`seconds\`, touching every
+// page of \`held\` each time, so the OS keeps them resident however short of
+// memory the machine is.
+const working = (seconds: number, held: Buffer = Buffer.alloc(0)) =>
   Effect.gen(function* () {
     const log = yield* RunLog;
 
     for (let tick = 0; tick < seconds; tick++) {
-      yield* log.log(\`working \${tick} \${typeof held}\`);
+      for (let page = 0; page < held.length; page += 4096) {
+        held[page] = tick % 256;
+      }
+
+      yield* log.log(\`working \${tick} holding \${held.length} bytes\`);
       yield* Effect.sleep("1 second");
     }
   });
@@ -171,7 +176,8 @@ export default defineFlow({
       }
 
       // Random bytes, which the OS can't compress out of its resident memory
-      // under pressure, as it can a buffer of one byte repeated.
+      // under pressure, as it can a buffer of one byte repeated, and touched
+      // every second, so it doesn't page them out.
       if (title.startsWith("memory")) {
         yield* activity(
           "allocate",
