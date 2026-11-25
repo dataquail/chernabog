@@ -3,26 +3,38 @@
 // through the SDK the repo pins (#457), and the repo's own CI workflows,
 // which a workflow_run of wakes the flows waiting on CI.
 
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { loadFlows, loadRepoEvents } from "../../../../platform/flow-loader.ts";
 import {
+  APP_ID_VARIABLE,
+  APP_KEY_SECRET,
   CiWorkflow,
   type RepoWorkflow,
   WORKFLOW_FILE,
   WORKFLOW_NAME,
+  type WorkflowApps,
   type WorkflowDocument,
 } from "../../domain/domain-services/ci-workflow.domain-service.ts";
 
-// What the workflow reads of a repo's ci: section.
+// What the workflow reads of a repo's ci: section: its flows, the sweep's
+// schedule, and the App each flow acts as, when config names apps: (#477).
 export type CiWorkflowSettings = {
   readonly flows: ReadonlyArray<string>;
   readonly schedule: string;
+  readonly apps: Readonly<
+    Record<
+      string,
+      { readonly role: string; readonly permissions: Readonly<Record<string, string>> }
+    >
+  >;
 };
 
 export type CiWorkflowOptions = {
@@ -52,17 +64,51 @@ export type CiWorkflowText = {
   readonly path: string;
   readonly text: string;
   readonly notes: ReadonlyArray<string>;
+  // What the repo needs on GitHub before the workflow runs: its secrets, and
+  // with Apps, each App's Environment.
+  readonly needs: string;
 };
 
-const HEADER = `# Written by chernabog (chernabog init, or chernabog ci workflow --write) from
+const WRITTEN_BY = `# Written by chernabog (chernabog init, or chernabog ci workflow --write) from
 # .chernabog/config.yaml: its ci: section and what its flows declare. Change
 # those and write it again rather than editing it; chernabog doctor checks it
 # still matches.
-#
+#`;
+
+const NEVER_API_KEY = `# ANTHROPIC_API_KEY: claude would bill it per token.`;
+
+const HEADER = `${WRITTEN_BY}
 # Repository secrets: CHERNABOG_TOKEN, a GitHub token of the persona the flows
 # act as, and CLAUDE_CODE_OAUTH_TOKEN, from claude setup-token. Never set
-# ANTHROPIC_API_KEY: claude would bill it per token.
+${NEVER_API_KEY}
 `;
+
+const APPS_HEADER = `${WRITTEN_BY}
+# The flows act as the repo's GitHub Apps. Each App's Environment, which
+# chernabog ci apps sets up, holds its id as the variable ${APP_ID_VARIABLE} and
+# its private key as the secret ${APP_KEY_SECRET}; the plan job holds neither,
+# and acts as the workflow's own token. Repository secret:
+# CLAUDE_CODE_OAUTH_TOKEN, from claude setup-token. Never set
+${NEVER_API_KEY}
+`;
+
+const NEEDS = "give the repo the secrets CHERNABOG_TOKEN and CLAUDE_CODE_OAUTH_TOKEN";
+
+const APPS_NEEDS = `give the repo the secret CLAUDE_CODE_OAUTH_TOKEN, and each App's Environment its ${APP_ID_VARIABLE} and ${APP_KEY_SECRET} (chernabog ci apps sets them up)`;
+
+// Each role the CI flows act as once, with what its App may do: none when
+// config names no apps:.
+const workflowApps = (ci: CiWorkflowSettings) =>
+  Option.map(
+    Arr.match(
+      Arr.dedupeWith(
+        ci.flows.flatMap((flow) => Option.toArray(Record.get(ci.apps, flow))),
+        (one, other) => one.role === other.role,
+      ),
+      { onEmpty: Option.none, onNonEmpty: Option.some },
+    ),
+    (roles): WorkflowApps => ({ roles }),
+  );
 
 const WorkflowOn = Schema.Record(
   Schema.String,
@@ -130,21 +176,30 @@ export const ciWorkflowFor = (options: CiWorkflowOptions) =>
       ),
     );
 
+    const apps = workflowApps(ci);
+
     const built = CiWorkflow.build({
       on: wiring.on,
       schedule: ci.schedule,
       version: options.version,
+      apps,
     });
 
     if (Result.isFailure(built)) {
       return yield* new ConfigError({ message: `no workflow written: ${built.failure}` });
     }
 
-    const text = `${HEADER}\n${CiWorkflow.withVersionComments(options.workflowFiles.text(built.success.document))}`;
+    const said = Option.match(apps, {
+      onNone: () => ({ header: HEADER, needs: NEEDS }),
+      onSome: () => ({ header: APPS_HEADER, needs: APPS_NEEDS }),
+    });
+
+    const text = `${said.header}\n${CiWorkflow.withVersionComments(options.workflowFiles.text(built.success.document))}`;
 
     return Option.some<CiWorkflowText>({
       path: WORKFLOW_FILE,
       text,
       notes: [...missing, ...wiring.notes, ...built.success.notes],
+      needs: said.needs,
     });
   });

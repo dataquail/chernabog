@@ -1312,7 +1312,7 @@ describe("the ci: section", () => {
     () =>
       Effect.gen(function* () {
         expect(yield* ciOf({})).toEqual(
-          Result.succeed({ flows: [], maxParallel: 1, schedule: DEFAULT_CI_SCHEDULE }),
+          Result.succeed({ flows: [], maxParallel: 1, schedule: DEFAULT_CI_SCHEDULE, apps: {} }),
         );
       }),
   );
@@ -1334,9 +1334,50 @@ describe("the ci: section", () => {
             flows: ["review", "implement"],
             maxParallel: 3,
             schedule: "41 */2 * * *",
+            apps: {},
           }),
         );
       }),
+  );
+
+  effect("with apps:, each CI flow acts as the App its as: names, from its own Environment", () =>
+    Effect.gen(function* () {
+      const found = yield* ciOf({
+        apps: {
+          author: { id: 1, slug: "acme-author" },
+          reviewer: { id: 2, slug: "acme-review" },
+        },
+        personas: ["acme-author[bot]", "acme-review[bot]"],
+        flows: { implement: { as: "author" }, review: { as: "reviewer" } },
+        ci: { flows: ["implement", "review"] },
+      });
+
+      const apps = Result.getOrThrow(found).apps;
+
+      expect(
+        Record.map(apps, ({ environment, login, role }) => ({ environment, login, role })),
+      ).toEqual({
+        implement: { role: "author", login: "acme-author[bot]", environment: "chernabog-author" },
+        review: { role: "reviewer", login: "acme-review[bot]", environment: "chernabog-review" },
+      });
+      expect(apps.implement.permissions.checks).toBe("read");
+      expect(apps.review.permissions.checks).toBe("write");
+    }),
+  );
+
+  effect("with apps:, a CI flow that acts as no App is refused", () =>
+    Effect.gen(function* () {
+      const refused = yield* ciOf({
+        apps: { author: { id: 1, slug: "acme-author" } },
+        personas: ["acme-author[bot]"],
+        flows: { implement: { as: "author" } },
+        ci: { flows: ["implement", "triage"] },
+      });
+
+      expect(Result.isFailure(refused) && refused.failure.message).toContain(
+        "ci.flows names triage, which acts as no App",
+      );
+    }),
   );
 
   effect("a schedule that isn't a cron expression is refused", () =>

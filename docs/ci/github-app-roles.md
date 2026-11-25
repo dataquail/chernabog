@@ -228,10 +228,13 @@ are limited to refs outside `refs/heads/`, where claims live.
    persona team as bypass actors, and an "everything else" ruleset with
    `creation` and `update`, which the author App and people bypass. `doctor`
    checks both.
-4. **The workflow's token step narrows the token.** `actions/create-github-app-token`
-   gets `repositories: ${{ github.event.repository.name }}` and the role's
-   `permission-*` inputs, so a job's token reaches only its repo, with only
-   what its role needs.
+4. **The workflow's token step narrows the token.**
+   `actions/create-github-app-token` gets the role's `permission-*` inputs,
+   so a job's token has only what its role needs. It names no
+   `repositories:` or `owner:`, and so covers only the workflow's own repo,
+   which is the action's default. `${{ github.event.repository.name }}` would
+   be empty on the sweep, since a schedule event's payload names no
+   repository.
 
 5. **The plan job reserves with `GITHUB_TOKEN` and holds no App key.** It
    runs on every event, so it gets `contents: write` for claim refs and read

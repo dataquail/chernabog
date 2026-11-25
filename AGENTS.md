@@ -972,7 +972,11 @@ How a CI run differs from a daemon run:
   (`ciMachineConfig`, `src/interface/cli/ci-run.main.ts`): the checkout
   enrolled for the repo's `ci.flows`, as the implicit persona (the job's
   `GH_TOKEN`, the `CHERNABOG_TOKEN` secret), with `claude` under tmux on
-  `CLAUDE_CODE_OAUTH_TOKEN`. Never write that config outside Actions.
+  `CLAUDE_CODE_OAUTH_TOKEN`. Never write that config outside Actions. When
+  config.yaml names `apps:` (#477), each App's `<slug>[bot]` login is instead
+  a persona whose token is `GH_TOKEN`: `GITHUB_TOKEN` in the plan job, the
+  App's installation token in a run job. Neither token can read `GET /user`,
+  so the login always comes from config.
 - **The plan reads claims, not state.db.** An item already has a run when it
   has a live claim, and live claims count against a flow's concurrency.
   Otherwise it applies a tick's rules (`plan-tick.handler.ts`).

@@ -53,6 +53,7 @@ import {
   type Entry,
   type EventItem,
   type Findings,
+  type FlowApp,
   type LiveClaim,
   type Scope,
 } from "../../domain/domain-services/ci-plan.domain-service.ts";
@@ -69,10 +70,12 @@ import {
 // and GITHUB_EVENT_PATH give them.
 export type CiEvent = { readonly name: string; readonly payload: Json };
 
-// What the plan reads of a repo's ci: section.
+// What the plan reads of a repo's ci: section: the flows, how many run jobs
+// at once, and the App each flow acts as, when config names apps: (#477).
 export type CiSettings = {
   readonly flows: ReadonlyArray<string>;
   readonly maxParallel: number;
+  readonly apps: Readonly<Record<string, FlowApp>>;
 };
 
 type MachineConfig = Parameters<typeof openRepo>[0];
@@ -704,7 +707,7 @@ export const planCi = (options: CiPlanOptions) =>
     return {
       scope,
       start: reserved.start,
-      matrix: CiPlan.matrix(reserved.start),
+      matrix: CiPlan.matrix(reserved.start, ci.apps),
       notes: [...notes, ...plan.notes, ...reserved.notes],
       maxParallel: ci.maxParallel,
     } satisfies CiPlanResult;
