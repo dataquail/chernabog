@@ -153,9 +153,10 @@ takes up its phase again from the ledger, and every other run carries on.
    skips a run with a live spoke when it ends parked runs (`endParked`).
    Waits are still recorded (`om_waits`, `ParkRunCommand`) for `status` and
    `endParked`. The SDK's wake-only sources (`Plan.answers`,
-   `PullRequest.baseTurnedGreen`, and `pr.land`'s wakes) are still
-   exported, and wake nothing; whether to remove them, a breaking change to
-   `@chernabog/sdk`, is #694, for the owner.
+   `PullRequest.baseTurnedGreen`, and `pr.land`'s and `plan.awaitAnswer`'s
+   wakes) wake nothing, and are deprecated, not removed, since removing them
+   would break `@chernabog/sdk` (#694): what replaces each is a source that
+   offers the item from its parked phase record.
 
    A durable `sleep` inside a phase (a CI poll between readings, a backoff)
    stays inside the spoke and counts against the phase's wall-clock bound
@@ -638,7 +639,7 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   (#667). The spoke is `ci run --run` with a hand-over file (#685, #687).
   The hub records the run and attaches its execution in one unit of work
   (`StartSpokeRunCommand`, #685). Signal delivery is gone, and the SDK's
-  wake-only sources wake nothing (#696, #694).
+  wake-only sources wake nothing and are deprecated (#696, #694).
 - **3.** A spoke reads `state.db` once at most, read-only and `query_only`,
   for a session's token cursor (#687). `AgentSessionOpened` names
   transcripts only for Claude (#688, #689). Steps carry the spoke's time

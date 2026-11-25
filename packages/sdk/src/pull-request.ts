@@ -777,9 +777,18 @@ const heldItem = (held: Held): WorkItem => ({
 
 // For a trigger: the work items of runs holding a merge (holdWhileBaseRed)
 // whose base branch is no longer red, as BASE_GREEN signals to those runs,
-// one per work item. Never starts a run: for a document's pr.land, which
-// can't be taken up again mid-graph (audit W8); a recipe's trigger uses
-// heldMerges. Reads nothing while the flow's settings don't hold merges.
+// one per work item. Never starts a run, and wakes none either: a park ends
+// its run (ADR 23, decision 2). Reads nothing while the flow's settings don't
+// hold merges.
+/**
+ * @deprecated Wakes nothing: a park ends its run (ADR 23, decision 2), so no
+ * run is left holding a merge for its `base-green` signal to wake, and its
+ * items are `wakeOnly`, so they start none. Use a source that offers the
+ * pull request from its `merge-held` phase record, so a new run takes the
+ * merge up: `PullRequest.heldMerges(owns)` in a recipe's trigger, or
+ * `PullRequest.heldMergesOf(flow, dataOf)`, which a document's `pr.land`
+ * already offers (#694).
+ */
 export const baseTurnedGreen = Effect.gen(function* () {
   if (!(yield* Settings.mergeHold).enabled) {
     return [];

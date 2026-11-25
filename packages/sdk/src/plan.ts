@@ -522,8 +522,16 @@ const answerTo = (waiting: Waiting) =>
 
 // Specs whose posted plan a person has answered, as signals to the run
 // waiting on each: `approved` when it carries the approval label, or
-// `changes-requested` when someone commented since. Never starts a run: a
-// document's plan.awaitAnswer can only be woken, not taken up again.
+// `changes-requested` when someone commented since. Never starts a run, and
+// wakes none either: a park ends its run (ADR 23, decision 2).
+/**
+ * @deprecated Wakes nothing: a park ends its run (ADR 23, decision 2), so no
+ * run is left parked for its signals to wake, and its items are `wakeOnly`, so
+ * they start none. Use a source that offers the spec from its parked phase
+ * record, so a new run takes it up: `Plan.answered(within)` in a recipe's
+ * trigger, or `Plan.documentAnswers`, which a document's `plan.awaitAnswer`
+ * already offers (#694).
+ */
 export const answers = Effect.gen(function* () {
   const items: Array<WorkItem> = [];
 
