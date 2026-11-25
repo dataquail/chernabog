@@ -77,6 +77,7 @@ export const inRound = (phase: Rounded, round: number) => {
   return `${phase}-${round}`;
 };
 
+// Stryker disable next-line Regex: exec tries the start first, where (.*?) can grow to the whole string, so every match starts there anchored or not
 const ROUND = /^(.*?)(?:-(\d+))?$/;
 
 // The round of `phase`'s wait for CI that `recorded` waits on: 1 for the
@@ -531,6 +532,7 @@ export type Parking = {
   readonly carries?: Effect.Effect<Carried, ProgressError, Progress>;
 };
 
+// Stryker disable next-line ObjectLiteral: record writes no blobs for blobs left out, as for [], and spreading a missing data adds nothing
 const NOTHING_CARRIED: Effect.Effect<Carried> = Effect.succeed({ data: {}, blobs: [] });
 
 const Since = Schema.Struct({ since: Schema.String });
@@ -989,7 +991,11 @@ const removalSince = (number: number, label: string, since: DateTime.Utc) =>
 
         if (found.event === "unlabeled") {
           last = Option.map(actor, (by) => ({ by, restored: false }));
-        } else if (found.event === "labeled") {
+          continue;
+        }
+
+        // Stryker disable next-line ConditionalExpression: GitHub's issue events carry a label only when labeled or unlabeled
+        if (found.event === "labeled") {
           last = Option.filter(
             Option.map(last, (removal) => ({ ...removal, restored: true })),
             () => Option.exists(actor, persona),
@@ -1028,27 +1034,29 @@ const trusted = (login: string) =>
     );
   });
 
-// The open issue or pull request an item's record is kept for: its labels.
-// None for one closed, or a team's own item.
+// The open issue or pull request an item's record is kept for: its number
+// and labels. None for one closed or gone, or a team's own item.
 const openLabels = (item: string) =>
-  Effect.gen(function* () {
-    const github = yield* GitHub;
-    const number = numberOf(item);
+  Option.match(numberOf(item), {
+    onNone: () => Effect.succeedNone,
+    onSome: (number) =>
+      Effect.gen(function* () {
+        const github = yield* GitHub;
 
-    if (Option.isNone(number)) {
-      return Option.none<ReadonlyArray<string>>();
-    }
+        if (item === pullRequestItem(number)) {
+          const pull = yield* github.pullRequest(number);
 
-    if (item.startsWith(pullRequestItem(0).slice(0, -1))) {
-      const pull = yield* github.pullRequest(number.value);
+          return Option.liftPredicate({ number, labels: pull.labels }, () => pull.state === "open");
+        }
 
-      return Option.liftPredicate(pull.labels, () => pull.state === "open");
-    }
+        const issue = yield* github.issue(number);
 
-    const issue = yield* github.issue(number.value);
-
-    return Option.liftPredicate(issue.labels, () => issue.state !== "closed");
-  }).pipe(Effect.catchTag("NotFound", () => Effect.succeedNone));
+        return Option.liftPredicate(
+          { number, labels: issue.labels },
+          () => issue.state !== "closed",
+        );
+      }).pipe(Effect.catchTag("NotFound", () => Effect.succeedNone)),
+  });
 
 // An item a person handed back: its with-person record.
 export type HandedBack = { readonly item: string; readonly record: PhaseRecord };
@@ -1076,9 +1084,8 @@ export const handedBack = Effect.gen(function* () {
         return false;
       }
 
-      const number = Option.getOrElse(numberOf(item), () => 0);
-      const removal = yield* removalSince(number, labels.needsHuman, held.at);
-      const shown = open.value.includes(labels.needsHuman);
+      const removal = yield* removalSince(open.value.number, labels.needsHuman, held.at);
+      const shown = open.value.labels.includes(labels.needsHuman);
 
       // Still labelled counts only when a projection put the label back over
       // the removal: the person's hand-back is never lost to one.
