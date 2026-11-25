@@ -49,6 +49,7 @@ import {
   RunFlowsCommands,
   RunFlowsQueries,
   runLogFile,
+  RunLogLimit,
   RunsQueries,
   servicesFrom,
   SpokeEnding,
@@ -208,6 +209,10 @@ export type CiRunOptions = {
   readonly run: Option.Option<string>;
   readonly handOver: Option.Option<string>;
   readonly handOverFile: Option.Option<string>;
+  // A spoke's run-log bound, in bytes, which its hub passes; none for none.
+  // Its telemetry bound is read where its telemetry is set up, from the
+  // command line (`--telemetry-limit`, telemetryOfArgs).
+  readonly runLogLimit?: Option.Option<number>;
 };
 
 // The run a hub recorded and handed to this spoke, with the item it is for.
@@ -986,6 +991,8 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
         }
       });
 
+    const runLogLimit = options.runLogLimit ?? Option.none();
+
     const engine = yield* Layer.build(
       engineRuntime({
         registry: {
@@ -1001,10 +1008,13 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
         ],
         engine: engineOf(handedOver),
       }),
-    );
+    ).pipe(Effect.provideService(RunLogLimit, runLogLimit));
 
     const ending = yield* Effect.provideContext(
-      program.pipe(Effect.onExit((exit) => wrapUp(exit))),
+      program.pipe(
+        Effect.onExit((exit) => wrapUp(exit)),
+        Effect.provideService(RunLogLimit, runLogLimit),
+      ),
       engine,
     );
 

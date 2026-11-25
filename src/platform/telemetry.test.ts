@@ -1,11 +1,12 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { effect } from "../../test/effect-test.ts";
-import { FileTelemetry } from "./telemetry.ts";
+import { FileTelemetry, telemetryOfArgs } from "./telemetry.ts";
 
 // What a test reads of a line, decoded as any reader of the files would.
 const TelemetryLine = Schema.Struct({
@@ -225,6 +226,133 @@ describe("FileTelemetry", () => {
       expect(result).toBe("finished");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("telemetry");
+    }),
+  );
+
+  // A spoke's telemetry, limited to its bound (ADR 23, decision 4): every
+  // file of its run's, the bytes in each.
+  const spokeFiles = (dir: string, run: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files: Array<{ path: string; text: string }> = [];
+
+      for (const day of (yield* fs.readDirectory(dir)).toSorted()) {
+        for (const name of yield* fs.readDirectory(`${dir}/${day}`)) {
+          if (name.startsWith(`spoke-${run}-`)) {
+            const path = `${dir}/${day}/${name}`;
+            files.push({ path, text: yield* fs.readFileString(path) });
+          }
+        }
+      }
+
+      return files;
+    });
+
+  const flooding = Effect.forEach(
+    Array.from({ length: 200 }, (_, at) => at),
+    (at) => Effect.log(`flood ${at} ${"x".repeat(200)}`),
+    { discard: true },
+  );
+
+  // A run's spoke flooding its telemetry, limited to 10 kB.
+  const asSpoke = (dir: string, run: string, warn: (line: string) => void = () => {}) =>
+    flooding.pipe(
+      Effect.provide(
+        FileTelemetry.layer({ dir, process: `spoke-${run}`, limit: Option.some(10_000), warn }),
+      ),
+    );
+
+  effect("a spoke's telemetry stops at its bound, with one line saying so", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+      const warnings: Array<string> = [];
+
+      yield* asSpoke(dir, "run-1", (line) => warnings.push(line));
+
+      const files = yield* spokeFiles(dir, "run-1");
+
+      expect(files.map((file) => file.path.endsWith(`/spoke-run-1-${process.pid}.jsonl`))).toEqual([
+        true,
+      ]);
+
+      const lines = String(files[0]?.text)
+        .split("\n")
+        .filter((line) => line.length > 0);
+
+      const last = yield* decodeLine(String(lines.at(-1)));
+
+      expect(last).toMatchObject({ type: "log", level: "WARN" });
+      expect(String(last.message)).toContain("telemetry stopped at its bound of 10 kB");
+      // Everything before the stop line fits within the bound.
+      expect(Buffer.byteLength(lines.slice(0, -1).join("\n")) + 1).toBeLessThanOrEqual(10_000);
+      expect(lines.length).toBeLessThan(200);
+      expect(warnings).toHaveLength(1);
+    }),
+  );
+
+  effect("a spoke's files on earlier days count toward its bound", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      // Another day's file of the same run, already at the bound, and another
+      // run's, which doesn't count.
+      yield* fs.makeDirectory(`${dir}/2026-01-01`, { recursive: true });
+      yield* fs.writeFileString(`${dir}/2026-01-01/spoke-run-2-1.jsonl`, "y".repeat(9_990));
+      yield* fs.writeFileString(`${dir}/2026-01-01/spoke-run-3-1.jsonl`, "z".repeat(50_000));
+
+      yield* asSpoke(dir, "run-2");
+
+      const written = (yield* spokeFiles(dir, "run-2")).filter(
+        (file) => !file.path.includes("2026-01-01"),
+      );
+
+      expect(written).toHaveLength(1);
+
+      const lines = String(written[0]?.text)
+        .split("\n")
+        .filter((line) => line.length > 0);
+
+      expect(lines).toHaveLength(1);
+      expect(String((yield* decodeLine(String(lines[0]))).message)).toContain("stopped");
+    }),
+  );
+
+  effect("a process with no limit writes everything", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+
+      yield* traced(dir, flooding);
+
+      expect(yield* allRecords(dir)).toHaveLength(200);
+    }),
+  );
+});
+
+describe("telemetryOfArgs", () => {
+  effect("names a spoke for its run, with its limit, and anything else the daemon or the CLI", () =>
+    Effect.sync(() => {
+      expect(
+        telemetryOfArgs([
+          "ci",
+          "run",
+          "--run",
+          "abc",
+          "--flow",
+          "implement",
+          "--telemetry-limit",
+          "256000000",
+        ]),
+      ).toEqual({ process: "spoke-abc", limit: Option.some(256_000_000) });
+      expect(telemetryOfArgs(["ci", "run", "--run", "abc"])).toEqual({
+        process: "spoke-abc",
+        limit: Option.none(),
+      });
+      expect(telemetryOfArgs(["ci", "run", "--flow", "implement"])).toEqual({
+        process: "cli",
+        limit: Option.none(),
+      });
+      expect(telemetryOfArgs(["daemon"])).toEqual({ process: "daemon", limit: Option.none() });
+      expect(telemetryOfArgs(["status"])).toEqual({ process: "cli", limit: Option.none() });
     }),
   );
 });

@@ -21,9 +21,17 @@ export type CancelTarget = typeof CancelTarget.Type;
 // that summary (a run this binary can't resume); superseded, because its
 // work item went (closed, merged, claimed by another run); or lost, because
 // another run took its work item over once its claim's lease expired; ended
-// at its park; or interrupted, because the hub it ran under stopped.
+// at its park; interrupted, because the hub it ran under stopped; or failed,
+// because its spoke went past one of the hub's bounds (ADR 23, decision 4).
 export const EndAs = Schema.Struct({
-  ending: Schema.Literals(["needs-human", "superseded", "lost", "ended-at-park", "interrupted"]),
+  ending: Schema.Literals([
+    "needs-human",
+    "superseded",
+    "lost",
+    "ended-at-park",
+    "interrupted",
+    "failed",
+  ]),
   reason: Schema.String,
 });
 

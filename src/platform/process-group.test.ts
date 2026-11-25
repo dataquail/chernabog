@@ -6,7 +6,13 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { effect } from "../../test/effect-test.ts";
-import { describeExit, spawnGroup, stopGroup } from "./process-group.ts";
+import {
+  describeExit,
+  groupsMemory,
+  parseGroupMemory,
+  spawnGroup,
+  stopGroup,
+} from "./process-group.ts";
 
 const sh = (script: string) =>
   spawnGroup("sh", ["-c", script], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? "" } });
@@ -84,6 +90,38 @@ describe("spawnGroup", () => {
 
       expect(Option.isSome(exit.failedToStart)).toBe(true);
       expect(describeExit(exit)).toStartWith("could not start: ");
+    }),
+  );
+});
+
+describe("groupsMemory", () => {
+  effect("sums each group's resident memory, in bytes, from ps's lines", () =>
+    Effect.sync(() => {
+      const byGroup = parseGroupMemory("  101  2048\n 101 1024\n202   512\n\nnot a line\n");
+
+      expect([...byGroup.entries()]).toEqual([
+        [101, 3 * 1024 * 1024],
+        [202, 512 * 1024],
+      ]);
+    }),
+  );
+
+  effect("measures a live group: its leader and every child it started", () =>
+    Effect.gen(function* () {
+      const group = yield* sh("sleep 60 & sleep 60 & wait");
+
+      // ps sees the children once they've started.
+      const measured = yield* groupsMemory.pipe(
+        Effect.repeat({
+          until: (byGroup) => (byGroup.get(group.pid) ?? 0) > 0,
+          schedule: Schedule.spaced("50 millis"),
+          times: 40,
+        }),
+      );
+
+      expect(measured.get(group.pid)).toBeGreaterThan(0);
+
+      yield* stopGroup(group, Duration.millis(300));
     }),
   );
 });

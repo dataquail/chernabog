@@ -5,7 +5,7 @@
 // when its parent has gone, however it went. What a hub runs a spoke in
 // (ADR 23, decision 1).
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 import * as Deferred from "effect/Deferred";
@@ -159,3 +159,38 @@ export const stopGroup = (group: ProcessGroup, grace: Duration.Duration) =>
 // The grace a stop gives a spoke after SIGTERM, above its own 3-second
 // shutdown deadline (withShutdownDeadline), before SIGKILL (ADR 23, decision 4).
 export const STOP_GRACE = Duration.seconds(10);
+
+// The resident memory of each process group, in bytes, by its id, from `ps`'s
+// lines of a group id and a resident size in kilobytes, as both macOS and
+// Linux print them: what a hub measures a spoke's memory by, its whole group
+// summed (ADR 23, decision 4). A line that doesn't read is left out.
+export const parseGroupMemory = (text: string): ReadonlyMap<number, number> => {
+  const byGroup = new Map<number, number>();
+
+  for (const line of text.split("\n")) {
+    const [group, kilobytes] = line.trim().split(/\s+/).map(Number);
+
+    if (Number.isInteger(group) && Number.isFinite(kilobytes)) {
+      byGroup.set(group, (byGroup.get(group) ?? 0) + kilobytes * 1024);
+    }
+  }
+
+  return byGroup;
+};
+
+// Every process group's resident memory, as `ps` says now; empty when it
+// can't say, which measures nothing past a bound.
+export const groupsMemory: Effect.Effect<ReadonlyMap<number, number>> = Effect.callback<
+  ReadonlyMap<number, number>
+>((resume) => {
+  execFile("ps", ["-A", "-o", "pgid=,rss="], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+    resume(
+      Effect.succeed(
+        Option.match(Option.fromNullishOr(error), {
+          onNone: () => parseGroupMemory(stdout),
+          onSome: () => new Map<number, number>(),
+        }),
+      ),
+    );
+  });
+});

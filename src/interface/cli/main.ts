@@ -51,7 +51,7 @@ import { GitHubApi } from "../../platform/github-api.ts";
 import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
-import { FileTelemetry, type TelemetryProcess } from "../../platform/telemetry.ts";
+import { FileTelemetry, telemetryOfArgs } from "../../platform/telemetry.ts";
 import { VERSION } from "../../platform/version.ts";
 import {
   checkFlowSettings,
@@ -494,14 +494,6 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-// Which process this is, for the name of its telemetry file: the daemon, or a
-// CLI call (every other command, the TUI and the children runs start).
-const telemetryProcess = (args: ReadonlyArray<string>): TelemetryProcess =>
-  Option.match(
-    Option.filter(Arr.head(args), (command) => command === "daemon"),
-    { onNone: () => "cli", onSome: () => "daemon" },
-  );
-
 // The tracer, and a logger beside the console's, writing this process's spans
 // and logs under the home's telemetry/ (CHERNABOG_HOME moves it, as the tests'
 // sandboxes do), for as long as the command runs.
@@ -511,7 +503,10 @@ const TelemetryLive = Layer.unwrap(
     // The arguments the command line is parsed from, as Command.run reads them.
     const args = yield* (yield* Stdio.Stdio).args;
 
-    return FileTelemetry.layer({ dir: homePaths(root).telemetry, process: telemetryProcess(args) });
+    // Which process this is, for the name of its telemetry files: the
+    // daemon, one run's spoke, limited to its bound, or a CLI call (every
+    // other command, the TUI and the children runs start).
+    return FileTelemetry.layer({ dir: homePaths(root).telemetry, ...telemetryOfArgs(args) });
   }),
 );
 

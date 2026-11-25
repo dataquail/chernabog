@@ -32,6 +32,7 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel, shortRunId } from "../../kernel/run-id.id.ts";
+import { breachSummary, type SpokeBreach } from "../../kernel/spoke-bounds.value-object.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
@@ -930,6 +931,40 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
+      // Ends a spoke past one of its bounds (ADR 23, decision 4): its run
+      // fails, naming the bound, what was measured and the limit. Ending it
+      // is a cancel's: SIGTERM to its group, SIGKILL after the grace, the
+      // last fold, its journal deleted, and its agent sessions always
+      // closed by their handles, since a session left running would go on
+      // spending for a run that has ended.
+      const endPastBound = (runId: RunId, breach: SpokeBreach) =>
+        Effect.gen(function* () {
+          const reason = breachSummary(breach);
+          yield* log(`spoke for ${shortRunId(runId)} ${reason}; ending it`);
+          yield* noteInRun(runId, `the hub ends this run's spoke: ${reason}`);
+
+          const ended = yield* RunFlowsCommands.use((runs) =>
+            runs.CancelRunCommand({
+              target: CancelTarget.cases.ById.make({ asked: runId }),
+              by: "chernabog",
+              closeSessions: true,
+              endAs: Option.some({ ending: "failed", reason }),
+            }),
+          ).pipe(Effect.result);
+
+          yield* log(
+            Result.match(ended, {
+              onSuccess: (done) =>
+                [
+                  `ended ${runId} (${runLabel(done.run)}) failed: ${Option.getOrElse(done.run.summary, () => reason)}`,
+                  ...done.leftForPerson,
+                ].join("; "),
+              onFailure: (error) =>
+                `could not end ${shortRunId(runId)} past its bound (${reason}): ${error.message}`,
+            }),
+          );
+        });
+
       const spokes = yield* hubSpokes<
         | CommandBus
         | FileSystem.FileSystem
@@ -953,6 +988,8 @@ export const runDaemon = Effect.gen(function* () {
           ),
         apply: foldReport,
         onExit: endSpokeRun,
+        bounds: machine.spokes,
+        onBound: endPastBound,
       });
 
       // The runs module ends a run's spoke through these, from now on.

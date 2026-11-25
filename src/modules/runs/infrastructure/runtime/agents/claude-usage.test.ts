@@ -234,3 +234,20 @@ describe("the Claude adapter reads what a session spent from its transcripts", (
     }),
   );
 });
+
+describe("the Claude adapter names where a session's transcripts grow", () => {
+  effectAtHome("its own transcript, and the folder its subagents write theirs in", () =>
+    Effect.gen(function* () {
+      const home = yield* Home;
+      const { session } = yield* sessionAt;
+      const main = yield* transcriptFile(session, `${home.user}/.claude`);
+
+      const transcripts = yield* Option.match(Option.fromUndefinedOr(claudeAdapter.transcripts), {
+        onNone: () => Effect.die("the claude adapter names no transcripts"),
+        onSome: (of) => of(session),
+      });
+
+      expect(transcripts).toEqual([main, main.slice(0, -".jsonl".length)]);
+    }),
+  );
+});

@@ -89,6 +89,8 @@ export type MachineOptions = {
   readonly personaEvents?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
   // How many runs the machine keeps in flight at once; its default of one when unset.
   readonly concurrency?: number;
+  // The bounds the daemon holds each run's spoke to (ADR 23, decision 4).
+  readonly spokes?: Readonly<Record<string, Json>>;
 };
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
@@ -233,7 +235,14 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
     );
   }
 
-  for (const key of ["agents", "launcher", "launchers", "events", "concurrency"] as const) {
+  for (const key of [
+    "agents",
+    "launcher",
+    "launchers",
+    "events",
+    "concurrency",
+    "spokes",
+  ] as const) {
     const value = Option.fromUndefinedOr(machine[key]);
 
     if (Option.isSome(value)) {

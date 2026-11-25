@@ -19,12 +19,22 @@
 // command that asked then ends the run. The hub keeps the agent sessions a
 // spoke reported opening, so that command can close them by their handles.
 //
+// The hub bounds every spoke (ADR 23, decision 4). Every 5 seconds it
+// measures each live spoke: its telemetry and run-log bytes, how long it has
+// run, how long since any of its files last grew (its journal, its run log,
+// the transcripts of the agent sessions it reported) and its process group's
+// resident memory. A spoke past a bound is handed to `onBound` once, which
+// ends its run failed, naming the bound, through `end`. The spoke caps its
+// own telemetry and run log at their bounds too, which the hub passes it,
+// and stops itself a margin after its phase-time bound, so the hub's bound
+// is the one that ends it.
+//
 // What later layers hook into: `start`'s handle (the PID and process group
 // `om_spokes` records, #664, which also keeps the fold position and the
-// intended ending there, where here they are the hub's memory), `end` (the
-// bounds, #663, which also watch the sessions' transcripts).
+// intended ending there, where here they are the hub's memory).
 
 import type { Command } from "@effect-server-utils/cqrs";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -34,12 +44,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { type RunId, shortRunId } from "../../kernel/run-id.id.ts";
+import {
+  breachOf,
+  type SpokeBounds,
+  type SpokeBreach,
+  type SpokeMeasure,
+} from "../../kernel/spoke-bounds.value-object.ts";
 import {
   type AgentSessionOpened,
   type EndedSpoke,
@@ -56,6 +73,7 @@ import { homePaths } from "../../platform/home.ts";
 import {
   describeExit,
   type GroupExit,
+  groupsMemory,
   type ProcessGroup,
   spawnGroup,
   STOP_GRACE,
@@ -110,8 +128,27 @@ const encodeHandOver = Schema.encodeSync(SpokeHandOverJson);
 // grew (file events can stop on macOS under load, as watchStateChanges found).
 export const TAIL_EVERY = Duration.seconds(2);
 
+// How often the hub measures each live spoke against its bounds.
+export const SAMPLE_EVERY = Duration.seconds(5);
+
+// How long past its phase-time bound a spoke stops itself, as `ci run` does
+// in a CI job: well after the hub's bound, so that is the one that ends it,
+// and the spoke's own stop is there only for a hub that stopped watching.
+export const STOP_AFTER_MARGIN = Duration.minutes(5);
+
+// What a spoke is told of its bounds: the bytes its telemetry and its run
+// log stop at, and when it stops itself.
+const boundArgs = (bounds: SpokeBounds) => [
+  "--telemetry-limit",
+  String(bounds.telemetry),
+  "--run-log-limit",
+  String(bounds.runLog),
+  "--stop-after-seconds",
+  String(Math.ceil(Duration.toSeconds(Duration.sum(bounds.phaseTime, STOP_AFTER_MARGIN)))),
+];
+
 // The spoke's command line, as `ci run --run` takes a hub's hand-over.
-export const spokeArgs = (handOver: SpokeHandOver, handOverFile: string) => [
+export const spokeArgs = (handOver: SpokeHandOver, handOverFile: string, bounds: SpokeBounds) => [
   "ci",
   "run",
   "--run",
@@ -126,17 +163,8 @@ export const spokeArgs = (handOver: SpokeHandOver, handOverFile: string) => [
   "--hand-over-file",
   handOverFile,
   ...Option.match(handOver.tree, { onNone: () => [], onSome: (tree) => ["--tree", tree] }),
+  ...boundArgs(bounds),
 ];
-
-// The environment a spoke runs in: the hub's, in the hub's home, never with
-// an API key, which would bill claude by the token.
-export const spokeEnvironment = (
-  variables: Readonly<Record<string, string>>,
-  home: string,
-): Readonly<Record<string, string>> => ({
-  ...Record.remove(variables, "ANTHROPIC_API_KEY"),
-  CHERNABOG_HOME: home,
-});
 
 // What folding a report does: dispatch one of the runs' commands with its
 // payload, skip it saying why, keep an agent session the spoke opened on the
@@ -241,6 +269,110 @@ export const journalSignature = (fs: FileSystem.FileSystem, journal: string) =>
     ),
   ).pipe(Effect.map((parts) => parts.join(" ")));
 
+// The size of a file, or of every file under a folder; 0 for neither.
+const sizeOf = (fs: FileSystem.FileSystem, path: string): Effect.Effect<number> =>
+  Effect.gen(function* () {
+    const info = yield* fs.stat(path);
+
+    if (info.type !== "Directory") {
+      return Number(info.size);
+    }
+
+    let total = 0;
+
+    for (const name of yield* fs.readDirectory(path, { recursive: true })) {
+      total += yield* fs.stat(`${path}/${name}`).pipe(
+        Effect.map((found) => Option.liftPredicate(found, (one) => one.type === "File")),
+        Effect.map(Option.match({ onNone: () => 0, onSome: (file) => Number(file.size) })),
+        Effect.orElseSucceed(() => 0),
+      );
+    }
+
+    return total;
+  }).pipe(Effect.orElseSucceed(() => 0));
+
+// The bytes each run's spoke has written as telemetry, summed over every day
+// folder, by its run: a spoke's files are named for its run
+// (`spoke-<run>-<pid>.jsonl`). One pass over the folders, for every spoke.
+export const telemetryByRun = (fs: FileSystem.FileSystem, telemetry: string) =>
+  Effect.gen(function* () {
+    const byRun = new Map<string, number>();
+
+    for (const day of yield* fs.readDirectory(telemetry)) {
+      const files = yield* fs
+        .readDirectory(`${telemetry}/${day}`)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+      for (const file of files.filter((name) => name.startsWith("spoke-"))) {
+        // spoke-<run>-<pid>.jsonl: the run is everything before the last dash.
+        const run = file.slice("spoke-".length, file.lastIndexOf("-"));
+        byRun.set(run, (byRun.get(run) ?? 0) + (yield* sizeOf(fs, `${telemetry}/${day}/${file}`)));
+      }
+    }
+
+    return byRun;
+  }).pipe(Effect.orElseSucceed(() => new Map<string, number>()));
+
+// What the run's files look like: its journal's, its run log's size and the
+// transcripts' of the sessions its spoke reported. A change in it is the
+// spoke getting somewhere; the same for as long as the idle bound is a spoke
+// gone idle.
+export const activityOf = (
+  fs: FileSystem.FileSystem,
+  home: string,
+  runId: RunId,
+  sessions: ReadonlyArray<AgentSessionOpened>,
+) =>
+  Effect.gen(function* () {
+    const paths = homePaths(home);
+    const journal = yield* journalSignature(fs, paths.journal(runId));
+    const runLog = yield* sizeOf(fs, paths.runLog(runId));
+
+    const transcripts = yield* Effect.forEach(
+      sessions.flatMap((session) => session.transcripts ?? []),
+      (path) => sizeOf(fs, path),
+    );
+
+    return [journal, String(runLog), ...transcripts.map(String)].join(" ");
+  });
+
+// When a spoke last got somewhere: what its files looked like then, and when.
+export type SpokeActivity = { readonly signature: string; readonly at: number };
+
+// The spoke's activity after a sample that found its files looking like
+// `signature` at `now`: moved on if they changed, else as it was.
+export const nextActivity = (last: SpokeActivity, signature: string, now: number): SpokeActivity =>
+  Option.getOrElse(
+    Option.liftPredicate(last, (was) => was.signature === signature),
+    () => ({ signature, at: now }),
+  );
+
+// One spoke measured, from what the hub sampled at `now`.
+export const measureOf = (sample: {
+  readonly now: number;
+  readonly startedAt: number;
+  readonly activity: SpokeActivity;
+  readonly telemetry: number;
+  readonly runLog: number;
+  readonly memory: Option.Option<number>;
+}): SpokeMeasure => ({
+  telemetry: sample.telemetry,
+  runLog: sample.runLog,
+  phaseTime: Duration.millis(Math.max(0, sample.now - sample.startedAt)),
+  idle: Duration.millis(Math.max(0, sample.now - sample.activity.at)),
+  memory: sample.memory,
+});
+
+// The environment a spoke runs in: the hub's, in the hub's home, never with
+// an API key, which would bill claude by the token.
+export const spokeEnvironment = (
+  variables: Readonly<Record<string, string>>,
+  home: string,
+): Readonly<Record<string, string>> => ({
+  ...Record.remove(variables, "ANTHROPIC_API_KEY"),
+  CHERNABOG_HOME: home,
+});
+
 // Folds a live spoke's journal for as long as it lives: at once, then
 // whenever its files have changed since the last fold, looked at on each
 // change under the journals or every `every`, whichever is first. A journal
@@ -288,6 +420,14 @@ export const hubSpokes = <R>(options: {
     exit: GroupExit,
     intended: Option.Option<RunStatus>,
   ) => Effect.Effect<void, never, R>;
+  // What the hub holds each spoke to, and what it does with one past a
+  // bound: ends its run, through `end` (ADR 23, decision 4).
+  readonly bounds: SpokeBounds;
+  readonly onBound: (runId: RunId, breach: SpokeBreach) => Effect.Effect<void, never, R>;
+  // Every process group's resident memory, by its id; `ps`'s, unless a test
+  // says otherwise.
+  readonly memory?: Effect.Effect<ReadonlyMap<number, number>>;
+  readonly sampleEvery?: Duration.Duration;
 }): Effect.Effect<Spokes, never, R | FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -306,6 +446,11 @@ export const hubSpokes = <R>(options: {
         readonly fold: Effect.Effect<void>;
         readonly sessions: Array<AgentSessionOpened>;
         readonly done: Deferred.Deferred<boolean>;
+        // When it was spawned, and when its files last changed, in millis.
+        readonly startedAt: number;
+        readonly activity: Ref.Ref<SpokeActivity>;
+        // Whether the hub has handed it to `onBound` already.
+        readonly bounded: Ref.Ref<boolean>;
       }
     >();
 
@@ -360,7 +505,7 @@ export const hubSpokes = <R>(options: {
 
         const group = yield* spawnGroup(
           program,
-          [...prefix, ...spokeArgs(handOver, handOverFile)],
+          [...prefix, ...spokeArgs(handOver, handOverFile, options.bounds)],
           {
             cwd: handOver.checkout,
             env: spokeEnvironment(options.variables, options.home),
@@ -371,6 +516,9 @@ export const hubSpokes = <R>(options: {
         const folding = yield* Semaphore.make(1);
         const sessions: Array<AgentSessionOpened> = [];
         const done = yield* Deferred.make<boolean>();
+        const startedAt = yield* Clock.currentTimeMillis;
+        const activity = yield* Ref.make<SpokeActivity>({ signature: "", at: startedAt });
+        const bounded = yield* Ref.make(false);
 
         // A session the spoke opened stays with the spoke; any other report
         // is the hub's to fold into state.db.
@@ -390,7 +538,15 @@ export const hubSpokes = <R>(options: {
           Effect.provideContext(context),
         );
 
-        live.set(handOver.runId, { group, fold, sessions, done });
+        live.set(handOver.runId, {
+          group,
+          fold,
+          sessions,
+          done,
+          startedAt,
+          activity,
+          bounded,
+        });
 
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
@@ -424,6 +580,55 @@ export const hubSpokes = <R>(options: {
           scope,
         );
       }).pipe(Effect.mapError((error) => `could not hand it to a spoke: ${error.message}`));
+
+    // Measures every live spoke against its bounds, and hands one past a
+    // bound to `onBound`, once, on a fiber of its own: ending it waits out
+    // its grace, which holds up no other spoke's sample.
+    const sample = Effect.gen(function* () {
+      if (live.size === 0) {
+        return;
+      }
+
+      const memory = yield* options.memory ?? groupsMemory;
+      const telemetry = yield* telemetryByRun(fs, paths.telemetry);
+      const now = yield* Clock.currentTimeMillis;
+
+      for (const [runId, spoke] of [...live.entries()]) {
+        if (yield* Ref.get(spoke.bounded)) {
+          continue;
+        }
+
+        const signature = yield* activityOf(fs, options.home, runId, spoke.sessions);
+
+        const activity = yield* Ref.updateAndGet(spoke.activity, (last) =>
+          nextActivity(last, signature, now),
+        );
+
+        const measure = measureOf({
+          now,
+          startedAt: spoke.startedAt,
+          activity,
+          telemetry: telemetry.get(runId) ?? 0,
+          runLog: yield* sizeOf(fs, paths.runLog(runId)),
+          memory: Option.fromUndefinedOr(memory.get(spoke.group.pid)),
+        });
+
+        for (const breach of Option.toArray(breachOf(measure, options.bounds))) {
+          yield* Ref.set(spoke.bounded, true);
+          yield* Effect.forkIn(
+            options.onBound(runId, breach).pipe(Effect.provideContext(context)),
+            scope,
+          );
+        }
+      }
+    });
+
+    yield* Effect.forkScoped(
+      sample.pipe(
+        Effect.catchCause((cause) => options.log(`sampling spokes failed: ${String(cause)}`)),
+        Effect.repeat(Schedule.spaced(options.sampleEvery ?? SAMPLE_EVERY)),
+      ),
+    );
 
     return {
       start,

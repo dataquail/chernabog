@@ -858,6 +858,43 @@ describe("cancelRunHandler", () => {
     }).pipe(Effect.provide(inSpoke(fakeEngine(), lostHoldings, lostSeen))),
   );
 
+  const boundEngine = fakeEngine();
+  boundEngine.journals.push(RunId.make("a"));
+  const boundSeen: Array<string> = [];
+
+  const boundHoldings = fakeHoldings({
+    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+  });
+
+  effect(
+    "a spoke past a bound is ended as failed, naming the bound, and its sessions are closed",
+    () =>
+      Effect.gen(function* () {
+        const failed = yield* cancelRunHandler({
+          target: byId("a"),
+          by: "chernabog",
+          closeSessions: true,
+          endAs: Option.some({
+            ending: "failed",
+            reason: "ended past its idle bound: 31m over 30m",
+          }),
+        });
+
+        // The spoke was ended for failed while its run still ran, and its
+        // journal deleted, before the run was recorded.
+        expect(boundSeen).toEqual(["failed while running"]);
+        expect(boundEngine.discarded).toEqual([RunId.make("a")]);
+        expect(failed.run.status).toBe("failed");
+        expect(Option.getOrElse(failed.run.summary, () => "")).toContain(
+          "ended past its idle bound: 31m over 30m",
+        );
+        expect(yield* statusOf("a")).toEqual(Option.some("failed"));
+        expect(boundHoldings.closed).toEqual(["term-1"]);
+        expect(failed.openSessions).toEqual([]);
+        expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RunFinished"]);
+      }).pipe(Effect.provide(inSpoke(boundEngine, boundHoldings, boundSeen))),
+  );
+
   const raceEngine = fakeEngine();
   const raceSeen: Array<string> = [];
   raceEngine.journals.push(RunId.make("a"));
