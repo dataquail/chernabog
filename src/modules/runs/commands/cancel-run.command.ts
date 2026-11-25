@@ -32,6 +32,11 @@ export const CancelRunCommand = Command.make("CancelRunCommand", {
     // Whether to close the agent sessions it left open, by their launcher's
     // handle; otherwise they're left for the person.
     closeSessions: Schema.Boolean,
+    // With closeSessions, whether to leave open the sessions a person works
+    // in: for a run that a stopped process left, whose sessions nobody is
+    // watching but a person's (ADR 23, #665). A person's own cancel closes
+    // what it is asked to.
+    sparePersonSessions: Schema.optionalKey(Schema.Boolean),
     // How it ends instead of cancelled, and why; none for a cancel.
     endAs: Schema.Option(EndAs),
   },

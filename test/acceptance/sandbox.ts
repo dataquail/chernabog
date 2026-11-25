@@ -89,6 +89,8 @@ export type MachineOptions = {
   readonly personaEvents?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
   // How many runs the machine keeps in flight at once; its default of one when unset.
   readonly concurrency?: number;
+  // The bounds the daemon holds each run's spoke to (ADR 23, decision 4).
+  readonly spokes?: Readonly<Record<string, Json>>;
 };
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
@@ -233,7 +235,14 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
     );
   }
 
-  for (const key of ["agents", "launcher", "launchers", "events", "concurrency"] as const) {
+  for (const key of [
+    "agents",
+    "launcher",
+    "launchers",
+    "events",
+    "concurrency",
+    "spokes",
+  ] as const) {
     const value = Option.fromUndefinedOr(machine[key]);
 
     if (Option.isSome(value)) {
@@ -485,6 +494,87 @@ export const openSandbox = (
   const cli = cliOn(home, checkout);
   const runCli = collecting(cli);
 
+  // What a hub does before it starts a spoke (ADR 23, decision 2, step 1),
+  // standing in for the daemon's: records a run of `flow` on `item` in this
+  // machine's state.db, as the implicit persona, attaches the execution its
+  // run keys, and answers its id and the hand-over the hub would write for its
+  // spoke: the run as recorded, and the item. In a child process of its own,
+  // as the CLI is, through the runs module's own StartRunCommand and
+  // AttachExecutionCommand handlers.
+  const recordRun = (flow: string, item: Json) => {
+    // Evaluated from the repo's root, so its packages resolve from there.
+    const handOver = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `import { BunServices } from "@effect/platform-bun";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { BUNDLED_CORE_VERSION } from "${ROOT}src/kernel/core-support.value-object.ts";
+import { RunId } from "${ROOT}src/kernel/run-id.id.ts";
+import { attachExecutionHandler } from "${ROOT}src/modules/runs/commands/attach-execution.handler.ts";
+import { startRunHandler } from "${ROOT}src/modules/runs/commands/start-run.handler.ts";
+import { workflowNamed } from "${ROOT}src/modules/runs/infrastructure/runtime/engine.ts";
+import { SpokeHandOverJson } from "${ROOT}src/modules/runs/domain/run/spoke-hand-over.value-object.ts";
+import { StateAt } from "${ROOT}test/sdk-fakes.ts";
+
+const item = JSON.parse(process.env.RECORD_ITEM);
+const id = RunId.make(crypto.randomUUID());
+
+const run = await Effect.runPromise(
+  startRunHandler({
+    id,
+    coreVersion: BUNDLED_CORE_VERSION,
+    configTree: Option.none(),
+    repo: "demo",
+    persona: Option.none(),
+    flow: process.env.RECORD_FLOW,
+    itemKey: item.key,
+    itemTitle: Option.fromUndefinedOr(item.title),
+    itemUrl: Option.fromUndefinedOr(item.url),
+    item: Option.some(item),
+  }).pipe(
+    Effect.andThen(workflowNamed("demo", process.env.RECORD_FLOW).executionId({ runId: id, item })),
+    Effect.flatMap((executionId) => attachExecutionHandler({ runId: id, executionId })),
+    Effect.provide(StateAt(process.env.RECORD_HOME).pipe(Layer.provideMerge(BunServices.layer))),
+    Effect.scoped,
+  ),
+);
+
+process.stdout.write(Schema.encodeSync(SpokeHandOverJson)({ run, item }));
+`,
+      ],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RECORD_FLOW: flow,
+          RECORD_ITEM: JSON.stringify(item),
+          RECORD_HOME: home,
+        },
+      },
+    ).trim();
+
+    const runId = Schema.decodeSync(
+      Schema.fromJsonString(Schema.Struct({ run: Schema.Struct({ id: Schema.String }) })),
+    )(handOver).run.id;
+
+    return { runId, handOver };
+  };
+
+  // The CLI as a hub starts a spoke on this machine: its stdin a pipe the
+  // test holds open, as a hub holds a spoke's, and closes to stop it.
+  const spokeCli = (args: ReadonlyArray<string>) =>
+    spawn(program, [...programArgs, ...args], {
+      env: { ...env, CHERNABOG_HOME: home },
+      cwd: Option.getOrElse(Option.liftPredicate(checkout, existsSync), () => root),
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
   // Another machine on the same GitHub, with a home and a clone of its own,
   // set up as `other` says (as this one, unless given).
   const anotherMachine = (name: string, other: MachineOptions = machine) => {
@@ -680,6 +770,8 @@ export const openSandbox = (
     installCheckout,
     cli,
     runCli,
+    spokeCli,
+    recordRun,
     anotherMachine,
     claudeCalls,
     hookCalls,

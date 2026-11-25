@@ -22,10 +22,14 @@ import { listRunMarkersHandler } from "./queries/list-run-markers.handler.ts";
 import { ListRunMarkersQuery } from "./queries/list-run-markers.query.ts";
 import { listRunWaitsHandler } from "./queries/list-run-waits.handler.ts";
 import { ListRunWaitsQuery } from "./queries/list-run-waits.query.ts";
+import { listSpokesHandler } from "./queries/list-spokes.handler.ts";
+import { ListSpokesQuery } from "./queries/list-spokes.query.ts";
 import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.handler.ts";
 import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
 import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
 import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
+import { pollExecutionHandler } from "./queries/poll-execution.handler.ts";
+import { PollExecutionQuery } from "./queries/poll-execution.query.ts";
 import { pollNotificationsHandler } from "./queries/poll-notifications.handler.ts";
 import { PollNotificationsQuery } from "./queries/poll-notifications.query.ts";
 import { readFlowPlanHandler } from "./queries/read-flow-plan.handler.ts";
@@ -38,6 +42,12 @@ import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
 import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
 import { readRunUsageHandler } from "./queries/read-run-usage.handler.ts";
 import { ReadRunUsageQuery } from "./queries/read-run-usage.query.ts";
+import { readSilentExitsHandler } from "./queries/read-silent-exits.handler.ts";
+import { ReadSilentExitsQuery } from "./queries/read-silent-exits.query.ts";
+import { readSpokeEndingHandler } from "./queries/read-spoke-ending.handler.ts";
+import { ReadSpokeEndingQuery } from "./queries/read-spoke-ending.query.ts";
+import { readSpokeReportsHandler } from "./queries/read-spoke-reports.handler.ts";
+import { ReadSpokeReportsQuery } from "./queries/read-spoke-reports.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { readTokenUsageCursorHandler } from "./queries/read-token-usage-cursor.handler.ts";
@@ -63,12 +73,14 @@ export const runsQueryGroup = Query.group(
   ListRecentSkipsQuery,
   ListRunMarkersQuery,
   ListRunWaitsQuery,
+  ListSpokesQuery,
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
   ReadFlowPlanQuery,
   ReadRunHistoryQuery,
   ReadRunMadeQuery,
   ReadRunUsageQuery,
+  ReadSilentExitsQuery,
   ReadStateVersionQuery,
   ReadTokenUsageCursorQuery,
 );
@@ -82,12 +94,14 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListRecentSkipsQuery: (payload) => listRecentSkipsHandler(payload),
   ListRunMarkersQuery: (payload) => listRunMarkersHandler(payload),
   ListRunWaitsQuery: (payload) => listRunWaitsHandler(payload),
+  ListSpokesQuery: () => listSpokesHandler(),
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
   ReadFlowPlanQuery: (payload) => readFlowPlanHandler(payload),
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
   ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
   ReadRunUsageQuery: (payload) => readRunUsageHandler(payload),
+  ReadSilentExitsQuery: (payload) => readSilentExitsHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),
   ReadTokenUsageCursorQuery: (payload) => readTokenUsageCursorHandler(payload),
 });
@@ -108,10 +122,18 @@ export const RunsQueriesLive = Layer.effect(
 // state.db. The flows are built inside the engine, over those stores, so
 // this group is the daemon's to provide over its runtime, as the runs'
 // commands are, apart from the queries the engine itself asks.
-export const runFlowsQueryGroup = Query.group(CheckRunValidityQuery);
+export const runFlowsQueryGroup = Query.group(
+  CheckRunValidityQuery,
+  PollExecutionQuery,
+  ReadSpokeEndingQuery,
+  ReadSpokeReportsQuery,
+);
 
 const RunFlowsQueryHandlersLive = Query.handlersOf(runFlowsQueryGroup, {
   CheckRunValidityQuery: (payload) => checkRunValidityHandler(payload),
+  PollExecutionQuery: (payload) => pollExecutionHandler(payload),
+  ReadSpokeEndingQuery: (payload) => readSpokeEndingHandler(payload),
+  ReadSpokeReportsQuery: (payload) => readSpokeReportsHandler(payload),
 });
 
 // The runs module's slice of the read side over the loaded flows, which the

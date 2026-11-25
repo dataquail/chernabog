@@ -10,7 +10,13 @@
 // every flow as Repo's: `limits.ciRounds` for `ciRounds`, `labels` for
 // `labels`, `baseBranch` for `base`, and so on.
 
-import { type FlowLabel, Repo, type RepoSettings, Settings as CoreSettings } from "@chernabog/core";
+import {
+  APP_REVIEWER,
+  type FlowLabel,
+  Repo,
+  type RepoSettings,
+  Settings as CoreSettings,
+} from "@chernabog/core";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -282,18 +288,32 @@ export const Reviewers = Schema.Struct({
   reviewers: Schema.optionalKey(
     Strings.annotate({
       description:
-        "The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path.",
+        "The reviewer pool: people by GitHub login, and the team's reviewer App as app:reviewer (apps: in config.yaml). A pull request with green CI asks one of the people at random to review it, never its author; each needs write access, since the reviewer merges on the automated path. The App reviews through its chernabog review check instead of being asked.",
     }),
   ),
   reviewRounds: Count("Re-reviews of one pull request before a person takes over."),
 });
 
+// The reviewer pool, split: `pool` is the people, by login, whom a pull
+// request asks for a review; `apps` are the team's Apps it names as
+// app:<role>, which review through their check and are never asked. An
+// app:<role> with no App under apps: names none, which config refuses as it
+// loads.
 export const reviewers = Effect.gen(function* () {
   const repo = yield* Repo;
   const own = yield* read(Reviewers);
+  const named = own.reviewers ?? repo.reviewers ?? [];
 
   return {
-    pool: own.reviewers ?? repo.reviewers ?? [],
+    pool: named.filter((entry) => !entry.startsWith(APP_REVIEWER)),
+    apps: named.flatMap((entry) =>
+      Option.toArray(
+        Option.flatMap(
+          Option.liftPredicate(entry, (app) => app.startsWith(APP_REVIEWER)),
+          (app) => Record.get(repo.apps ?? {}, app.slice(APP_REVIEWER.length)),
+        ),
+      ),
+    ),
     rounds: own.reviewRounds ?? repo.limits.reviewRounds,
   };
 });

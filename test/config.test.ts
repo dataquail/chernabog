@@ -31,6 +31,7 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
+import { seatedLogins } from "../src/modules/runs/infrastructure/runtime/sdk-live.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
@@ -156,6 +157,64 @@ describe("config layers", () => {
         ship: { reviewer: "opencode", author: "claude" },
       });
       expect(merged.settings.flowAgents).toEqual({ ship: "claude" });
+    }),
+  );
+
+  effect(
+    "the team's Apps reach the SDK with their bots' logins, and each flow's as: as flowApps",
+    () =>
+      Effect.gen(function* () {
+        const merged = yield* merge(
+          {
+            apps: {
+              author: { id: 5714322, slug: "chernabog-author" },
+              reviewer: { id: 5714350, slug: "chernabog-review" },
+            },
+            personas: ["chernabog-author[bot]", "chernabog-review[bot]"],
+            reviewers: ["app:reviewer", "alice"],
+            flows: { ship: { as: "author" }, check: { as: "reviewer" }, plain: {} },
+          },
+          {},
+        );
+
+        expect(merged.settings.apps).toEqual({
+          author: { id: 5714322, slug: "chernabog-author", login: "chernabog-author[bot]" },
+          reviewer: { id: 5714350, slug: "chernabog-review", login: "chernabog-review[bot]" },
+        });
+        expect(merged.settings.flowApps).toEqual({ ship: "author", check: "reviewer" });
+        expect(merged.settings.reviewers).toEqual(["app:reviewer", "alice"]);
+        expect(seatedLogins(merged.settings)).toEqual(["chernabog-review[bot]", "alice"]);
+        expect(Option.map(flowSettings(merged, "ship"), (ship) => "as" in ship)).toEqual(
+          Option.some(false),
+        );
+      }),
+  );
+
+  effect("a repo without apps: gives the SDK none, and its pool seats only logins", () =>
+    Effect.gen(function* () {
+      const merged = yield* merge({ reviewers: ["alice", "app:reviewer"] }, {}).pipe(Effect.flip);
+
+      expect(merged.message).toContain("reviewers: app:reviewer, but apps: has no reviewer App");
+
+      const plain = yield* merge({ reviewers: ["alice"] }, {});
+      expect(plain.settings.apps).toBeUndefined();
+      expect(plain.settings.flowApps).toBeUndefined();
+      expect(seatedLogins(plain.settings)).toEqual(["alice"]);
+    }),
+  );
+
+  effect("a flow acting as a role apps: has no App for is refused as config loads", () =>
+    Effect.gen(function* () {
+      const failed = yield* merge(
+        {
+          apps: { author: { id: 1, slug: "a" } },
+          personas: ["a[bot]"],
+          flows: { review: { as: "reviewer" } },
+        },
+        {},
+      ).pipe(Effect.flip);
+
+      expect(failed.message).toContain("flows.review.as: reviewer, but apps: has no reviewer App");
     }),
   );
 
@@ -1253,7 +1312,7 @@ describe("the ci: section", () => {
     () =>
       Effect.gen(function* () {
         expect(yield* ciOf({})).toEqual(
-          Result.succeed({ flows: [], maxParallel: 1, schedule: DEFAULT_CI_SCHEDULE }),
+          Result.succeed({ flows: [], maxParallel: 1, schedule: DEFAULT_CI_SCHEDULE, apps: {} }),
         );
       }),
   );
@@ -1275,9 +1334,50 @@ describe("the ci: section", () => {
             flows: ["review", "implement"],
             maxParallel: 3,
             schedule: "41 */2 * * *",
+            apps: {},
           }),
         );
       }),
+  );
+
+  effect("with apps:, each CI flow acts as the App its as: names, from its own Environment", () =>
+    Effect.gen(function* () {
+      const found = yield* ciOf({
+        apps: {
+          author: { id: 1, slug: "acme-author" },
+          reviewer: { id: 2, slug: "acme-review" },
+        },
+        personas: ["acme-author[bot]", "acme-review[bot]"],
+        flows: { implement: { as: "author" }, review: { as: "reviewer" } },
+        ci: { flows: ["implement", "review"] },
+      });
+
+      const apps = Result.getOrThrow(found).apps;
+
+      expect(
+        Record.map(apps, ({ environment, login, role }) => ({ environment, login, role })),
+      ).toEqual({
+        implement: { role: "author", login: "acme-author[bot]", environment: "chernabog-author" },
+        review: { role: "reviewer", login: "acme-review[bot]", environment: "chernabog-review" },
+      });
+      expect(apps.implement.permissions.checks).toBe("read");
+      expect(apps.review.permissions.checks).toBe("write");
+    }),
+  );
+
+  effect("with apps:, a CI flow that acts as no App is refused", () =>
+    Effect.gen(function* () {
+      const refused = yield* ciOf({
+        apps: { author: { id: 1, slug: "acme-author" } },
+        personas: ["acme-author[bot]"],
+        flows: { implement: { as: "author" } },
+        ci: { flows: ["implement", "triage"] },
+      });
+
+      expect(Result.isFailure(refused) && refused.failure.message).toContain(
+        "ci.flows names triage, which acts as no App",
+      );
+    }),
   );
 
   effect("a schedule that isn't a cron expression is refused", () =>

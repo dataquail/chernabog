@@ -318,6 +318,7 @@ const STATUS_STYLE: Readonly<Record<RunStatus, Style>> = {
   superseded: "dim",
   lost: "yellow",
   "ended-at-park": "dim",
+  interrupted: "dim",
   failed: "red",
 };
 
@@ -1279,6 +1280,7 @@ const LAST_MARK: Readonly<Record<RunStatus, Segment>> = {
   superseded: segment("↷", "dim"),
   lost: segment("↷", "yellow"),
   "ended-at-park": segment("⏸", "dim"),
+  interrupted: segment("↺", "dim"),
   skipped: segment("○", "dim"),
 };
 

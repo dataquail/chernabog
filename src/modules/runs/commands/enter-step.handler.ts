@@ -16,7 +16,7 @@ import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type EnterStepPayload } from "./enter-step.command.ts";
 
 export const enterStepHandler = Effect.fn("enterStepHandler")(
-  function* ({ node, runId, step }: EnterStepPayload) {
+  function* ({ at, node, runId, step }: EnterStepPayload) {
     const runs = yield* RunsRepository;
     const found = yield* runs.findOne(RunSpecifications.withId(runId));
 
@@ -37,7 +37,10 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(
       runId,
       step,
       node: Option.fromUndefinedOr(node),
-      enteredAt: DateTime.formatIso(yield* DateTime.now),
+      enteredAt: yield* Option.match(Option.fromUndefinedOr(at), {
+        onNone: () => Effect.map(DateTime.now, DateTime.formatIso),
+        onSome: Effect.succeed,
+      }),
       finishedAt: Option.none(),
       outcome: Option.none(),
     });

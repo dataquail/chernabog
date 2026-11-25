@@ -460,7 +460,9 @@ describe("the epic document", () => {
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
 
-        yield* runUntil(handle, fake, fresh, parkedAt(1));
+        // #10 and #12 in its first round, #11 once #10 is done in its second, and
+        // nothing left to start in its third.
+        yield* runUntil(handle, fake, fresh, parkedAt(3));
         fake.refs.clear();
         expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
 
@@ -470,7 +472,8 @@ describe("the epic document", () => {
         const again = yield* offered(fake, flow);
         expect(mayStart(again)).toBe(true);
 
-        yield* runUntil(handle, fake, again, parkedAt(1));
+        // A new run counts its rounds afresh: #12 in its first, then nothing left to start.
+        yield* runUntil(handle, fake, again, parkedAt(2));
 
         // The new run took #12 up as its second attempt, and started nothing else again.
         const steps = fake.steps.flatMap(Option.toArray);

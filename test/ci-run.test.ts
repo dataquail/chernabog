@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   ciMachineConfig,
+  ciPersonaOf,
   claudeSeed,
   OAUTH_TOKEN_ENV,
   refusalOf,
@@ -32,6 +33,20 @@ describe("refusalOf", () => {
   });
 });
 
+describe("ciPersonaOf", () => {
+  const apps = { review: { login: "acme-review[bot]" }, author: { login: "acme-author[bot]" } };
+
+  test("a flow config names an App for acts as that App's login", () => {
+    expect(ciPersonaOf(apps, "review")).toEqual(Option.some("acme-review[bot]"));
+    expect(ciPersonaOf(apps, "author")).toEqual(Option.some("acme-author[bot]"));
+  });
+
+  test("a flow with no App acts as the implicit persona", () => {
+    expect(ciPersonaOf(apps, "plan")).toEqual(Option.none());
+    expect(ciPersonaOf({}, "review")).toEqual(Option.none());
+  });
+});
+
 describe("ciMachineConfig", () => {
   test("enrolls the checkout for the one flow, on the subscription token with no usage gate, which a token cannot read, under tmux", () => {
     expect(
@@ -39,6 +54,7 @@ describe("ciMachineConfig", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/home/runner/work/r/r",
         flows: ["review"],
+        apps: {},
       }),
     ).toEqual({
       accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
@@ -65,6 +81,7 @@ describe("ciMachineConfig, as machine config reads it", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/w",
         flows: ["implement"],
+        apps: {},
       }),
     );
 
@@ -87,8 +104,44 @@ describe("ciMachineConfig for the plan job", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/w",
         flows: ["implement", "review"],
-      }).repos[0]?.flows,
-    ).toEqual({ implement: {}, review: {} });
+        apps: {},
+      }).repos[0],
+    ).toHaveProperty("flows", { implement: {}, review: {} });
+  });
+});
+
+describe("ciMachineConfig with the repo's GitHub Apps (#477)", () => {
+  const apps = {
+    implement: { login: "acme-author[bot]" },
+    "address-review": { login: "acme-author[bot]" },
+    review: { login: "acme-review[bot]" },
+  };
+
+  test("makes each App's login a persona on the job's GH_TOKEN, running the flows that act as it", () => {
+    const config = ciMachineConfig({
+      slug: "acme/widgets",
+      checkout: "/w",
+      flows: ["implement", "address-review", "review"],
+      apps,
+    });
+
+    expect(config).toHaveProperty("github", {
+      "acme-author[bot]": { token: { env: "GH_TOKEN" } },
+      "acme-review[bot]": { token: { env: "GH_TOKEN" } },
+    });
+
+    expect(config.repos[0]).toHaveProperty("personas", {
+      "acme-author[bot]": { flows: { implement: {}, "address-review": {} } },
+      "acme-review[bot]": { flows: { review: {} } },
+    });
+  });
+
+  test("a run job's home has only its flow's App", () => {
+    const file = Schema.decodeUnknownSync(MachineConfigFile)(
+      ciMachineConfig({ slug: "acme/widgets", checkout: "/w", flows: ["review"], apps }),
+    );
+
+    expect(Object.keys(file.github ?? {})).toEqual(["acme-review[bot]"]);
   });
 });
 

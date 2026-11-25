@@ -18,7 +18,7 @@ import { effect } from "../../../test/effect-test.ts";
 import { CountedStreamsBus, OpenStreams } from "../../../test/events.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { EngineAt, RunsCommands } from "../../modules/runs/runs.platform.ts";
-import { Home, homePaths } from "../../platform/home.ts";
+import { Home } from "../../platform/home.ts";
 import { applicationModules } from "../application-modules.ts";
 import { DaemonEvent, DaemonStatus, StatusChanged } from "./daemon.protocol.ts";
 import {
@@ -38,7 +38,7 @@ const daemonInScratch = Layer.unwrap(
       applicationModules.engine.pipe(
         Layer.provide(applicationModules.runtime({ handles: [], services: () => Option.none() })),
         Layer.provideMerge(CountedStreamsBus),
-        Layer.provide(EngineAt(homePaths(home).state)),
+        Layer.provide(EngineAt(home)),
         Layer.provide(Home.at(home, home)),
       ),
     ),

@@ -77,6 +77,12 @@ Look before you guess. Everything below is under the chernabog home,
   (`src/kernel/run-log-line.value-object.ts`). Kept 30 days from when its run finished
   (a run still running keeps its log; a log state.db has no run for, 30 days
   from its last write), pruned by the daemon's daily sweep.
+- **`journals/<run>.db`**: one run's workflow journal, the engine's tables
+  for that run alone (ADR 23, decision 3; `journals.ts` in the runs
+  module's runtime). Created when the run executes and deleted when it ends
+  (`discard-run-journal`, on `RunFinished`), cancel included; one left by a
+  crash is swept by `SweepJournalsCommand`. `state.db` holds no engine
+  tables for runs; a migration drops those from before (`state-stamp.ts`).
 - **`telemetry/<day>/<process>-<pid>.jsonl`**: every span and Effect log line
   of one process (`daemon` or `cli`), one JSON object a line, in the folder of
   the UTC day it was written (`FileTelemetry`, `src/platform/telemetry.ts`).
@@ -433,25 +439,23 @@ transitive reach), the coverage floors and the baseline.
   composition root that calls them composes. `PlanTickCommand` is one tick of
   a persona's flow up to what it would do: the machine's gates, the trigger,
   routing and the concurrency limits, recording a skip when it would start
-  nothing. It returns a `TickPlan`: the work whose signals go to runs in
-  flight, and the work to start runs for. The daemon then delivers the
-  signals (`DeliverSignalsCommand`) and, item by item, asks the flow's own
-  gate (`GateFlowCommand`, before every start, since a started run may close
-  it) and starts the run (`StartFlowRunCommand`). The daemon polls each
-  active run with `PollRunCommand`. Flows run through `FlowsClient`
+  nothing. It returns a `TickPlan`: the work to start runs for. The daemon
+  then, item by item, asks the flow's own gate (`GateFlowCommand`, before
+  every start, since a started run may close it), records the run
+  (`StartSpokeRunCommand`) and starts its spoke. No signal is delivered to a
+  run in flight: a park ends its run. Flows run through `FlowsClient`
   (trigger, item lookup, gate) and workflows through `WorkflowsClient`
-  (execute, poll, resume, wake, note); the daemon and `chernabog run` build
+  (execute, poll, interrupt, journals, note); the daemon and `chernabog run` build
   both from the flows they loaded (`RunsModule.runtime(registry)`, the registry's
   type in `infrastructure/runtime/flow-registry.ts`) and pass in what other modules know, such as whether the
   repo is paused.
-- **A start survives a crash.** A run is recorded, with the work item it is
-  for, before its workflow executes, so a process killed in between leaves a
-  run with no execution. `RecoverRunsCommand`, which the daemon and
-  `chernabog run` call at startup, executes those from the item they kept and
-  attaches the execution. An execution is keyed by its run, so one that had
-  started is the one attached, never a second (`test/engine.test.ts` covers
-  both windows). A run from before runs kept their item ends as failed, so
-  its item can start again.
+- **A start survives a crash.** A run is recorded with its execution
+  attached, keyed by the run, in one unit of work (`StartSpokeRunCommand`),
+  before anything executes it, so no run is ever left without an execution.
+  A process killed after that leaves a running run, which the next hub ends
+  as interrupted (or the next foreground `run` of its flow, once no live
+  process owns it), and its phase repeats in a new run. Nothing resumes a run
+  from its journal.
 - **Stopping is bounded.** `main.ts` wraps the program in
   `withShutdownDeadline` (`src/platform/shutdown.ts`): after SIGINT or
   SIGTERM the finalizers get 3 seconds, then the process exits; a second
@@ -517,8 +521,8 @@ transitive reach), the coverage floors and the baseline.
   `state.db` transaction (`RunsUnitOfWorkLive`, provided by `StateAt`);
   the file stores' a scope that opens nothing (`FileStoresUnitOfWork`, in
   `AppLive`), and each dispatcher pins its own (`ownUnitOfWork`). A
-  transaction holds `state.db`'s one connection, which the engine's journal
-  waits on: never call GitHub, git, a launcher or the engine inside one. A
+  transaction holds `state.db`'s one connection, which the runs' steps
+  wait on: never call GitHub, git, a launcher or the engine inside one. A
   command that calls out declares the boundary around its `state.db` reads
   and writes only. Events are dispatched inside the unit of work; a
   dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`
@@ -688,6 +692,13 @@ assignment, a board Status, a claim ref or branch), with a named release.
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
   The daemon runs it every few seconds, `chernabog run` once its run ends, and
   `status` shows `ListUnreleasedMarkersQuery`.
+- **An interrupted run's item is offered again** (#665). A claim that takes
+  the label that queued an issue off it (`Implement.claim`, `Hybrid.claim`,
+  through `Implement.takeQueueLabel`) first holds core's `Markers.requeue`
+  for it, only for a label the issue carried. `RunMarkerRootOps.keptOn`
+  releases that marker on an `interrupted` ending alone, which puts the label
+  back, so the trigger offers the item and the phase repeats in a new run;
+  every other ending keeps it, and the label stays off.
 - **Cancel still does its own cleanup** (claim ref, assignment, branch) for
   runs from before markers; markers' releases are safe to repeat after it.
   Labels are the flow's: cancel never removes one, and a run's label marker
@@ -805,8 +816,13 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
 #361's storage test and #362's map of every recipe's handoffs.
 
 - **A run that parks ends there**, on a daemon as in a CI job (ADR 21,
-  decision 4): the daemon's validity loop (`endParked`) ends every parked
-  run with `CancelRunCommand` `endAs ended-at-park`. That status keeps every
+  decision 4; ADR 23, decision 2): its spoke reports `ended-at-park` and
+  exits, and the hub ends the run with `CancelRunCommand` `endAs
+ended-at-park`; the validity loop (`endParked`) does the same for a parked
+  run with no live spoke. No run sleeps in a process: when what it waits on
+  settles, the source that reads its record offers the item, and the hub
+  starts a new run in a new spoke from there, after a restart too
+  (`test/acceptance/hub-spokes.test.ts`). That status keeps every
   marker, worktree and session for the run that takes the item up from its
   record, as `lost` does (`RunMarkerRootOps.keptOn`), and releases the claim
   ref. A test that needs a run to stay in flight uses a durable `sleep`, not
@@ -956,7 +972,11 @@ How a CI run differs from a daemon run:
   (`ciMachineConfig`, `src/interface/cli/ci-run.main.ts`): the checkout
   enrolled for the repo's `ci.flows`, as the implicit persona (the job's
   `GH_TOKEN`, the `CHERNABOG_TOKEN` secret), with `claude` under tmux on
-  `CLAUDE_CODE_OAUTH_TOKEN`. Never write that config outside Actions.
+  `CLAUDE_CODE_OAUTH_TOKEN`. Never write that config outside Actions. When
+  config.yaml names `apps:` (#477), each App's `<slug>[bot]` login is instead
+  a persona whose token is `GH_TOKEN`: `GITHUB_TOKEN` in the plan job, the
+  App's installation token in a run job. Neither token can read `GET /user`,
+  so the login always comes from config.
 - **The plan reads claims, not state.db.** An item already has a run when it
   has a live claim, and live claims count against a flow's concurrency.
   Otherwise it applies a tick's rules (`plan-tick.handler.ts`).
@@ -987,6 +1007,137 @@ How a CI run differs from a daemon run:
 - **Still interactive, still subscription-billed.** `ci run` refuses to start
   while `ANTHROPIC_API_KEY` is set, and seeds `~/.claude.json` so `claude`
   starts at its prompt.
+- **On a machine, `ci run --run` is a spoke** (ADR 23, #658). A hub has
+  recorded the run and attached its execution (`StartSpokeRunCommand`) and
+  hands it over:
+  `ci run --run <id> --repo --flow [--persona] --item <key> --hand-over-file <path> [--tree <sha>]`
+  (or `--hand-over <json>`: a `SpokeHandOver`, the run as the hub recorded
+  it and its item; no `--persona` is the implicit one; `--tree` is the
+  `.chernabog/` tree the hub trusted). It runs in the machine's own home,
+  writes no machine config, takes no `state.db.lock`, doesn't ask the
+  trigger again, and runs the repo as the machine does (no `asCiJob`).
+  `ExecuteRunCommand` executes the recorded run in its own journal, and the
+  spoke follows it (`PollExecutionQuery`) to its boundary, ending nothing in
+  state.db: it reports how its run ended (`ReportRunEndedCommand`, a
+  `RunEnded` row in the journal's `spoke_reports`), and a park as
+  `ended-at-park`, which it hears from its own engine (`flowLayer`'s
+  `onParked`, once the wait is recorded), not from state.db. It stops as on
+  SIGTERM when its stdin closes. **It writes nothing to `state.db`** (#661):
+  `flowLayer` keeps a run's records through `RunRecords`
+  (`infrastructure/runtime/run-records.ts`), which a spoke provides over its
+  journal (`SpokeEngineAt`): each record is a row in `spoke_reports`, the
+  runs' command it would have dispatched (`spokeReportCommands`), encoded
+  with that command's own schema. It reads its run from the hand-over, the
+  markers it holds from its own reports, and a session's token cursor from
+  its own reports or, failing those, `state.db` read-only and query-only:
+  the one read a spoke makes there. Its runs module stands over an empty
+  store in memory.
+- **A process with no hub is its own** (ADR 23 d9, #665): the foreground
+  `run`, `rehearse` and `ci run` under Actions (`src/interface/cli/own-hub.main.ts`).
+  It records the run with `StartSpokeRunCommand`, records itself as the
+  run's spoke (`RecordSpokeCommand`, its own PID), executes it with
+  `ExecuteRunCommand` against a journal whose `RunRecords` append to
+  `spoke_reports` (`journalRecords`, reading its run and cursors back from
+  its own `state.db`), folds that journal as the hub does
+  (`report-fold.server.ts`'s `foldSpoke` and `foldInStateDb`, its fold
+  position in `om_spokes`), and ends the run from its boundary as the hub
+  ends a spoke's (`endAsSaid`): a park ends it `ended-at-park`, with no wait
+  in the process. A foreground `run` that finds its flow's run still
+  running ends it `interrupted` once no live process owns it
+  (`takeOverLeftRun`, by the PID and start time `om_spokes` keeps), and
+  refuses while one does.
+- **A run a stopped process left closes its agent's sessions** (#665): the
+  foreground takeover and the hub's reap end it with `CancelRunCommand`
+  `closeSessions: true, sparePersonSessions: true`, since the run that owned
+  the sessions is dead and the run that repeats its phase would work beside
+  them. A session a person works in (its launch record's `withPerson`) stays
+  open, and the ending says so. A person's own `cancel --close-session`
+  closes what it asks to.
+- **The daemon is the hub** (ADR 23, #659): it executes no flow itself,
+  and registers none in its engine; `architecture.yaml`'s `hub-runs-no-flow`
+  refuses a call to `flowLayer` or `ExecuteRunCommand` under
+  `src/interface/daemon/` (#665). A
+  tick records each run with `StartSpokeRunCommand` (the run and its
+  execution, keyed by the run, in one unit of work, so only that tick starts
+  a spoke) and spawns its own executable as the spoke, leading a process
+  group of its own (`src/platform/process-group.ts`), with its hand-over in
+  `spokes/<run>.hand-over.json` and a stdin pipe it holds
+  (`src/interface/daemon/spokes.server.ts`). While the spoke lives the hub
+  tails its journal (ADR 23 d8; a watch of `journals/`, a poll every 2
+  seconds): it folds each new report (`ReadSpokeReportsQuery`) by
+  dispatching its command on the hub's `CommandBus`, so status, `/events`
+  and the dashboard see a spoke's steps as they'd see the hub's own; a
+  report it can't read or refuses goes to the run log and is skipped. Each
+  report's command and the spoke's fold position past it
+  (`AdvanceSpokeFoldCommand`, `om_spokes.folded_seq`) commit in one
+  state.db transaction (`foldInUnitOfWork` over `RunsModule.unitOfWork`,
+  whose commands' own units of work join it as savepoints), so a report
+  takes effect once whatever stops the hub.
+  When the spoke exits, the hub folds what's left, then
+  reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
+  (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
+  said nothing (a crash, a SIGKILL from outside) ends `interrupted`, with how
+  it exited, as the reap ends one, so its phase repeats, until `spokes:
+silentExits` (3) runs of its item in a row have ended so: that one ends
+  `failed` (`silentExitEnding`, the count in `om_runs.silent_exits`, read by
+  `ReadSilentExitsQuery`). The run's ending releases
+  its markers and deletes its journal, in the hub. A run the hub ends while
+  its spoke lives (cancelled, lost, superseded) ends the spoke first (ADR 23
+  d5, #662): `CancelRunCommand` asks `RunSpokesClient.end`, which the hub
+  provides through its `FlowRegistry` (`spokes`; no other process has any).
+  The hub records the ending it means for the spoke, the cancel request it
+  was asked (`SpokeEndRequest`: `by`, `closeSessions`, `endAs`), in memory
+  and on its record (`IntendSpokeEndingCommand`, the first one wins), so it
+  won't end the run from the exit; SIGTERMs the group,
+  SIGKILLs it after 10 seconds, and waits for the exit and the last fold.
+  Cancel then deletes the journal, records the ending, cleans up, and only
+  then answers. A spoke reports each agent session it opens
+  (`AgentSessionOpened`, beside `recordRunSession`), which the hub keeps on
+  the live spoke rather than folding; `--close-session` closes those by
+  their launch records' handles. `concurrency` counts running runs,
+  which are the live spokes; the hub renews their leases; a reload or a
+  drain starts no spoke and waits for none to be live.
+- **Spokes die with the hub, and the next hub reaps them** (ADR 23 d7,
+  #664). The hub records each spoke it spawns in `om_spokes`
+  (`RunSpokeRoot`, `RecordSpokeCommand`): its PID (its process group's
+  too) and start time as `ps` says it, the hub's, the fold position and the
+  intended ending; a run's ending forgets it (`ForgetSpokeCommand`, from the
+  hub's `daemon/spoke-endings` subscription). A spoke whose stdin closes
+  SIGTERMs its own group (`stopWhenStdinCloses`), and a spoke stopped by
+  any SIGTERM or SIGINT (its stdin, a hub's stop, a cancel, a bound)
+  SIGKILLs what's left of its group on its way out (`killGroupOnStop`), so
+  what it started, even what ignores SIGTERM, doesn't outlive it. A
+  hub that stops SIGTERMs every spoke and waits for none. Before its first
+  tick, a hub reaps every record (`ListSpokesQuery`, `Spokes.reap`): it
+  signals a group only once its leader's start time and command line
+  (`--run <run>`) say it is still that spoke (`isSpoke`, `processIdentity`;
+  a reused PID is left alone, never killed by name), SIGTERM then SIGKILL
+  after the grace, waiting until the group is gone (`endForeignGroup`);
+  folds the journal from the recorded position, collecting every
+  `AgentSessionOpened`; and answers `RunSpokesClient.end` for it as for a
+  spoke it ended. It then ends each run still running through
+  `CancelRunCommand`: with the intended ending if one was recorded, else
+  `interrupted` (it keeps its markers and lets go of its claim ref, so the
+  phase repeats in a new run); a journal it couldn't read says so in the
+  run's summary. `test/acceptance/hub-reap.test.ts` kills a hub with
+  SIGKILL under a spoke with a child that ignores SIGTERM and one spinning
+  synchronously, and under a cancel.
+  `SweepJournalsCommand` then deletes the journals of runs that have ended.
+- **The hub bounds every spoke** (ADR 23 d4, #663): telemetry bytes,
+  run-log bytes, phase time, idle time and its process group's memory,
+  machine config's `spokes:` over `DEFAULT_SPOKE_BOUNDS`
+  (`src/kernel/spoke-bounds.value-object.ts`). `hubSpokes` samples every
+  live spoke every 5 seconds (`SAMPLE_EVERY`): telemetry and log by size,
+  idle from when its journal, run log or a reported session's
+  `transcripts` (`Adapter.transcripts`; claude's) last changed, memory from
+  one `ps -A -o pgid=,rss=` (`groupsMemory`). One past a bound is ended
+  through `CancelRunCommand` `endAs failed`, its summary naming the bound
+  (`breachSummary`), with `closeSessions: true` always. The spoke caps its
+  own writes too: the hub passes `--telemetry-limit` (its files are
+  `spoke-<run>-<pid>.jsonl`, counted over every day folder,
+  `telemetryOfArgs`) and `--run-log-limit` (`RunLogLimit`), and
+  `--stop-after-seconds` five minutes past its phase-time bound, so the
+  hub's bound ends it first.
 
 ## Versions (#123, #163)
 

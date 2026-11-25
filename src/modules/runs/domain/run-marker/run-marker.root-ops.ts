@@ -65,12 +65,30 @@ const holdAgain = (
     },
   });
 
+// The marker that puts back the label its claim took off an issue (core's
+// Markers.requeue), released only when the run ends interrupted.
+const REQUEUE = "chernabog/requeue";
+
 // Whether the marker stays on this ending. A run that lost its item keeps
 // every marker: they are the new holder's now. So does one that ended at a
 // park: the run that takes the item up from its record carries on with them,
-// as a CI job's next one does.
-const keptOn = (marker: RunMarkerRoot, ending: string) =>
-  ending === "lost" || ending === "ended-at-park" || marker.keepOn.includes(ending);
+// as a CI job's next one does, and so does one interrupted by its process's
+// stop: the run that repeats its phase uses them again. The one exception is
+// the requeue marker, released on an interruption alone, so the item's
+// trigger offers it again for that run (ADR 23, decision 7); any other ending
+// keeps it, and the label stays off.
+const keptOn = (marker: RunMarkerRoot, ending: string) => {
+  if (marker.name === REQUEUE) {
+    return ending !== "interrupted";
+  }
+
+  return (
+    ending === "lost" ||
+    ending === "ended-at-park" ||
+    ending === "interrupted" ||
+    marker.keepOn.includes(ending)
+  );
+};
 
 // Whether a held marker's release may be tried at `now`.
 const isDue = (marker: RunMarkerRoot, now: DateTime.Utc) =>

@@ -41,7 +41,9 @@ describe("the runs' span attributes", () => {
     expect(runsCommandSpanAttributes.EnterStepCommand({ runId })).toEqual({
       "run.id": runId,
     });
-    expect(runFlowsCommandSpanAttributes.PollRunCommand({ runId })).toEqual({ "run.id": runId });
+    expect(runFlowsCommandSpanAttributes.ReportRunEndedCommand({ runId })).toEqual({
+      "run.id": runId,
+    });
     expect(runsQuerySpanAttributes.FindRunQuery({ runId })).toEqual({ "run.id": runId });
   });
 

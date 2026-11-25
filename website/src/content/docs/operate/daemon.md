@@ -39,7 +39,7 @@ Every `limits.validityEvery` (default `5 minutes`), and within seconds of a noti
 
 ### Runs that park
 
-A run that parks on a signal, waiting on review, CI or a person, ends there, as a CI job's run does at its [phase boundary](/chernabog/work/commands/#ci-run): the daemon ends it within half a minute of its parking, or within `limits.validityEvery` if that is shorter, as **`ended-at-park`**. Its phase record says what it waits on, and the flow's trigger offers the item again once that settles, to a run on this machine, another one or in CI. The run keeps every marker on the item (labels, assignee, comments), its worktrees and its agent sessions, for that run; it lets go of its claim ref, so that run may be anywhere. `status`, the live view and `chernabog logs <run>` show the ending and why. A signal that comes in that half minute wakes the run as before, and the daemon leaves it running. A durable sleep, such as between CI polls, is not a park: the run stays in flight.
+A run that parks on a signal, waiting on review, CI or a person, ends there, as a CI job's run does at its [phase boundary](/chernabog/work/commands/#ci-run): its spoke says so and exits, and the daemon ends the run as **`ended-at-park`**. Its phase record says what it waits on, and the flow's trigger offers the item again once that settles, to a run on this machine, another one or in CI. The run keeps every marker on the item (labels, assignee, comments), its worktrees and its agent sessions, for that run; it lets go of its claim ref, so that run may be anywhere. `status`, the live view and `chernabog logs <run>` show the ending and why. A durable sleep, such as between CI polls, is not a park: the run stays in flight.
 
 A wait no trigger takes up from a record, such as a [flow document](/chernabog/flows/documents/)'s own wait, ends too, so on a daemon as in CI the item waits until its trigger offers it again. An [epic](/chernabog/recipes/epic/)'s wait is taken up from its `waiting` record: the trigger offers it once a layer changes or a day passes, and the new run carries on from what the parked one kept.
 
@@ -51,7 +51,7 @@ A claim whose lease ran out, because the machine that held it is closed for the 
 
 A run that loses its lease stops. Before each comment, label, assignment, review, merge, pull request or push, it checks that its claim still names it, and the daemon checks too, with each validity check and renewal. A run that finds its claim another run's ends as **`lost`**, with who took over, and leaves everything it put on the item, worktree included, to the run that took it over. A small window between the check and the write remains. A claim from before leases has no expiry and is never taken over.
 
-The daemon reads machine config's enrolled repos when it starts, and checks them every ten seconds. When they change — a repo `chernabog enroll` adds, one dropped or moved, a flow turned on or off for a persona — the daemon restarts on them once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
+The daemon reads machine config's enrolled repos when it starts, and checks them every ten seconds. When they change — a repo `chernabog enroll` adds, one dropped or moved, a flow turned on or off for a persona — the daemon starts no new runs and restarts on them once none is in flight, as it does on newly trusted config; `status` says a restart is pending. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
 
 A repo whose checkout is gone shows as `missing`, with `checkout missing at <path>`, and starts no runs. Its settings stay in machine config. When the checkout comes back, or `chernabog init` at its new place points the entry there, the daemon restarts on it.
 
@@ -61,7 +61,27 @@ The daemon also serves a [dashboard](/chernabog/operate/dashboard/) for a browse
 
 ## The engine
 
-The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.
+The daemon runs no flow itself. Each run it starts executes in a **spoke**: a process of its own, the same `chernabog` binary (`chernabog ci run --run <id>`), leading a process group of its own, against a journal of the run's own (`~/.config/chernabog/journals/<run>.db`) and the `.chernabog/` the daemon trusted. `daemon.log` says which process each run's spoke is (`spawned spoke <pid> for <run>`) and how it exited. A spoke runs its item to its next phase boundary, reports how its run ended in its journal and exits; the daemon then ends the run with that, releases what the ending lets go of and deletes the journal. A spoke that exits without saying (a crash, a `SIGKILL` from outside) ends its run **`interrupted`**, with how it exited, so its phase repeats in a new run; once three runs of one item in a row have ended that way (`spokes: silentExits`), the next ends `failed` instead, and the item isn't offered again until a person looks. The machine's and each flow's `concurrency` count live spokes. A run the daemon ends while its spoke still runs (lost, superseded, cancelled) stops the spoke: `SIGTERM` to its process group, then `SIGKILL` ten seconds later.
+
+`~/.config/chernabog/state.db` keeps the machine's records of its runs. A lock file next to it keeps a second daemon or foreground `run` from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity.
+
+### Spoke bounds
+
+The daemon holds every spoke to five bounds, and ends one that goes past any of them. Machine config's `spokes:` sets each; the defaults sit well above what a healthy run uses.
+
+| Bound       | Key         | Default      | Measured as                                                                          |
+| ----------- | ----------- | ------------ | ------------------------------------------------------------------------------------ |
+| telemetry   | `telemetry` | `256 MB`     | bytes in the spoke's telemetry files (`telemetry/<day>/spoke-<run>-<pid>.jsonl`), over every day |
+| run log     | `runLog`    | `32 MB`      | bytes in `runs/<run>.log`                                                            |
+| phase time  | `phaseTime` | `4 hours`    | time since the daemon spawned the spoke                                              |
+| idle        | `idle`      | `30 minutes` | time since the run's journal, its run log or an agent session's transcript last grew |
+| memory      | `memory`    | `2 GB`       | resident memory of the spoke's process group, summed                                 |
+
+The daemon measures every spoke every 5 seconds. A spoke past a bound gets `SIGTERM` to its process group, then `SIGKILL` ten seconds later; its run ends **`failed`** with the bound it broke (`ended past its idle bound: 31m over 30m`), its journal is deleted, and its agent sessions are closed, so none goes on spending for a run that has ended. The item's phase is left as its record has it, so a new run repeats it. A spoke also stops writing its own telemetry and run log at their bounds, with one last line saying so, so neither grows past its bound however fast it floods. A wait longer than the idle bound must be a park, not a sleep. If the daemon can't end a spoke past a bound, `daemon.log` says why and it tries again, 5 seconds later at first and twice as long after each failed attempt, up to every 5 minutes; the run's log says only the first time that the daemon is ending it.
+
+`spokes: silentExits` (default `3`) is how many spokes of one item in a row may exit without saying how their run ended before the daemon stops repeating its phase: the run that makes that many ends `failed`, saying how many, rather than `interrupted`. A run of the item that ends any other way starts the count again, and so does that `failed` run, so an item a person puts back on its queue gets its tries again.
+
+A daemon that stops ends its spokes, and a spoke takes everything it started with it, even what ignores `SIGTERM`. When the daemon starts again, each run it finds in flight ends as **`interrupted`**: like `ended-at-park`, it keeps every marker on the item and its worktrees, and lets go of its claim ref. It also puts back the label that queued an issue, and closes the run's agent sessions, but never one a person works in. So the flow's trigger offers the item again, and a new run repeats the phase from where its record says it is. A restart the daemon chooses (an upgrade, newly trusted config) waits until no run is in flight.
 
 ## Logs
 

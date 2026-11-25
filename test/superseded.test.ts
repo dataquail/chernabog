@@ -41,6 +41,7 @@ import {
   engineOver,
   type EngineRun,
   type Fake,
+  foldRun,
   ISSUE,
   item,
   makeFake,
@@ -125,7 +126,8 @@ describe("a run whose work item goes", () => {
         Effect.gen(function* () {
           const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, pullWork)).run);
 
-          yield* listRunWaitsHandler({ runId: started.id, signal: "closed:approved" }).pipe(
+          yield* foldRun(started.id).pipe(
+            Effect.andThen(listRunWaitsHandler({ runId: started.id, signal: "closed:approved" })),
             Effect.repeat({ ...POLLS, until: ({ waits }) => waits.length > 0 }),
           );
 

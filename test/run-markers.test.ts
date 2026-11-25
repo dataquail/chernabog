@@ -353,6 +353,32 @@ describe("the SDK's markers", () => {
     }),
   );
 
+  effect("an interrupted run's requeue puts the queue label back, but not on a closed issue", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+
+      yield* asRun(
+        fake,
+        "run-1",
+        Markers.requeue.releaseJson({ number: ISSUE, label: DEFAULT_LABELS.eligible }),
+      );
+
+      expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.eligible);
+
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+      fake.states.issue = "closed";
+
+      yield* asRun(
+        fake,
+        "run-1",
+        Markers.requeue.releaseJson({ number: ISSUE, label: DEFAULT_LABELS.eligible }),
+      );
+
+      expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.eligible);
+    }),
+  );
+
   effect("a claim branch is compared with the base it was cut from, such as develop", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");

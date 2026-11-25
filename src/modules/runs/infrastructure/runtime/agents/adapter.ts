@@ -58,6 +58,13 @@ export type Adapter = {
     session: AgentSession,
     cursor: Option.Option<string>,
   ) => Effect.Effect<TokenUsageReading, AgentError, AdapterServices>;
+  // The files and folders a session's own records grow in while it works,
+  // which a hub watches by size so a session working quietly isn't idle
+  // (ADR 23, decision 4). An adapter without it reports none, and its
+  // session counts as working only through the run's journal and log.
+  readonly transcripts?: (
+    session: AgentSession,
+  ) => Effect.Effect<ReadonlyArray<string>, never, AdapterServices>;
 };
 
 // API keys would bill per token; Chernabog only spends subscription capacity.

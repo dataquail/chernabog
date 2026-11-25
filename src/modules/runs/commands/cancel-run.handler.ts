@@ -15,12 +15,14 @@ import {
   type WorktreeCleanup,
 } from "../domain/ports/clients/run-cleanup.client.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
+import { RunSpokesClient } from "../domain/ports/clients/run-spokes.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import {
   CancelledRun,
   CancelTarget,
   type EndAs,
 } from "../domain/run/cancelled-run.value-object.ts";
+import { type EndedSpoke } from "../domain/run/ended-spoke.value-object.ts";
 import {
   type CleanupFailed,
   RunAlreadyFinished,
@@ -43,8 +45,8 @@ import { type CancelRunPayload } from "./cancel-run.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
-// transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0010-commands-declare-their-unit-of-work.md).
+// transaction holds state.db's one connection, which the runs' steps
+// wait on (docs/adr/0010-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -60,7 +62,13 @@ const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
     return RunRootOps.finish(found, "needs-human", endAs.reason, at);
   }
 
-  return RunRootOps.supersede(found, endAs.reason, at, endAs.ending);
+  return RunRootOps.supersede(
+    found,
+    endAs.reason,
+    at,
+    endAs.ending,
+    Option.fromUndefinedOr(endAs.silentExits),
+  );
 };
 
 // What the run's log says of its ending.
@@ -70,7 +78,8 @@ const noteOf = (ended: RunRoot) => {
   if (
     ended.status === "superseded" ||
     ended.status === "lost" ||
-    ended.status === "ended-at-park"
+    ended.status === "ended-at-park" ||
+    ended.status === "interrupted"
   ) {
     return `${ended.status}: ${summary}`;
   }
@@ -268,6 +277,23 @@ const releaseEnded = (found: RunRoot) =>
     });
   });
 
+// The sessions the run left open: those its spoke reported opening, for a run
+// whose spoke this process ended, or else those its agent calls recorded.
+const sessionsLeft = (run: RunRoot, spoke: Option.Option<EndedSpoke>) =>
+  RunCleanupClient.use((cleanup) =>
+    Option.match(spoke, {
+      onNone: () => cleanup.openSessions(run),
+      onSome: (ended) => cleanup.openReported(ended.sessions),
+    }),
+  );
+
+// How the run's spoke exited, for the result; nothing for a run with none.
+const spokeExitOf = (spoke: Option.Option<EndedSpoke>) =>
+  Option.match(spoke, {
+    onNone: () => ({}),
+    onSome: (ended) => ({ spokeExited: ended.exit }),
+  });
+
 export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   target,
   ...options
@@ -276,7 +302,45 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const waits = yield* RunWaitsRepository;
   const workflows = yield* WorkflowsClient;
   const cleanup = yield* RunCleanupClient;
+  const spokes = yield* RunSpokesClient;
   const found = yield* named(target);
+
+  // Closes the sessions asked, by their handles: none without closeSessions,
+  // and not a person's when asked to spare those. What it couldn't close, and
+  // what it spared, are left for a person, and said.
+  const closeSessionsLeft = (sessions: ReadonlyArray<OpenSession>, leftForPerson: Array<string>) =>
+    Effect.gen(function* () {
+      const closedSessions: Array<OpenSession> = [];
+      const openSessions: Array<OpenSession> = [];
+
+      for (const session of sessions) {
+        if (!options.closeSessions) {
+          openSessions.push(session);
+          continue;
+        }
+
+        if (options.sparePersonSessions === true && session.withPerson) {
+          openSessions.push(session);
+          leftForPerson.push(
+            `left ${session.launcher} session ${session.handle} open: a person works in it`,
+          );
+          continue;
+        }
+
+        const closing = yield* cleanup.closeSession(session).pipe(Effect.result);
+
+        if (Result.isSuccess(closing)) {
+          closedSessions.push(session);
+        } else {
+          openSessions.push(session);
+          leftForPerson.push(
+            `closing ${session.launcher} session ${session.handle} failed: ${closing.failure.message}`,
+          );
+        }
+      }
+
+      return { closedSessions, openSessions };
+    });
 
   if (found.status !== "running" && Option.isNone(options.endAs)) {
     return yield* releaseEnded(found);
@@ -291,52 +355,150 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     }),
   );
 
-  // The run's ending and its waits go together; stopping its workflow and
-  // cleaning up after it come once they have, and saying it ended last. A run
-  // ended at its park must still be waiting: a signal delivered since it was
-  // found parked took its wait and woke it, and it is left running.
-  const parked = yield* Effect.gen(function* () {
-    const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
+  // A run whose spoke is live here ends it first (ADR 23, decisions 5 and 6):
+  // the spoke is signalled and waited for, and what it reported is folded
+  // into state.db while its run still runs, so its last steps and markers
+  // land, and the ending releases them. Its journal goes with it. Only then
+  // is the run's ending recorded, and cleaning up after it starts.
+  const spoke = yield* spokes.end(found.id, {
+    by: options.by,
+    closeSessions: options.closeSessions,
+    endAs: options.endAs,
+  });
 
-    if (cancelled.status === "ended-at-park" && waiting.length === 0) {
-      return yield* new RunNotParked({ runId: found.id });
-    }
-
-    yield* runs.upsertOne(cancelled);
-
-    for (const wait of waiting) {
-      yield* waits.deleteOne(wait);
-    }
-
-    return waiting;
-  }).pipe(inUnitOfWork);
-
-  const flow = { repo: found.repo, flow: found.flow, persona: found.persona };
-  let stopped = Option.isNone(found.executionId);
-
-  for (const executionId of Option.toArray(found.executionId)) {
-    yield* workflows.interrupt(flow, executionId);
-
-    if (workflows.runs(flow)) {
-      stopped = yield* stopping(found, executionId);
+  // Another ending asked of the spoke first (a lost lease while an item went)
+  // is the run's: whoever asked for it records it.
+  for (const ended of Option.toArray(spoke)) {
+    if (ended.endedFor !== cancelled.status) {
+      return yield* new RunAlreadyFinished({ runId: found.id, status: ended.endedFor });
     }
   }
 
-  yield* workflows.note(found.id, noteOf(cancelled));
+  // The spoke this command ended is the hub's to forget once the run's ending
+  // is recorded; if the command fails before then, it forgets it now, so a
+  // later ending isn't refused for good.
+  const ending = Effect.gen(function* () {
+    if (Option.isSome(spoke)) {
+      yield* workflows.discard(found.id);
+    }
 
-  const leftForPerson: Array<string> = [];
+    // The run's ending and its waits go together; stopping its workflow and
+    // cleaning up after it come once they have, and saying it ended last. A run
+    // ended at its park must still be waiting: a signal delivered since it was
+    // found parked took its wait and woke it, and it is left running.
+    const parked = yield* Effect.gen(function* () {
+      const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
 
-  // A run that lost its item leaves everything on it, worktree included, to
-  // the run that took it over, and for a person to look at. One that ended at
-  // a park leaves the same to the run that takes it up from its record, but
-  // lets go of its claim ref, so that run may be on any machine or in CI.
-  if (cancelled.status === "lost" || cancelled.status === "ended-at-park") {
-    const releasedClaims = yield* Option.match(
-      Option.liftPredicate(cancelled, (run) => run.status === "ended-at-park"),
-      {
-        onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
-        onSome: (run) => releaseClaimRefs(run, leftForPerson),
-      },
+      if (cancelled.status === "ended-at-park" && waiting.length === 0) {
+        return yield* new RunNotParked({ runId: found.id });
+      }
+
+      yield* runs.upsertOne(cancelled);
+
+      for (const wait of waiting) {
+        yield* waits.deleteOne(wait);
+      }
+
+      return waiting;
+    }).pipe(inUnitOfWork);
+
+    const flow = { repo: found.repo, flow: found.flow, persona: found.persona };
+    let stopped = Option.isNone(found.executionId) || Option.isSome(spoke);
+
+    // A workflow that executes in this process is interrupted here; one in a
+    // spoke stopped with its spoke, above.
+    for (const executionId of Option.toArray(
+      Option.filter(found.executionId, () => Option.isNone(spoke)),
+    )) {
+      yield* workflows.interrupt(flow, executionId);
+
+      // Only a workflow executing here is waited for: one in a spoke no
+      // process here runs stops with its spoke.
+      if (workflows.runs(flow) && (yield* workflows.executing(found.id))) {
+        stopped = yield* stopping(found, executionId);
+      }
+    }
+
+    yield* workflows.note(found.id, noteOf(cancelled));
+
+    const leftForPerson: Array<string> = [];
+
+    // A run that lost its item leaves everything on it, worktree included, to
+    // the run that took it over, and for a person to look at. One that ended at
+    // a park leaves the same to the run that takes it up from its record, but
+    // lets go of its claim ref, so that run may be on any machine or in CI; so
+    // does one interrupted by its hub's stop, for the run that repeats its phase.
+    if (
+      cancelled.status === "lost" ||
+      cancelled.status === "ended-at-park" ||
+      cancelled.status === "interrupted"
+    ) {
+      const releasedClaims = yield* Option.match(
+        Option.liftPredicate(cancelled, (run) => run.status !== "lost"),
+        {
+          onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+          onSome: (run) => releaseClaimRefs(run, leftForPerson),
+        },
+      );
+
+      yield* tellEnded(cancelled);
+
+      return CancelledRun.make({
+        run: RunView.make({ ...cancelled }),
+        alreadyEnded: false,
+        stopped,
+        wakesCleared: parked.length,
+        removedWorktrees: [],
+        releasedClaims: [...releasedClaims],
+        released: Option.none(),
+        ...(yield* closeSessionsLeft(yield* sessionsLeft(cancelled, spoke), leftForPerson)),
+        leftForPerson,
+        ...spokeExitOf(spoke),
+      });
+    }
+
+    // Worktrees another run in flight on the same issue or pull request may be
+    // using stay, for the last run on it, or a person, to remove.
+    const sharing = RunRootOps.sharingTarget(
+      yield* runs.findMany(RunSpecifications.running),
+      cancelled,
+    );
+
+    for (const other of sharing) {
+      leftForPerson.push(
+        `kept its worktrees: run ${shortRunId(other.id)} (${runLabel(other)}) is in flight on the same item`,
+      );
+    }
+
+    const removing = Option.liftPredicate(cancelled, () => sharing.length === 0);
+
+    const worktrees = yield* Option.match(removing, {
+      onNone: (): Effect.Effect<WorktreeCleanup, CleanupFailed> =>
+        Effect.succeed({ removed: [], kept: [] }),
+      onSome: (run) => cleanup.removeWorktrees(run),
+    }).pipe(
+      Effect.catch((failure) =>
+        describeFailure("removing its worktrees failed")(failure).pipe(
+          Effect.map((said) => {
+            leftForPerson.push(said);
+
+            return { removed: [], kept: [] };
+          }),
+        ),
+      ),
+    );
+
+    for (const kept of worktrees.kept) {
+      leftForPerson.push(`kept worktree ${kept.path}: ${kept.reason}`);
+    }
+
+    // The claim ref goes first: it is what holds the issue or pull request.
+    const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
+    const released = yield* releaseIssueClaim(cancelled, leftForPerson);
+
+    const { closedSessions, openSessions } = yield* closeSessionsLeft(
+      yield* sessionsLeft(cancelled, spoke),
+      leftForPerson,
     );
 
     yield* tellEnded(cancelled);
@@ -346,88 +508,22 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       alreadyEnded: false,
       stopped,
       wakesCleared: parked.length,
-      removedWorktrees: [],
-      releasedClaims: [...releasedClaims],
-      released: Option.none(),
-      closedSessions: [],
-      openSessions: yield* cleanup.openSessions(cancelled),
+      removedWorktrees: worktrees.removed,
+      releasedClaims,
+      released,
+      closedSessions,
+      openSessions,
       leftForPerson,
+      ...spokeExitOf(spoke),
     });
-  }
+  });
 
-  // Worktrees another run in flight on the same issue or pull request may be
-  // using stay, for the last run on it, or a person, to remove.
-  const sharing = RunRootOps.sharingTarget(
-    yield* runs.findMany(RunSpecifications.running),
-    cancelled,
-  );
-
-  for (const other of sharing) {
-    leftForPerson.push(
-      `kept its worktrees: run ${shortRunId(other.id)} (${runLabel(other)}) is in flight on the same item`,
-    );
-  }
-
-  const removing = Option.liftPredicate(cancelled, () => sharing.length === 0);
-
-  const worktrees = yield* Option.match(removing, {
-    onNone: (): Effect.Effect<WorktreeCleanup, CleanupFailed> =>
-      Effect.succeed({ removed: [], kept: [] }),
-    onSome: (run) => cleanup.removeWorktrees(run),
-  }).pipe(
-    Effect.catch((failure) =>
-      describeFailure("removing its worktrees failed")(failure).pipe(
-        Effect.map((said) => {
-          leftForPerson.push(said);
-
-          return { removed: [], kept: [] };
-        }),
-      ),
+  return yield* ending.pipe(
+    Effect.onError(() =>
+      Option.match(spoke, {
+        onNone: () => Effect.void,
+        onSome: () => spokes.forget(found.id),
+      }),
     ),
   );
-
-  for (const kept of worktrees.kept) {
-    leftForPerson.push(`kept worktree ${kept.path}: ${kept.reason}`);
-  }
-
-  // The claim ref goes first: it is what holds the issue or pull request.
-  const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
-  const released = yield* releaseIssueClaim(cancelled, leftForPerson);
-
-  const sessions = yield* cleanup.openSessions(cancelled);
-  const closedSessions: Array<OpenSession> = [];
-  const openSessions: Array<OpenSession> = [];
-
-  for (const session of sessions) {
-    if (!options.closeSessions) {
-      openSessions.push(session);
-      continue;
-    }
-
-    const closing = yield* cleanup.closeSession(session).pipe(Effect.result);
-
-    if (Result.isSuccess(closing)) {
-      closedSessions.push(session);
-    } else {
-      openSessions.push(session);
-      leftForPerson.push(
-        `closing ${session.launcher} session ${session.handle} failed: ${closing.failure.message}`,
-      );
-    }
-  }
-
-  yield* tellEnded(cancelled);
-
-  return CancelledRun.make({
-    run: RunView.make({ ...cancelled }),
-    alreadyEnded: false,
-    stopped,
-    wakesCleared: parked.length,
-    removedWorktrees: worktrees.removed,
-    releasedClaims,
-    released,
-    closedSessions,
-    openSessions,
-    leftForPerson,
-  });
 });

@@ -9,6 +9,8 @@
 
 import {
   type Account,
+  APP_REVIEWER,
+  type AppIdentity,
   DEFAULT_LABELS,
   type Flow,
   GitHubError,
@@ -36,6 +38,12 @@ import YAML from "yaml";
 
 import { howToStart } from "./kernel/manual-flow.value-object.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
+import {
+  DEFAULT_SILENT_EXITS,
+  DEFAULT_SPOKE_BOUNDS,
+  parseByteSize,
+  type SpokeBounds,
+} from "./kernel/spoke-bounds.value-object.ts";
 import { StandIns } from "./kernel/stand-in.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
@@ -46,6 +54,8 @@ import {
   EnrolledRepoEntry as EnrolledRepoSchema,
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
+import { AppRoles } from "./modules/machine/domain/domain-services/app-roles.domain-service.ts";
+import { AppRole } from "./modules/machine/domain/machine-setup/app-role.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   DEFAULT_LEASE_LIMITS,
@@ -107,6 +117,15 @@ const DurationText = Schema.String.pipe(
   ),
 );
 
+const ByteSizeText = Schema.String.pipe(
+  Schema.check(
+    Schema.makeFilter(
+      (text: string) =>
+        Option.isSome(parseByteSize(text)) || `"${text}" is not a size, such as "256 MB"`,
+    ),
+  ),
+);
+
 // A YAML null turns the setting off.
 const Nullable = <S extends Schema.Constraint>(schema: S) =>
   Schema.optionalKey(Schema.OptionFromNullOr(schema));
@@ -127,6 +146,37 @@ const RepoFlowSettings = Schema.Struct({
   ...FlowSettings.fields,
   runners: Schema.optionalKey(Runners),
   from: Schema.optionalKey(FlowFrom),
+  as: Schema.optionalKey(
+    AppRole.annotate({
+      description:
+        "Which of the team's GitHub Apps (apps:) the flow acts as in CI: author, which writes the code, or reviewer, which reviews it. The App must be under apps:.",
+    }),
+  ),
+});
+
+// One of the team's GitHub Apps (#477), as config.yaml names it.
+const AppFile = Schema.Struct({
+  id: Schema.Int.annotate({ description: "The App's id, from its settings page on GitHub." }),
+  slug: Schema.String.annotate({
+    description: "The App's slug, as in github.com/apps/<slug>: it acts as <slug>[bot].",
+  }),
+});
+
+const AppsFile = Schema.Struct({
+  author: Schema.optionalKey(
+    AppFile.annotate({
+      description: "The App that writes the code: implement, address-review and the rest.",
+    }),
+  ),
+  reviewer: Schema.optionalKey(
+    AppFile.annotate({
+      description:
+        "The App that reviews it, through its chernabog review check. Never the author's: an App can't approve its own work.",
+    }),
+  ),
+}).annotate({
+  description:
+    "The team's GitHub Apps by role (chernabog ci apps makes them). Flows name the one they act as with flows.<name>.as, and a reviewer pool names the reviewer as app:reviewer.",
 });
 
 // A key a flow's settings hold now, kept until core's next major (ADR 0005).
@@ -269,6 +319,7 @@ export const RepoConfigFile = Schema.Struct({
       description: `The reviewer pool, by GitHub login. ${deprecated("reviewers")}`,
     }),
   ),
+  apps: Schema.optionalKey(AppsFile),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
   ci: Schema.optionalKey(CiFile),
 });
@@ -278,29 +329,25 @@ export type RepoConfigFile = typeof RepoConfigFile.Type;
 // The sweep's schedule when config gives none: every three hours, at an odd minute.
 export const DEFAULT_CI_SCHEDULE = "17 */3 * * *";
 
+// The GitHub App a CI flow acts as (#477): the role its as: names, the App's
+// login, the Environment its run jobs read the App's key from, and what the
+// App may do, which the job's token is narrowed to.
+export type CiApp = {
+  readonly role: AppRole;
+  readonly login: string;
+  readonly environment: string;
+  readonly permissions: Readonly<Record<string, string>>;
+};
+
 // A repo's ci: section, with its defaults: no flow runs in CI unless named.
 export type CiConfig = {
   readonly flows: ReadonlyArray<string>;
   readonly maxParallel: number;
   readonly schedule: string;
+  // Each CI flow's App, by flow, when config.yaml names apps:; else empty,
+  // and every flow acts as the one persona CHERNABOG_TOKEN is.
+  readonly apps: Readonly<Record<string, CiApp>>;
 };
-
-// The ci: section of a repo's config, or why it can't be used.
-export const ciConfigOf = (file: RepoConfigFile) =>
-  Effect.gen(function* () {
-    const ci = file.ci ?? { flows: [] };
-    const schedule = ci.schedule ?? DEFAULT_CI_SCHEDULE;
-
-    for (const problem of Option.toArray(cronProblem(schedule))) {
-      return yield* new ConfigError({ message: `ci.schedule: ${problem}` });
-    }
-
-    return {
-      flows: Arr.dedupe(ci.flows),
-      maxParallel: ci.maxParallel ?? 1,
-      schedule,
-    } satisfies CiConfig;
-  });
 
 const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
@@ -367,6 +414,19 @@ const GitHubPersonaFile = Schema.Struct({
   token: Schema.optionalKey(TokenSourceFile),
 });
 
+// The bounds the daemon holds each run's spoke to (ADR 23, decision 4); each
+// left out is its default.
+const SpokesFile = Schema.Struct({
+  telemetry: Schema.optionalKey(ByteSizeText),
+  runLog: Schema.optionalKey(ByteSizeText),
+  phaseTime: Schema.optionalKey(DurationText),
+  idle: Schema.optionalKey(DurationText),
+  memory: Schema.optionalKey(ByteSizeText),
+  // How many spokes of one item in a row may exit without saying how their
+  // run ended before its run ends failed rather than repeating (decision 2).
+  silentExits: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+});
+
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
 // The key machine config is stamped with: the chernabog that last migrated it.
 export const STAMP_KEY = "chernabog";
@@ -389,6 +449,7 @@ export const MachineConfigFile = Schema.Struct({
   launcher: Schema.optionalKey(Schema.String),
   launchers: Schema.optionalKey(Schema.Record(Schema.String, LauncherFile)),
   repos: Schema.optionalKey(Schema.Array(EnrolledRepoSchema)),
+  spokes: Schema.optionalKey(SpokesFile),
 });
 
 export type MachineConfigFile = typeof MachineConfigFile.Type;
@@ -437,6 +498,11 @@ export type MachineConfig = {
     readonly byLogin: Readonly<Record<string, Events>>;
   };
   readonly repos: ReadonlyArray<EnrolledRepo>;
+  // What the daemon ends a run's spoke past.
+  readonly spokes: SpokeBounds;
+  // How many spokes of one item in a row may exit without saying how their
+  // run ended before the next such ending is failed (ADR 23, decision 2).
+  readonly silentExits: number;
 };
 
 // Which events tick a persona's flows.
@@ -672,6 +738,27 @@ const eventsOf = (file: MachineConfigFile): MachineConfig["events"] => {
   };
 };
 
+// A size or duration machine config gives, else the default; the schema has
+// already refused one that doesn't read.
+const boundOf = <A>(
+  text: Option.Option<string>,
+  parse: (given: string) => Option.Option<A>,
+  fallback: A,
+) => Option.getOrElse(Option.flatMap(text, parse), () => fallback);
+
+const spokeBoundsOf = (file: MachineConfigFile["spokes"]): SpokeBounds => {
+  const given = (key: Exclude<keyof typeof SpokesFile.Type, "silentExits">) =>
+    Option.flatMap(Option.fromUndefinedOr(file), (spokes) => Option.fromUndefinedOr(spokes[key]));
+
+  return {
+    telemetry: boundOf(given("telemetry"), parseByteSize, DEFAULT_SPOKE_BOUNDS.telemetry),
+    runLog: boundOf(given("runLog"), parseByteSize, DEFAULT_SPOKE_BOUNDS.runLog),
+    phaseTime: boundOf(given("phaseTime"), parseDuration, DEFAULT_SPOKE_BOUNDS.phaseTime),
+    idle: boundOf(given("idle"), parseDuration, DEFAULT_SPOKE_BOUNDS.idle),
+    memory: boundOf(given("memory"), parseByteSize, DEFAULT_SPOKE_BOUNDS.memory),
+  };
+};
+
 export const normalizeMachineConfig = (file: MachineConfigFile, home: string): MachineConfig => ({
   github: Object.keys(file.github ?? {}),
   accounts: Object.entries(file.accounts ?? { work: {} }).map(fromAccountFile(home)),
@@ -684,7 +771,27 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   humanOnly: file.humanOnly ?? [],
   events: eventsOf(file),
   repos: (file.repos ?? []).map((repo) => ({ ...repo, path: expandHome(repo.path, home) })),
+  spokes: spokeBoundsOf(file.spokes),
+  silentExits: file.spokes?.silentExits ?? DEFAULT_SILENT_EXITS,
 });
+
+// The names of the repos a persona runs on this machine, which its App token
+// is narrowed to: those whose personas: names it, and every repo when it's
+// machine config's only login and a repo names none.
+const enrolledNamesOf = (file: MachineConfigFile, login: string) => {
+  const only = Object.keys(file.github ?? {}).length === 1;
+
+  return Arr.dedupe(
+    (file.repos ?? []).flatMap((repo) => {
+      const runs = Option.match(Option.fromUndefinedOr(repo.personas), {
+        onNone: () => only,
+        onSome: (personas) => Object.hasOwn(personas, login),
+      });
+
+      return Arr.filter([repo.repo.split("/").at(-1) ?? ""], (name) => runs && name !== "");
+    }),
+  );
+};
 
 // A persona's token source as machine config's github: entry gives it: gh's
 // login unless it says otherwise. An App's key is read from its file each time
@@ -720,6 +827,7 @@ export const tokenSourceOf = (login: string) =>
       id: String(source.app.id),
       installation: String(source.app.installation),
       privateKey,
+      repositories: enrolledNamesOf(file, login),
     } satisfies TokenSource;
   });
 
@@ -1111,6 +1219,150 @@ const sharedSetting = <A, I>(repo: RepoConfigFile, key: string, schema: Schema.C
     Result.getSuccess(Schema.decodeUnknownResult(schema)(value)),
   );
 
+// The team's GitHub Apps by role, each with the login it acts as (#477).
+const appsOf = (repo: RepoConfigFile): Record<string, AppIdentity> =>
+  Object.fromEntries(
+    Object.entries(repo.apps ?? {}).flatMap(([role, app]) =>
+      Option.toArray(
+        Option.map(
+          Option.fromUndefinedOr(app),
+          (found) => [role, { ...found, login: AppRoles.loginOf(found.slug) }] as const,
+        ),
+      ),
+    ),
+  );
+
+// The App role each flow acts as, for the flows that name one.
+const flowAppsOf = (repo: RepoConfigFile): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(repo.flows ?? {}).flatMap(([name, flow]) =>
+      Option.toArray(Option.map(Option.fromUndefinedOr(flow.as), (role) => [name, role] as const)),
+    ),
+  );
+
+// The reviewer pools config.yaml sets: the deprecated top-level key, the
+// shared settings', and each flow's own.
+const reviewerPools = (repo: RepoConfigFile) => [
+  ...Option.toArray(
+    Option.map(Option.fromUndefinedOr(repo.reviewers), (pool) => ["reviewers", pool] as const),
+  ),
+  ...Option.toArray(
+    Option.map(
+      sharedSetting(repo, "reviewers", Strings),
+      (pool) => ["settings.reviewers", pool] as const,
+    ),
+  ),
+  ...Object.entries(repo.flows ?? {}).flatMap(([name, flow]) =>
+    Option.toArray(
+      Option.map(
+        Option.flatMap(Option.fromUndefinedOr(flow.settings?.reviewers), (value) =>
+          Result.getSuccess(Schema.decodeUnknownResult(Strings)(value)),
+        ),
+        (pool) => [`flows.${name}.settings.reviewers`, pool] as const,
+      ),
+    ),
+  ),
+];
+
+// Why config.yaml's Apps don't add up, if they don't: an App whose bot
+// personas: doesn't list, which would make every record it writes by hand an
+// anomaly (personas: is the only place that says who the personas are), or a
+// flow acting as, or a reviewer pool naming, a role apps: has no App for.
+export const appsProblems = (repo: RepoConfigFile): ReadonlyArray<string> => {
+  const apps = repo.apps ?? {};
+  const has = (role: string) => Object.hasOwn(apps, role);
+  const personas = repo.personas ?? [];
+
+  const personaProblems = Object.entries(apps).flatMap(([role, app]) => {
+    const login = AppRoles.loginOf(app.slug);
+
+    return Arr.filter(
+      [`apps.${role} acts as ${login}, but personas: doesn't list it; add ${login} to personas:`],
+      () => !personas.some((persona) => persona.toLowerCase() === login.toLowerCase()),
+    );
+  });
+
+  const asProblems = Object.entries(flowAppsOf(repo)).flatMap(([flow, role]) =>
+    Arr.filter([`flows.${flow}.as: ${role}, but apps: has no ${role} App`], () => !has(role)),
+  );
+
+  const poolProblems = reviewerPools(repo).flatMap(([key, pool]) =>
+    pool.flatMap((entry) => {
+      if (!entry.startsWith(APP_REVIEWER)) {
+        return [];
+      }
+
+      const role = entry.slice(APP_REVIEWER.length);
+
+      if (!Schema.is(AppRole)(role)) {
+        return [`${key}: ${entry} names no App role; use app:author or app:reviewer`];
+      }
+
+      return Arr.filter([`${key}: ${entry}, but apps: has no ${role} App`], () => !has(role));
+    }),
+  );
+
+  return [...personaProblems, ...asProblems, ...poolProblems];
+};
+
+// Each CI flow's App, when config.yaml names apps:. A job there holds only
+// its Apps' tokens, so every CI flow says which it acts as.
+const ciAppsOf = (file: RepoConfigFile, flows: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const apps = appsOf(file);
+
+    if (Record.isEmptyRecord(apps)) {
+      return {};
+    }
+
+    for (const problem of Option.toArray(Arr.head(appsProblems(file)))) {
+      return yield* new ConfigError({ message: problem });
+    }
+
+    const roles = flowAppsOf(file);
+    const found: Record<string, CiApp> = {};
+
+    for (const flow of flows) {
+      const role = Option.filter(Record.get(roles, flow), Schema.is(AppRole));
+      const app = Option.flatMap(role, (named) => Record.get(apps, named));
+
+      if (Option.isNone(role) || Option.isNone(app)) {
+        return yield* new ConfigError({
+          message: `ci.flows names ${flow}, which acts as no App: with apps:, a CI job holds only its Apps' tokens, so give it flows.${flow}.as`,
+        });
+      }
+
+      found[flow] = {
+        role: role.value,
+        login: app.value.login,
+        environment: AppRoles.environmentOf(role.value),
+        permissions: AppRoles.permissionsOf(role.value),
+      };
+    }
+
+    return found;
+  });
+
+// The ci: section of a repo's config, or why it can't be used.
+export const ciConfigOf = (file: RepoConfigFile) =>
+  Effect.gen(function* () {
+    const ci = file.ci ?? { flows: [] };
+    const schedule = ci.schedule ?? DEFAULT_CI_SCHEDULE;
+
+    for (const problem of Option.toArray(cronProblem(schedule))) {
+      return yield* new ConfigError({ message: `ci.schedule: ${problem}` });
+    }
+
+    const flows = Arr.dedupe(ci.flows);
+
+    return {
+      flows,
+      maxParallel: ci.maxParallel ?? 1,
+      schedule,
+      apps: yield* ciAppsOf(file, flows),
+    } satisfies CiConfig;
+  });
+
 // Merges the layers for one persona of a repo. `configDir` is where its
 // .chernabog/ was read from; `env` is the extra environment its commands run
 // with; `defaultBranch` is the repo's default branch, the integration base
@@ -1128,6 +1380,10 @@ const mergePersona = (
     const failed = (message: string) =>
       new ConfigError({ message: `${enrolled.repo}${asSuffix(persona)}: ${message}` });
 
+    for (const problem of Option.toArray(Arr.head(appsProblems(repo)))) {
+      return yield* failed(problem);
+    }
+
     const own = choicesOf(enrolled, persona);
 
     const accountName = Option.getOrElse(
@@ -1143,7 +1399,7 @@ const mergePersona = (
     // for it, so the team's per-flow schedules give way to it.
     const teamFlows = Record.map(
       repo.flows ?? {},
-      ({ runners: _runners, ...settings }): FlowSettings => settings,
+      ({ as: _as, runners: _runners, ...settings }): FlowSettings => settings,
     );
 
     const repoFlows = Option.match(Option.fromUndefinedOr(own.schedule), {
@@ -1187,6 +1443,13 @@ const mergePersona = (
         ),
       ),
       roleAgents: roles.agents,
+      ...Option.match(
+        Option.liftPredicate(appsOf(repo), (apps) => !Record.isEmptyRecord(apps)),
+        {
+          onNone: () => ({}),
+          onSome: (apps) => ({ apps, flowApps: flowAppsOf(repo) }),
+        },
+      ),
       labels: {
         ...DEFAULT_LABELS,
         ...repo.labels,

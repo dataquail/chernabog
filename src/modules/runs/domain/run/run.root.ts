@@ -40,6 +40,11 @@ export class RunRoot extends Schema.Class<RunRoot, { readonly brand: "RunRoot" }
   // with the blocks that tree pinned, whatever the base branch has since;
   // none for a run from a working copy.
   configTree: Schema.Option(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
+  // How many runs of its item in a row, this one included, ended because
+  // their spoke exited before saying how its run ended (ADR 23, decision 2);
+  // none for a run that ended any other way. What the hub stops repeating a
+  // crashing phase by.
+  silentExits: Schema.Option(Schema.Int).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
   // ISO timestamps.
   startedAt: Schema.String,
   finishedAt: Schema.Option(Schema.String),

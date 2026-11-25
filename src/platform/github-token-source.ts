@@ -7,6 +7,7 @@
 import { createSign } from "node:crypto";
 
 import { GitHubError } from "@chernabog/core";
+import * as Arr from "effect/Array";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +15,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export type AppSource = {
@@ -22,6 +24,10 @@ export type AppSource = {
   readonly installation: string;
   // The App's private key, PEM-encoded.
   readonly privateKey: string;
+  // The repos, by name under the installation's owner, the token can reach.
+  // An installation can cover more of the owner's repos than the persona is
+  // enrolled on; none leaves the token reaching every one of them.
+  readonly repositories: ReadonlyArray<string>;
 };
 
 export type TokenSource =
@@ -95,7 +101,7 @@ export const installationToken = (source: AppSource) =>
         new GitHubError({ message: `signing as App ${source.id}: ${String(error)}` }),
     });
 
-    const request = HttpClientRequest.post(
+    const post = HttpClientRequest.post(
       `${root}/app/installations/${source.installation}/access_tokens`,
     ).pipe(
       HttpClientRequest.bearerToken(jwt),
@@ -103,6 +109,17 @@ export const installationToken = (source: AppSource) =>
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
       }),
+    );
+
+    const request = Option.match(
+      Arr.match(source.repositories, {
+        onEmpty: Option.none,
+        onNonEmpty: Option.some,
+      }),
+      {
+        onNone: () => post,
+        onSome: (repositories) => HttpClientRequest.bodyJsonUnsafe(post, { repositories }),
+      },
     );
 
     const response = yield* client.execute(request);

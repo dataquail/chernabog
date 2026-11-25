@@ -35,6 +35,7 @@ import {
   Worktree,
 } from "@chernabog/sdk";
 import type { BunServices } from "@effect/platform-bun";
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -46,19 +47,22 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { attachExecutionHandler } from "../src/modules/runs/commands/attach-execution.handler.ts";
 import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
-import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
+import { executeRunHandler } from "../src/modules/runs/commands/execute-run.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
+import { sweepJournalsHandler } from "../src/modules/runs/commands/sweep-journals.handler.ts";
+import { WorkflowsClient } from "../src/modules/runs/domain/ports/clients/workflows.client.ts";
 import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
 import {
   type EngineOptions,
   flowHandle,
+  flowLayer,
   forEveryPersona,
+  type OnParked,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
@@ -66,13 +70,14 @@ import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-hist
 import { readRunLogHandler } from "../src/modules/runs/queries/read-run-log.handler.ts";
 import { readRunMadeHandler } from "../src/modules/runs/queries/read-run-made.handler.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
-import { homePaths } from "../src/platform/home.ts";
+import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
   engineOver,
   type EngineRun,
+  foldRun,
   pollRun,
   repoAs,
   startRun,
@@ -167,6 +172,19 @@ const flow = defineFlow({
           Repo.use((own) => Effect.succeed(own.persona ?? "the implicit persona")),
           Schema.String,
         )}`;
+      }
+
+      // Journals a step every few milliseconds until it's stopped.
+      if (key === "busy") {
+        const step = (tick: number) =>
+          activity(`tick-${tick}`, Effect.sleep("5 millis")).pipe(Effect.orDie);
+
+        const ticking = (
+          tick: number,
+        ): Effect.Effect<never, never, Effect.Services<ReturnType<typeof step>>> =>
+          step(tick).pipe(Effect.flatMap(() => ticking(tick + 1)));
+
+        return yield* ticking(0);
       }
 
       if (key === "wait") {
@@ -359,6 +377,7 @@ const withEngine = <A, E, R>(
   program: Effect.Effect<A, E, R>,
   personas = Effect.map(Layer.build(repoServices), forEveryPersona),
   flowsOf = handle,
+  onParked: OnParked = () => Effect.void,
   options: EngineOptions = {},
 ) =>
   Effect.gen(function* () {
@@ -373,6 +392,7 @@ const withEngine = <A, E, R>(
         { handles: [flowsOf], services: () => Option.none() },
         servicesFor,
         home,
+        onParked,
         options,
       ),
     );
@@ -383,6 +403,21 @@ const withEngine = <A, E, R>(
   });
 
 const POLLS = 200;
+
+// The wakes a run's journal keeps for its durable clocks.
+const wakesIn = (journal: string) => {
+  const db = new Database(journal, { readonly: true });
+
+  const rows = db
+    .query<{ wakes: number }, []>(
+      "SELECT count(*) AS wakes FROM cluster_messages WHERE tag = 'deferred'",
+    )
+    .all();
+
+  db.close();
+
+  return rows.reduce((total, row) => total + row.wakes, 0);
+};
 
 const OLD = RunId.make("old");
 
@@ -440,14 +475,14 @@ describe("the engine", () => {
 
           // The poll's clock fires while the gate runs: the engine keeps the
           // wake it sends the run, then interrupts the run to replay it.
-          yield* SqlClient.SqlClient.use(
-            (sql) =>
-              sql<{ readonly wakes: number }>`
-                SELECT count(*) AS wakes FROM cluster_messages WHERE tag = 'deferred'`,
-          ).pipe(
+          const journal = homePaths((yield* Home).root).journal(run.id);
+
+          yield* Effect.try(() => wakesIn(journal)).pipe(
+            // Until the engine has made its tables in the run's journal.
+            Effect.orElseSucceed(() => 0),
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
-              until: (rows) => rows.some((row) => row.wakes > 0),
+              until: (wakes) => wakes > 0,
               times: POLLS,
             }),
           );
@@ -459,6 +494,7 @@ describe("the engine", () => {
         }),
         Effect.map(Layer.build(repoServices), forEveryPersona),
         handle,
+        () => Effect.void,
         // The engine delivers a clock that came due when it next reads its
         // journal, every 10 seconds by default: sooner here.
         { messagePoll: "50 millis" },
@@ -627,12 +663,62 @@ describe("the engine", () => {
       ]);
     }),
   );
-  effect("a cancelled waiting run stops in the engine, and no signal wakes it", () =>
+  effect(
+    "tells the process executing a run that it parked, once its wait is recorded, and never a run that ends",
+    () =>
+      Effect.gen(function* () {
+        const told: Array<string> = [];
+
+        const tells = Effect.gen(function* () {
+          const done = yield* runToEnd(item("one"));
+          const parked = yield* started(item("wait"));
+
+          const waits = yield* foldRun(parked.id).pipe(
+            Effect.andThen(listRunWaitsHandler({ runId: parked.id, signal: "pushed" })),
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (found) => found.waits.length > 0,
+              times: POLLS,
+            }),
+          );
+
+          // Told just after its wait is recorded, on the run's own fiber.
+          yield* Effect.sync(() => told.length).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (count) => count > 0,
+              times: POLLS,
+            }),
+          );
+
+          return { done, parked, waits };
+        });
+
+        const { value } = yield* withEngine(
+          tells,
+          Effect.map(Layer.build(repoServices), forEveryPersona),
+          handle,
+          (runId) =>
+            Effect.sync(() => {
+              told.push(runId);
+            }),
+        );
+
+        expect(value.waits.waits.map((wait) => wait.signal)).toEqual(["pushed"]);
+        expect(told).toEqual([value.parked.id]);
+        expect(told).not.toContain(value.done.id);
+      }),
+  );
+
+  effect("a cancelled waiting run stops, its journal goes, and no signal wakes it", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+
       const cancels = Effect.gen(function* () {
         const run = yield* started(item("wait"));
 
-        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+        yield* foldRun(run.id).pipe(
+          Effect.andThen(listRunWaitsHandler({ runId: run.id, signal: "pushed" })),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,
@@ -651,14 +737,16 @@ describe("the engine", () => {
         const polled = yield* pollRun(run);
         const execution = yield* handle.workflow.poll(Option.getOrThrow(run.executionId));
 
-        return { cancelled, delivered, polled, execution };
+        return { run, cancelled, delivered, polled, execution };
       });
 
-      const { value } = yield* withEngine(cancels);
+      const { home, value } = yield* withEngine(cancels);
 
       expect([value.cancelled.stopped, value.cancelled.wakesCleared]).toEqual([true, 1]);
       expect([value.delivered, value.polled.status]).toEqual([0, "cancelled"]);
-      expect(Option.map(value.execution, (result) => result._tag)).toEqual(Option.some("Complete"));
+      // Its journal is gone, so nothing of its execution is left to resume.
+      expect(value.execution).toEqual(Option.none());
+      expect(yield* fs.exists(homePaths(home).journal(value.run.id))).toBe(false);
     }),
   );
 
@@ -694,55 +782,186 @@ describe("the engine", () => {
       expect(longStep.interrupted).toBe(true);
     }),
   );
+});
 
+// An engine over `home`, for as long as `program` runs: a process that stops
+// when it ends, and another may start over the same home.
+// Another flow of the repo's, registered after `handle`'s, as a daemon loads
+// several: each run's engine registers its own run's.
+const otherHandle = flowHandle(repo, "other", flow);
+
+const processAt = <A, E, R>(home: string, program: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const servicesFor = yield* Effect.map(Layer.build(repoServices), forEveryPersona);
+
+    const engine = yield* Layer.build(
+      flowLayer(otherHandle, servicesFor).pipe(
+        Layer.provideMerge(
+          engineOver(
+            handle,
+            { handles: [handle], services: () => Option.none() },
+            servicesFor,
+            home,
+          ),
+        ),
+      ),
+    );
+
+    const platform = yield* Effect.context<BunServices.BunServices>();
+
+    return yield* Effect.provideContext(program, Context.merge(platform, engine));
+  }).pipe(Effect.scoped);
+
+// The tables a SQLite file holds whose name starts with `prefix`.
+const tablesIn = (file: string, prefix: string) => {
+  const db = new Database(file, { readonly: true });
+
+  const names = db
+    .query<{ name: string }, [string]>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ORDER BY name",
+    )
+    .all(`${prefix}%`)
+    .map((row) => row.name);
+
+  db.close();
+
+  return names;
+};
+
+// Waits until the run is parked on its signal.
+const waiting = (run: EngineRun) =>
+  foldRun(run.id).pipe(
+    Effect.andThen(listRunWaitsHandler({ runId: run.id, signal: "pushed" })),
+    Effect.repeat({
+      schedule: Schedule.spaced("25 millis"),
+      until: ({ waits }) => waits.length > 0,
+      times: POLLS,
+    }),
+  );
+
+// Waits until a file is gone: a run's journal goes in the reaction to its end.
+const gone = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    return yield* fs.exists(path).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("25 millis"),
+        until: (exists) => !exists,
+        times: POLLS,
+      }),
+      Effect.orDie,
+    );
+  });
+
+describe("a run's journal", () => {
   effect(
-    "a start a crash interrupted runs once on recovery, whether or not its workflow had started",
+    "is a file of its own while the run lasts, holding the engine's tables, and goes when it ends",
     () =>
       Effect.gen(function* () {
-        const recorded = (key: string) =>
-          startRunHandler({
-            id: RunId.make(key),
-            coreVersion: BUNDLED_CORE,
-            repo: "demo",
-            persona: IMPLICIT,
-            flow: "demo",
-            itemKey: key,
-            itemTitle: Option.none(),
-            itemUrl: Option.none(),
-            item: Option.some(item(key)),
-          });
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-journal-" });
+        const paths = homePaths(home);
 
-        const recovers = Effect.gen(function* () {
-          // Killed after the run was recorded, before its workflow executed.
-          yield* recorded("before");
+        const { during, ended, run } = yield* processAt(
+          home,
+          Effect.gen(function* () {
+            const waited = yield* started(item("wait"));
+            yield* waiting(waited);
 
-          // Killed after its workflow executed, before the execution was attached.
-          yield* recorded("after");
+            const tables = {
+              journal: tablesIn(paths.journal(waited.id), "cluster_"),
+              state: tablesIn(paths.state, "cluster_"),
+            };
 
-          const execution = yield* handle.workflow.execute(
-            { runId: "after", item: item("after") },
-            { discard: true },
+            yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
+
+            return { during: tables, ended: yield* toEnd(waited), run: waited };
+          }),
+        );
+
+        expect(during.journal).toContain("cluster_messages");
+        expect(during.journal).toContain("cluster_replies");
+        // state.db keeps the machine's records, and none of the engine's.
+        expect(during.state).toEqual([]);
+        expect(tablesIn(paths.state, "om_runs")).toEqual(["om_runs"]);
+
+        expect(ended.status).toBe("done");
+        expect(yield* gone(paths.journal(run.id))).toBe(false);
+        expect(yield* fs.readDirectory(paths.journals)).toEqual([]);
+        expect(tablesIn(paths.state, "cluster_")).toEqual([]);
+      }),
+  );
+
+  effect("a cancelled run that is still journaling stops before its journal goes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-journal-" });
+      const journal = homePaths(home).journal;
+
+      const { cancelled, reappeared, run } = yield* processAt(
+        home,
+        Effect.gen(function* () {
+          const busy = yield* started(item("busy"));
+
+          // It has journaled some steps and is journaling more.
+          yield* readRunHistoryHandler({ runId: busy.id }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (history) => history.steps.length > 5,
+              times: POLLS,
+            }),
           );
 
-          const recovered = yield* recoverRunsHandler();
-          const ended = yield* Effect.forEach(recovered.executed, toEnd);
+          const ended = yield* cancelRunHandler({
+            target: CancelTarget.cases.ById.make({ asked: busy.id }),
+            by: "alice",
+            closeSessions: false,
+            endAs: Option.none(),
+          });
 
-          return { execution, recovered, ended };
-        });
+          yield* gone(journal(busy.id));
 
-        const { value } = yield* withEngine(recovers);
+          // Nothing writes it again: its engine closed before it was deleted.
+          const written = yield* fs.exists(journal(busy.id)).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("20 millis"),
+              until: (exists) => exists,
+              times: 10,
+            }),
+            Effect.orDie,
+          );
 
-        expect(value.recovered.executed.map((run) => String(run.id)).toSorted()).toEqual([
-          "after",
-          "before",
-        ]);
-        expect(
-          value.recovered.executed.find((run) => run.id === RunId.make("after"))?.executionId,
-        ).toEqual(Option.some(value.execution));
-        expect(value.ended.map((run) => run.status)).toEqual(["done", "done"]);
-        expect(executed.filter((line) => line.startsWith("after:"))).toEqual(["after:after"]);
-        expect(executed.filter((line) => line.startsWith("before:"))).toEqual(["before:before"]);
-      }),
+          return { cancelled: ended, reappeared: written, run: busy };
+        }),
+      );
+
+      expect(cancelled.stopped).toBe(true);
+      expect(reappeared).toBe(false);
+      expect(yield* fs.exists(journal(run.id))).toBe(false);
+      expect(yield* fs.readDirectory(homePaths(home).journals)).toEqual([]);
+    }),
+  );
+
+  effect("a restart resumes no run from its journal, and sweeps an ended run's journal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-journal-" });
+      const paths = homePaths(home);
+
+      const run = yield* processAt(home, started(item("wait")).pipe(Effect.tap(waiting)));
+
+      // As for a journal a crash kept the run's ending from deleting.
+      yield* fs.writeFileString(paths.journal("ended-long-ago"), "");
+
+      const recovered = yield* processAt(home, sweepJournalsHandler());
+
+      expect(recovered.swept).toEqual(["ended-long-ago"]);
+      // The running run's journal stays for the hub to end the run with.
+      expect(
+        (yield* fs.readDirectory(paths.journals)).filter((name) => name.endsWith(".db")),
+      ).toEqual([`${run.id}.db`]);
+    }),
   );
 });
 
@@ -764,31 +983,45 @@ describe("a run and the .chernabog/ tree it started from", () => {
   );
 
   effect(
-    "resumes against the tree it recorded: an older one's flow, or the handle's for its own tree or none",
+    "executes against the tree it recorded: an older one's flow, or the handle's for its own tree or none",
     () =>
       Effect.gen(function* () {
-        const recorded = (key: string, configTree: Option.Option<string>) =>
-          startRunHandler({
-            id: RunId.make(key),
-            coreVersion: BUNDLED_CORE,
-            configTree,
-            repo: "demo",
-            persona: IMPLICIT,
-            flow: "demo",
-            itemKey: key,
-            itemTitle: Option.none(),
-            itemUrl: Option.none(),
-            item: Option.some(item(key)),
-          });
+        // A run recorded with its tree, as a hub records it, and executed
+        // here, as its spoke executes it.
+        const recordedAndExecuted = (key: string, configTree: Option.Option<string>) =>
+          Effect.gen(function* () {
+            const run = yield* startRunHandler({
+              id: RunId.make(key),
+              coreVersion: BUNDLED_CORE,
+              configTree,
+              repo: "demo",
+              persona: IMPLICIT,
+              flow: "demo",
+              itemKey: key,
+              itemTitle: Option.none(),
+              itemUrl: Option.none(),
+              item: Option.some(item(key)),
+            });
+
+            const executionId = yield* (yield* WorkflowsClient).executionIdOf(
+              { repo: "demo", flow: "demo", persona: IMPLICIT },
+              run.id,
+              item(key),
+            );
+
+            const attached = yield* attachExecutionHandler({ runId: run.id, executionId });
+
+            return yield* executeRunHandler({ run: attached, item: item(key) });
+          }).pipe(Effect.orDie);
 
         const resumes = Effect.gen(function* () {
-          yield* recorded("older-tree", Option.some("older"));
-          yield* recorded("current-tree", Option.some("current"));
-          yield* recorded("no-tree", Option.none());
+          const runs = [
+            yield* recordedAndExecuted("older-tree", Option.some("older")),
+            yield* recordedAndExecuted("current-tree", Option.some("current")),
+            yield* recordedAndExecuted("no-tree", Option.none()),
+          ];
 
-          const recovered = yield* recoverRunsHandler();
-
-          return yield* Effect.forEach(recovered.executed, toEnd);
+          return yield* Effect.forEach(runs, toEnd);
         });
 
         const { value } = yield* withEngine(

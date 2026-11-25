@@ -2,6 +2,11 @@
 // line per entry, tagged with the step it was written in, and the plan node
 // when it has one (src/kernel/run-log-line.value-object.ts). `chernabog logs <run>` prints it;
 // the TUI tails it.
+//
+// A spoke's run log is limited to its bound (ADR 23, decision 4): a write that
+// would take the file past `RunLogLimit` writes one line saying the log
+// stopped instead, and every write after it is dropped, whichever writer of
+// the run's log it comes from.
 
 import {
   CurrentActivity,
@@ -11,6 +16,7 @@ import {
   RunLog,
   type StepOutcome,
 } from "@chernabog/core";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RunLogLines } from "../../../../kernel/run-log-line.value-object.ts";
+import { formatBytes } from "../../../../kernel/spoke-bounds.value-object.ts";
 import { NodeRef, NodeRefs } from "../../domain/plan/node-ref.value-object.ts";
 
 export type StepHooks = {
@@ -38,6 +45,14 @@ export const noHooks: StepHooks = {
   onChange: () => Effect.void,
 };
 
+// The bytes a run's log may hold; none for no limit, outside a spoke.
+export const RunLogLimit = Context.Reference<Option.Option<number>>("chernabog/runs/RunLogLimit", {
+  defaultValue: () => Option.none(),
+});
+
+// What the line a limited log ends with starts with.
+const STOPPED = "chernabog: this run's log stopped at its bound of";
+
 const directoryOf = (path: string) =>
   Option.getOrElse(
     Option.liftPredicate(path.slice(0, path.lastIndexOf("/")), (dir) => dir.length > 0),
@@ -55,14 +70,58 @@ const nodeTagOf = (node: NodeAt) =>
 export const runLogWriting = (path: string, hooks: StepHooks = noHooks) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const limit = yield* RunLogLimit;
+
+    const append = (entry: string) =>
+      fs.writeFileString(path, `${entry}\n`, {
+        flag: "a",
+      });
+
+    // The entry, if the log has room for it under its limit; else the stop
+    // line, once.
+    const appendWithin = (entry: string, at: string, bytes: number) =>
+      Effect.gen(function* () {
+        const size = Number(
+          Option.match(yield* fs.stat(path).pipe(Effect.option), {
+            onNone: () => 0,
+            onSome: (info) => info.size,
+          }),
+        );
+
+        if (size + Buffer.byteLength(entry) + 1 <= bytes) {
+          return yield* append(entry);
+        }
+
+        // Only the stop line takes a limited log past its bound (and the
+        // hub's notes after it), so a log already past it has stopped,
+        // whichever writer stopped it.
+        if (size > bytes) {
+          return;
+        }
+
+        // Filled to just past the bound, which is how the hub, measuring the
+        // log's size, knows the spoke reached it (ADR 23, decision 4).
+        const stop = (filler: number) =>
+          RunLogLines.entry(
+            at,
+            Option.none(),
+            `${STOPPED} ${formatBytes(bytes)}; what the run writes after is dropped${" ".repeat(filler)}`,
+            Option.none(),
+          );
+
+        yield* append(stop(Math.max(0, bytes + 1 - size - Buffer.byteLength(stop(0)) - 1)));
+      });
 
     const write = (step: Option.Option<string>, line: string) =>
       Effect.gen(function* () {
         const at = DateTime.formatIso(yield* DateTime.now);
         const node = Option.map(yield* CurrentNode, nodeTagOf);
+        const entry = RunLogLines.entry(at, step, line, node);
         yield* fs.makeDirectory(directoryOf(path), { recursive: true });
-        yield* fs.writeFileString(path, `${RunLogLines.entry(at, step, line, node)}\n`, {
-          flag: "a",
+
+        yield* Option.match(limit, {
+          onNone: () => append(entry),
+          onSome: (bytes) => appendWithin(entry, at, bytes),
         });
       }).pipe(Effect.orDie);
 

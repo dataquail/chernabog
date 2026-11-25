@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
 import { EngineAt, RunFlowsCommands, RunsQueries } from "../src/modules/runs/runs.platform.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
+import { Home } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 
 // The engine slot of the module list over a runtime with no flows and a
@@ -21,7 +21,7 @@ const engineInScratch = Layer.unwrap(
       applicationModules.engine.pipe(
         Layer.provide(applicationModules.runtime({ handles: [], services: () => Option.none() })),
         Layer.provide(makeEventBus()),
-        Layer.provide(EngineAt(homePaths(home).state)),
+        Layer.provide(EngineAt(home)),
         Layer.provide(Home.at(home, home)),
       ),
     ),
@@ -58,10 +58,10 @@ describe("a module's wiring", () => {
         flow: Option.none(),
       });
 
-      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
+      const swept = yield* (yield* RunFlowsCommands).SweepJournalsCommand();
 
       expect(active.runs).toEqual([]);
-      expect(recovered.executed).toEqual([]);
+      expect(swept.swept).toEqual([]);
     }).pipe(Effect.provide(engineInScratch)),
   );
 });

@@ -95,6 +95,12 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
         ),
       openSessions: (run) =>
         Effect.sync(() => Option.getOrElse(Record.get(holdings.sessions, run.id), () => [])),
+      openReported: (sessions) =>
+        Effect.sync(() =>
+          Object.values(holdings.sessions)
+            .flat()
+            .filter((open) => sessions.some((reported) => reported.sessionId === open.sessionId)),
+        ),
       closeSession: (session) =>
         Effect.sync(() => {
           holdings.closed.push(session.handle);
