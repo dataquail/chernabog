@@ -29,9 +29,15 @@
 // and stops itself a margin after its phase-time bound, so the hub's bound
 // is the one that ends it.
 //
-// What later layers hook into: `start`'s handle (the PID and process group
-// `om_spokes` records, #664, which also keeps the fold position and the
-// intended ending there, where here they are the hub's memory).
+// Each spoke is recorded in state.db once spawned (`om_spokes`, ADR 23,
+// decision 7): its PID and process group, when the OS says it started, how
+// far its journal is folded, and the ending the hub means for it once it
+// means one. Each report and the fold position past it commit together, so
+// the next hub folds each report once. A hub that starts reaps the spokes of
+// the hub before it (`reap`): ends one still running, once it has checked
+// the PID is still that spoke's, folds what its journal holds, and answers
+// for it as for a spoke it ended, so its run ends as the hub before meant it
+// to, or as interrupted, and its phase repeats in a new run.
 
 import type { Command } from "@effect-server-utils/cqrs";
 import * as Clock from "effect/Clock";
@@ -60,9 +66,11 @@ import {
 import {
   type AgentSessionOpened,
   type EndedSpoke,
+  endingOf,
   type RunStatus,
   type RunView,
   sessionOpenedIn,
+  type SpokeEndRequest,
   SpokeHandOverJson,
   type SpokeReport,
   spokeReportCommands,
@@ -72,9 +80,13 @@ import {
 import { homePaths } from "../../platform/home.ts";
 import {
   describeExit,
+  endForeignGroup,
+  groupAlive,
   type GroupExit,
   groupsMemory,
   type ProcessGroup,
+  type ProcessIdentity,
+  processIdentity,
   spawnGroup,
   STOP_GRACE,
   stopGroup,
@@ -115,12 +127,82 @@ export type Spokes = {
   // SIGTERM to its group, SIGKILL after the grace, and waits until it has
   // exited and its last reports are folded. How it exited, and the agent
   // sessions it reported; none when no spoke of the run is live.
-  readonly end: (runId: RunId, ending: RunStatus) => Effect.Effect<Option.Option<EndedSpoke>>;
-  // Forgets a spoke `end` ended, once its run's ending is recorded. Until
-  // then `end` answers for it as it did the first time, so a second ending
-  // asked after the spoke exited is refused too.
+  readonly end: (
+    runId: RunId,
+    request: SpokeEndRequest,
+  ) => Effect.Effect<Option.Option<EndedSpoke>>;
+  // Forgets a spoke `end` ended, or `reap` reaped, once its run's ending is
+  // recorded. Until then `end` answers for it as it did the first time, so a
+  // second ending asked after the spoke exited is refused too.
   readonly forget: (runId: RunId) => Effect.Effect<void>;
+  // Reaps a spoke the hub before this one recorded (ADR 23, decision 7): ends
+  // its process group if its leader is still that spoke, folds what its
+  // journal holds after the position recorded, and keeps the agent sessions
+  // it reported, so `end` answers for it as for a spoke this hub ended, with
+  // the ending meant for it first. Its run is the caller's to end.
+  readonly reap: (left: LeftSpoke) => Effect.Effect<ReapedSpoke>;
 };
+
+// A spoke as the hub before this one recorded it (`om_spokes`).
+export type LeftSpoke = {
+  readonly runId: RunId;
+  readonly pid: number;
+  readonly startedAt: Option.Option<string>;
+  readonly foldedSeq: number;
+  readonly ending: Option.Option<SpokeEndRequest>;
+};
+
+// What reaping a spoke found: what became of its process, for the daemon's
+// log, and whether its journal could be read.
+export type ReapedSpoke = {
+  readonly process: string;
+  readonly journalRead: boolean;
+};
+
+// Whether the process with a recorded spoke's PID is still that spoke: the
+// same start time, when the hub recorded one, and a command line that is a
+// spoke's of that run. Anything else has the PID by reuse, and is never
+// signalled.
+export const isSpoke = (left: LeftSpoke, found: ProcessIdentity) => {
+  const words = found.command.split(/\s+/);
+
+  return (
+    Option.match(left.startedAt, {
+      onNone: () => true,
+      onSome: (startedAt) => startedAt === found.startedAt,
+    }) && words.some((word, at) => word === "--run" && words[at + 1] === left.runId)
+  );
+};
+
+// What became of a recorded spoke's process: ended if it is still that spoke,
+// left alone if its PID is another process's now. A spoke that exited may
+// leave processes of its group running, whose leader is gone; with nothing
+// to tell they were its, they are left alone, and said.
+const reapProcess = (left: LeftSpoke, grace: Duration.Duration) =>
+  Effect.gen(function* () {
+    const found = yield* processIdentity(left.pid);
+
+    if (Option.isNone(found) && (yield* groupAlive(left.pid))) {
+      return `was gone, but left processes in its group ${left.pid}, which the hub can't tell were its and leaves alone`;
+    }
+
+    if (Option.isNone(found)) {
+      return "was gone";
+    }
+
+    if (!isSpoke(left, found.value)) {
+      return `was gone: PID ${left.pid} is another process's now, which the hub leaves alone`;
+    }
+
+    switch (yield* endForeignGroup(left.pid, grace)) {
+      case "terminated":
+        return `was still running, and stopped on SIGTERM`;
+      case "killed":
+        return `was still running, and was killed by SIGKILL`;
+      case "survived":
+        return `was still running, and its group outlived SIGKILL`;
+    }
+  });
 
 const encodeHandOver = Schema.encodeSync(SpokeHandOverJson);
 
@@ -230,6 +312,16 @@ export const foldSpoke = <R>(
       );
     }
   });
+
+// Folds one report into state.db and moves the fold position past it, in
+// one unit of work (ADR 23, decision 3): the runs' commands each join it, so
+// the report and the position commit together or not at all, and a report
+// takes effect once however the hub stops.
+export const foldInUnitOfWork = <E, R, F>(
+  inOneUnitOfWork: (effect: Effect.Effect<void, E, R>) => Effect.Effect<void, F, R>,
+  report: Effect.Effect<void, E, R>,
+  advance: Effect.Effect<void, E, R>,
+) => inOneUnitOfWork(Effect.andThen(report, advance));
 
 // The next change to anything under `dir`, as a file watch says: `next`
 // waits for it, for as long as the scope lasts. A watch that fails says
@@ -413,6 +505,16 @@ export const hubSpokes = <R>(options: {
     after: number,
   ) => Effect.Effect<ReadonlyArray<SpokeReport>, never, R>;
   readonly apply: (runId: RunId, report: SpokeReport) => Effect.Effect<void, never, R>;
+  // Records a spoke once it is spawned, and the ending the hub means for it
+  // (ADR 23, decision 7), so the next hub can finish what this one started.
+  readonly record: (spoke: {
+    readonly runId: RunId;
+    readonly pid: number;
+    readonly startedAt: Option.Option<string>;
+    readonly hubPid: number;
+    readonly hubStartedAt: Option.Option<string>;
+  }) => Effect.Effect<void, never, R>;
+  readonly intend: (runId: RunId, request: SpokeEndRequest) => Effect.Effect<void, never, R>;
   // Ends a run once its spoke exited, from what it reported, unless the hub
   // meant an ending for it (`end`), which whoever asked gives the run.
   readonly onExit: (
@@ -430,6 +532,9 @@ export const hubSpokes = <R>(options: {
   // says otherwise.
   readonly memory?: Effect.Effect<ReadonlyMap<number, number>>;
   readonly sampleEvery?: Duration.Duration;
+  // How long a reaped spoke gets after SIGTERM before SIGKILL; STOP_GRACE,
+  // unless a test says otherwise.
+  readonly reapGrace?: Duration.Duration;
 }): Effect.Effect<Spokes, never, R | FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -465,6 +570,21 @@ export const hubSpokes = <R>(options: {
       RunId,
       { readonly endedFor: RunStatus; readonly result: Deferred.Deferred<EndedSpoke> }
     >();
+
+    // Each spoke `reap` reaped: the ending meant for it first, how its
+    // process went and the sessions it reported, until its run's ending is
+    // recorded and the hub forgets it.
+    const reaped = new Map<
+      RunId,
+      {
+        readonly intended: Ref.Ref<Option.Option<SpokeEndRequest>>;
+        readonly exit: string;
+        readonly sessions: ReadonlyArray<AgentSessionOpened>;
+      }
+    >();
+
+    // The hub's own process, for each spoke's record.
+    const hub = { pid: process.pid, startedAt: yield* processIdentity(process.pid) };
 
     const [program, ...prefix] = Option.getOrElse(Option.fromUndefinedOr(options.command), () =>
       selfCommand(),
@@ -535,7 +655,19 @@ export const hubSpokes = <R>(options: {
             Ending: () => options.apply(runId, report),
           });
 
-        const fold = foldSpoke(handOver.runId, folded, options.reports, apply).pipe(
+        // A journal the hub can't read now is read again at the next fold.
+        const reports = (runId: RunId, after: number) =>
+          options
+            .reports(runId, after)
+            .pipe(
+              Effect.catchCause((cause) =>
+                options
+                  .log(`could not read the reports of ${shortRunId(runId)}: ${String(cause)}`)
+                  .pipe(Effect.as([])),
+              ),
+            );
+
+        const fold = foldSpoke(handOver.runId, folded, reports, apply).pipe(
           folding.withPermits(1),
           Effect.provideContext(context),
         );
@@ -552,6 +684,21 @@ export const hubSpokes = <R>(options: {
 
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
+
+        // Recorded before anything can end its run, so the next hub can end
+        // it if this one dies first, and tell it from a later process with
+        // its PID. One that never started has no process to record.
+        if (group.pid > 0) {
+          yield* options
+            .record({
+              runId: handOver.runId,
+              pid: group.pid,
+              startedAt: Option.map(yield* processIdentity(group.pid), (found) => found.startedAt),
+              hubPid: hub.pid,
+              hubStartedAt: Option.map(hub.startedAt, (found) => found.startedAt),
+            })
+            .pipe(Effect.provideContext(context));
+        }
 
         yield* Effect.forkIn(
           Stream.runForEach(group.lines, (line) => options.log(`spoke ${short}: ${line.text}`)),
@@ -638,6 +785,64 @@ export const hubSpokes = <R>(options: {
       ),
     );
 
+    // A spoke the hub reaped, as `end` answers for it: ended for the first
+    // ending asked of it, the one the hub before meant if it recorded one.
+    const reapedAnswer = (runId: RunId, request: SpokeEndRequest) =>
+      Option.match(Option.fromUndefinedOr(reaped.get(runId)), {
+        onNone: () => Effect.succeedNone,
+        onSome: (spoke) =>
+          Effect.map(
+            Ref.modify(spoke.intended, (meant) => {
+              const held = Option.getOrElse(meant, () => request);
+
+              return [held, Option.some(held)] as const;
+            }),
+            (first): Option.Option<EndedSpoke> =>
+              Option.some({
+                endedFor: endingOf(first),
+                exit: spoke.exit,
+                sessions: [...spoke.sessions],
+              }),
+          ),
+      });
+
+    const reap = (left: LeftSpoke) =>
+      Effect.gen(function* () {
+        const process = yield* reapProcess(left, options.reapGrace ?? STOP_GRACE);
+        const sessions: Array<AgentSessionOpened> = [];
+
+        // Every report, for the sessions it reported, whenever it did; each
+        // after the recorded position folded, moving it on, as a live fold.
+        const read = yield* options.reports(left.runId, 0).pipe(
+          Effect.asSome,
+          Effect.catchCause((cause) =>
+            options
+              .log(`could not read the reports of ${shortRunId(left.runId)}: ${String(cause)}`)
+              .pipe(Effect.as(Option.none<ReadonlyArray<SpokeReport>>())),
+          ),
+        );
+
+        for (const report of Option.getOrElse(read, () => [])) {
+          for (const opened of Option.toArray(sessionOpenedIn(report))) {
+            sessions.push(opened);
+          }
+
+          if (report.seq > left.foldedSeq) {
+            yield* Effect.uninterruptible(options.apply(left.runId, report));
+          }
+        }
+
+        reaped.set(left.runId, {
+          intended: yield* Ref.make(left.ending),
+          exit: `its spoke from before ${process}`,
+          sessions,
+        });
+
+        yield* fs.remove(handOverFileOf(left.runId), { force: true }).pipe(Effect.ignore);
+
+        return { process, journalRead: Option.isSome(read) };
+      }).pipe(Effect.provideContext(context));
+
     return {
       start,
       has: (runId) => live.has(runId),
@@ -653,7 +858,7 @@ export const hubSpokes = <R>(options: {
           onSome: ({ group }) =>
             Effect.forkIn(stopGroup(group, STOP_GRACE), scope).pipe(Effect.asVoid),
         }),
-      end: (runId, ending) =>
+      end: (runId, request) =>
         Effect.suspend(() =>
           Option.match(Option.fromUndefinedOr(ended.get(runId)), {
             // The first ending asked of it holds: a cancel and a lost lease at
@@ -661,12 +866,18 @@ export const hubSpokes = <R>(options: {
             onSome: (asked) => Effect.asSome(Deferred.await(asked.result)),
             onNone: () =>
               Option.match(Option.fromUndefinedOr(live.get(runId)), {
-                onNone: () => Effect.succeedNone,
+                onNone: () => reapedAnswer(runId, request),
                 onSome: (spoke) => {
+                  const ending = endingOf(request);
                   const result = Deferred.makeUnsafe<EndedSpoke>();
                   ended.set(runId, { endedFor: ending, result });
 
                   return Effect.gen(function* () {
+                    // Recorded on the spoke's record before it is signalled,
+                    // so a hub that dies meanwhile is finished by the next as
+                    // this one meant (ADR 23, decision 7).
+                    yield* options.intend(runId, request).pipe(Effect.provideContext(context));
+
                     const exit = yield* stopGroup(spoke.group, STOP_GRACE);
                     yield* Deferred.await(spoke.done);
 
@@ -687,6 +898,8 @@ export const hubSpokes = <R>(options: {
       forget: (runId) =>
         Effect.sync(() => {
           ended.delete(runId);
+          reaped.delete(runId);
         }),
+      reap,
     } satisfies Spokes;
   });

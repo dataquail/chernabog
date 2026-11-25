@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 
 import { Exec } from "../../platform/exec.ts";
 import { GitHubApi } from "../../platform/github-api.ts";
-import { UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
+import { runnerOf, UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
 import { RunTriggersLive } from "./event-handlers/triggers/run.triggers.ts";
 import { FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
 import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
@@ -18,6 +18,7 @@ import { RunLanesRepositoryLive } from "./infrastructure/repositories/run-lanes.
 import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
 import { RunNodesRepositoryLive } from "./infrastructure/repositories/run-nodes.repository-live.ts";
 import { RunPlansRepositoryLive } from "./infrastructure/repositories/run-plans.repository-live.ts";
+import { RunSpokesRepositoryLive } from "./infrastructure/repositories/run-spokes.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
@@ -57,6 +58,7 @@ const RunsStoresLive = Layer.mergeAll(
   RunMarkersRepositoryLive,
   RunNodesRepositoryLive,
   RunPlansRepositoryLive,
+  RunSpokesRepositoryLive,
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,
@@ -122,6 +124,13 @@ export const RunsModule = {
   // handlers itself beside the module (test/sdk-fakes.ts's StateAt): the same
   // Layer value, so Effect builds it once.
   unitOfWork: RunsUnitOfWorkLive,
+
+  // Runs an effect in one unit of work over state.db, which each of the runs'
+  // commands it dispatches joins: for a composition root that must commit
+  // two of them together, as a hub folds a spoke's report with the fold
+  // position past it (ADR 23, decision 3). Over the SQL client the root
+  // holds state.db with.
+  inOneUnitOfWork: runnerOf(RunsUnitOfWorkLive),
 
   // The module's slice of the application's buses: the groups `layer`'s
   // dispatchers answer, and those dispatchers, as the tables a bus routes by;

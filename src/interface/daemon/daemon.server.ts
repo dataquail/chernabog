@@ -48,6 +48,7 @@ import {
   DEFAULT_LEASE_LIMITS,
   DEFAULT_VALIDITY_EVERY,
   describeLauncher,
+  endingOf,
   EngineLive,
   eventTickAt,
   type FlowHandle,
@@ -74,6 +75,7 @@ import {
   RunLeases,
   runLogFor,
   RunsCommands,
+  RunsModule,
   RunsQueries,
   type RunStatus,
   RunValidity,
@@ -143,7 +145,13 @@ import {
 } from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
-import { hubSpokes, ReportFold, reportFold, type Spokes } from "./spokes.server.ts";
+import {
+  foldInUnitOfWork,
+  hubSpokes,
+  ReportFold,
+  reportFold,
+  type Spokes,
+} from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -460,6 +468,11 @@ const changedAction = (trusted: boolean) => {
 const INTERRUPTED_REASON =
   "the hub it ran under stopped, and its spoke with it; its phase repeats in a new run";
 
+// What a run reaped with a journal the hub couldn't read lost (ADR 23,
+// decision 3).
+const UNREADABLE_JOURNAL =
+  "its journal couldn't be read, so what its spoke reported last is lost, markers included";
+
 // Why a daemon with a reload pending starts nothing.
 const RELOADING =
   "a trusted .chernabog/ changed; the daemon starts no new runs until its runs end and it restarts on it";
@@ -619,11 +632,11 @@ export const runDaemon = Effect.gen(function* () {
         servicesFrom(personas)(persona),
       ),
     spokes: {
-      end: (runId, ending) =>
+      end: (runId, request) =>
         Effect.flatMap(Ref.get(hubSpokesHandle), (found) =>
           Option.match(found, {
             onNone: () => Effect.succeedNone,
-            onSome: (live) => live.end(runId, ending),
+            onSome: (live) => live.end(runId, request),
           }),
         ),
       forget: (runId) =>
@@ -642,6 +655,10 @@ export const runDaemon = Effect.gen(function* () {
   const engine = yield* Layer.build(
     engineRuntime({ registry, flows: flowLayers, engine: EngineLive }),
   );
+
+  // Runs the hub's fold of a spoke's report and the fold position past it in
+  // one state.db transaction (ADR 23, decision 3).
+  const inOneUnitOfWork = yield* RunsModule.inOneUnitOfWork.pipe(Effect.provideContext(engine));
 
   // What releasing markers did, as the daemon logs it, whoever released them: a
   // run's ending (release-run-markers) or the sweep. A failure is logged the
@@ -717,120 +734,6 @@ export const runDaemon = Effect.gen(function* () {
             ),
           ),
         ),
-      );
-
-      // Runs in flight that started under an SDK this binary doesn't run go
-      // to a person, released as a cancel releases them, rather than resume.
-      for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
-        const ended = yield* RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "needs-human", reason }),
-          }),
-        ).pipe(Effect.result);
-
-        yield* log(
-          Result.match(ended, {
-            onSuccess: (done) =>
-              [
-                `ended ${run.id} (${runLabel(run)}) for a person: ${reason}`,
-                ...done.leftForPerson,
-              ].join("; "),
-            onFailure: (error) =>
-              `could not end ${run.id} (${runLabel(run)}), which ${reason}: ${error.message}`,
-          }),
-        );
-      }
-
-      for (const repo of repos) {
-        if (Option.isSome(repo.repo)) {
-          yield* adoptRuns(repo.repo.value);
-        }
-      }
-
-      // Every run this hub finds running was a spoke of the hub before it,
-      // which a spoke doesn't outlive (ADR 23, decision 7): it ends as
-      // interrupted, keeping what it put on its item and letting go of its
-      // claim ref, and its phase repeats in a new run once the trigger reports
-      // its item again. Reaping (#664) adds, around this, ending a spoke the
-      // last hub left behind, the fold of its journal and the ending the last
-      // hub meant for it.
-      const leftRunning = yield* RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun));
-
-      for (const run of leftRunning.runs) {
-        yield* RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "interrupted", reason: INTERRUPTED_REASON }),
-          }),
-        ).pipe(
-          Effect.as(`ended ${run.id} (${runLabel(run)}) as interrupted: ${INTERRUPTED_REASON}`),
-          Effect.catch((error) =>
-            Effect.succeed(
-              `could not end ${run.id} (${runLabel(run)}) as interrupted: ${error.message}`,
-            ),
-          ),
-          Effect.flatMap(log),
-        );
-      }
-
-      // Starts that a crash interrupted, finished before anything ticks, and
-      // the journals of runs that have ended deleted.
-      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
-
-      for (const run of recovered.executed) {
-        yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
-      }
-
-      for (const run of recovered.abandoned) {
-        yield* log(
-          `ended ${run.id} (${runLabel(run)}): a crash interrupted its start, and it kept no work item to start it from`,
-        );
-      }
-
-      for (const run of recovered.left) {
-        yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
-      }
-
-      for (const runId of recovered.swept) {
-        yield* log(`deleted the journal of ${runId}, which had ended`);
-      }
-
-      const reloadPending = yield* Ref.make(false);
-      // Set once chernabog's binary changes under the daemon: it starts no new
-      // runs, and restarts on the new binary once none is executing.
-      const draining = yield* Ref.make(false);
-
-      // Sets a reload pending or the daemon draining, and tells the /events
-      // stream's clients the first time.
-      const reloading = (flag: Ref.Ref<boolean>, reason: DaemonReloading["reason"]) =>
-        Effect.gen(function* () {
-          if (yield* Ref.getAndSet(flag, true)) {
-            return;
-          }
-
-          const at = DateTime.formatIso(yield* DateTime.now);
-
-          yield* broadcastDaemonEvents([
-            DaemonReloading.make({ eventId: `daemon:${reason}:${at}`, reason, at }),
-          ]);
-        });
-
-      const executable = yield* watchedExecutable;
-
-      const startedAs = yield* Option.match(executable, {
-        onNone: () => Effect.succeedNone,
-        onSome: fileIdentity,
-      });
-
-      const reloaded = yield* Deferred.make<true>();
-
-      const active = RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun)).pipe(
-        Effect.map((found) => found.runs),
       );
 
       // Ends a spoke's run once the spoke has exited, with the ending it
@@ -931,6 +834,35 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
+      const runsCommands = yield* RunsCommands;
+
+      // Folds a report and moves the spoke's fold position past it in one
+      // state.db transaction (ADR 23, decision 3), the runs' unit of work
+      // around both commands, each of which joins it: the report takes
+      // effect once whatever stops the hub, and a hub that starts folds from
+      // where this one left off. A report whose command is refused rolls
+      // back alone, and the position still moves past it.
+      const foldInStateDb = (runId: RunId, report: SpokeReport) =>
+        foldInUnitOfWork(
+          inOneUnitOfWork,
+          foldReport(runId, report),
+          runsCommands.AdvanceSpokeFoldCommand({ runId, seq: report.seq }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            log(`could not fold ${report.tag} of ${shortRunId(runId)}: ${String(cause)}`),
+          ),
+        );
+
+      // Forgets a spoke's record once its run has ended (decision 7).
+      const forgetSpoke = (runId: RunId) =>
+        runsCommands
+          .ForgetSpokeCommand({ runId })
+          .pipe(
+            Effect.catchCause((cause) =>
+              log(`could not forget the spoke of ${shortRunId(runId)}: ${String(cause)}`),
+            ),
+          );
+
       // Ends a spoke past one of its bounds (ADR 23, decision 4): its run
       // fails, naming the bound, what was measured and the limit. Ending it
       // is a cancel's: SIGTERM to its group, SIGKILL after the grace, the
@@ -982,13 +914,21 @@ export const runDaemon = Effect.gen(function* () {
         reports: (runId, after) =>
           RunFlowsQueries.use((runs) => runs.ReadSpokeReportsQuery({ runId, after })).pipe(
             Effect.map((found) => found.reports),
+            Effect.orDie,
+          ),
+        apply: foldInStateDb,
+        record: (spoke) =>
+          RunsCommands.use((runs) => runs.RecordSpokeCommand(spoke)).pipe(
             Effect.catchCause((cause) =>
-              log(`could not read the reports of ${shortRunId(runId)}: ${String(cause)}`).pipe(
-                Effect.as([]),
-              ),
+              log(`could not record the spoke of ${shortRunId(spoke.runId)}: ${String(cause)}`),
             ),
           ),
-        apply: foldReport,
+        intend: (runId, ending) =>
+          RunsCommands.use((runs) => runs.IntendSpokeEndingCommand({ runId, ending })).pipe(
+            Effect.catchCause((cause) =>
+              log(`could not record the ending meant for ${shortRunId(runId)}: ${String(cause)}`),
+            ),
+          ),
         onExit: endSpokeRun,
         bounds: machine.spokes,
         onBound: endPastBound,
@@ -1003,8 +943,185 @@ export const runDaemon = Effect.gen(function* () {
       // A spoke the hub ended for its run's ending is forgotten once that
       // ending is recorded.
       yield* subscribeRunEndings(
-        (ended) => Effect.andThen(spokes.stop(ended.id), spokes.forget(ended.id)),
+        (ended) =>
+          Effect.all([spokes.stop(ended.id), spokes.forget(ended.id), forgetSpoke(ended.id)], {
+            discard: true,
+          }),
         "daemon/spoke-endings",
+      );
+
+      // The spokes of the hub before this one, which a spoke doesn't outlive
+      // (ADR 23, decision 7), reaped before anything here ends or starts a
+      // run: each still running is ended, once the hub has checked its PID
+      // is still that spoke's, and what its journal holds is folded into
+      // state.db from where the hub before left off. Their runs end below.
+      const leftSpokes = (yield* (yield* RunsQueries).ListSpokesQuery({})).spokes;
+
+      const unreadable = new Set(
+        (yield* Effect.forEach(
+          leftSpokes,
+          (left) =>
+            spokes.reap(left).pipe(
+              Effect.tap((reaped) =>
+                log(
+                  [
+                    `the spoke ${left.pid} of ${shortRunId(left.runId)} from the hub before ${reaped.process}`,
+                    ...Option.toArray(
+                      Option.liftPredicate(
+                        "; its journal couldn't be read",
+                        () => !reaped.journalRead,
+                      ),
+                    ),
+                  ].join(""),
+                ),
+              ),
+              Effect.map((reaped) => Option.liftPredicate(left.runId, () => !reaped.journalRead)),
+            ),
+          { concurrency: 8 },
+        )).flatMap(Option.toArray),
+      );
+
+      // Runs in flight that started under an SDK this binary doesn't run go
+      // to a person, released as a cancel releases them, rather than resume.
+      for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
+        const ended = yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "needs-human", reason }),
+          }),
+        ).pipe(Effect.result);
+
+        yield* log(
+          Result.match(ended, {
+            onSuccess: (done) =>
+              [
+                `ended ${run.id} (${runLabel(run)}) for a person: ${reason}`,
+                ...done.leftForPerson,
+              ].join("; "),
+            onFailure: (error) =>
+              `could not end ${run.id} (${runLabel(run)}), which ${reason}: ${error.message}`,
+          }),
+        );
+      }
+
+      for (const repo of repos) {
+        if (Option.isSome(repo.repo)) {
+          yield* adoptRuns(repo.repo.value);
+        }
+      }
+
+      // Every run this hub finds running was a spoke's of the hub before it.
+      // One that hub meant an ending for (a cancel, a lost lease, a bound)
+      // ends as it meant; any other ends as interrupted, keeping what it put
+      // on its item and letting go of its claim ref, and its phase repeats in
+      // a new run once the trigger reports its item again (decision 7).
+      const meant = new Map(
+        leftSpokes.flatMap((left) =>
+          Option.toArray(Option.map(left.ending, (ending) => [left.runId, ending] as const)),
+        ),
+      );
+
+      const leftRunning = yield* RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun));
+
+      for (const run of leftRunning.runs) {
+        const lost = Option.match(
+          Option.liftPredicate(run.id, (id) => unreadable.has(id)),
+          { onNone: () => "", onSome: () => `; ${UNREADABLE_JOURNAL}` },
+        );
+
+        const request = Option.getOrElse(Option.fromUndefinedOr(meant.get(run.id)), () => ({
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some({ ending: "interrupted" as const, reason: INTERRUPTED_REASON }),
+        }));
+
+        const endAs = Option.map(request.endAs, (as) => ({ ...as, reason: `${as.reason}${lost}` }));
+        const ending = endingOf(request);
+
+        yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: request.by,
+            closeSessions: request.closeSessions,
+            endAs,
+          }),
+        ).pipe(
+          Effect.map((done) =>
+            [
+              `ended ${run.id} (${runLabel(run)}) as ${ending}: ${Option.getOrElse(done.run.summary, () => ending)}`,
+              ...done.leftForPerson,
+            ].join("; "),
+          ),
+          Effect.catch((error) =>
+            Effect.succeed(
+              `could not end ${run.id} (${runLabel(run)}) as ${ending}: ${error.message}`,
+            ),
+          ),
+          Effect.flatMap(log),
+        );
+      }
+
+      // Their records are done with: a run ended above forgot its own as it
+      // ended; one that had ended before is forgotten here.
+      for (const left of leftSpokes) {
+        yield* forgetSpoke(left.runId);
+      }
+
+      // Starts that a crash interrupted, finished before anything ticks, and
+      // the journals of runs that have ended deleted.
+      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
+
+      for (const run of recovered.executed) {
+        yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
+      }
+
+      for (const run of recovered.abandoned) {
+        yield* log(
+          `ended ${run.id} (${runLabel(run)}): a crash interrupted its start, and it kept no work item to start it from`,
+        );
+      }
+
+      for (const run of recovered.left) {
+        yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
+      }
+
+      for (const runId of recovered.swept) {
+        yield* log(`deleted the journal of ${runId}, which had ended`);
+      }
+
+      const reloadPending = yield* Ref.make(false);
+      // Set once chernabog's binary changes under the daemon: it starts no new
+      // runs, and restarts on the new binary once none is executing.
+      const draining = yield* Ref.make(false);
+
+      // Sets a reload pending or the daemon draining, and tells the /events
+      // stream's clients the first time.
+      const reloading = (flag: Ref.Ref<boolean>, reason: DaemonReloading["reason"]) =>
+        Effect.gen(function* () {
+          if (yield* Ref.getAndSet(flag, true)) {
+            return;
+          }
+
+          const at = DateTime.formatIso(yield* DateTime.now);
+
+          yield* broadcastDaemonEvents([
+            DaemonReloading.make({ eventId: `daemon:${reason}:${at}`, reason, at }),
+          ]);
+        });
+
+      const executable = yield* watchedExecutable;
+
+      const startedAs = yield* Option.match(executable, {
+        onNone: () => Effect.succeedNone,
+        onSome: fileIdentity,
+      });
+
+      const reloaded = yield* Deferred.make<true>();
+
+      const active = RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun)).pipe(
+        Effect.map((found) => found.runs),
       );
 
       // Each run in flight whose stillValid keeps failing: how often in a

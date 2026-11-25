@@ -1,3 +1,4 @@
+import { makeEventBus } from "@effect-server-utils/cqrs";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import * as Deferred from "effect/Deferred";
@@ -10,12 +11,16 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import {
   activityOf,
+  foldInUnitOfWork,
   foldSpoke,
   hubSpokes,
+  isSpoke,
   journalSignature,
+  type LeftSpoke,
   measureOf,
   nextActivity,
   ReportFold,
@@ -32,15 +37,42 @@ import {
   breachSummary,
   DEFAULT_SPOKE_BOUNDS,
 } from "../src/kernel/spoke-bounds.value-object.ts";
+import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
+import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/holds.repository-live.ts";
+import { RunCreatedIssuesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-created-issues.repository-live.ts";
+import { RunLanesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-live.ts";
+import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
+import { RunNodesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-nodes.repository-live.ts";
+import { RunPlansRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-plans.repository-live.ts";
+import { RunSpokesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-spokes.repository-live.ts";
+import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
+import { RunWaitsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-live.ts";
+import { RunsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/runs.repository-live.ts";
+import { SkipsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/skips.repository-live.ts";
+import { TokenUsageCursorsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/token-usage-cursors.repository-live.ts";
+import { TokenUsagesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/token-usages.repository-live.ts";
 import { JournalsAt, RunJournals } from "../src/modules/runs/infrastructure/runtime/journals.ts";
+import { RunsCommandsLive } from "../src/modules/runs/runs.command-handlers.ts";
 import {
+  endingOf,
+  RunsCommands,
+  RunsModule,
+  RunsQueries,
   type RunStatus,
   RunView,
   type SpokeReport,
   SpokeReportCommand,
   spokeReportPayloadJson,
 } from "../src/modules/runs/runs.platform.ts";
+import { RunsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
+import {
+  groupAlive,
+  processIdentity,
+  spawnGroup,
+  stopGroup,
+} from "../src/platform/process-group.ts";
 import { effect } from "./effect-test.ts";
+import { sqliteAfter } from "./sqlite.ts";
 
 const run = RunView.make({
   id: RunId.make("3f2a"),
@@ -351,6 +383,14 @@ describe("ending a live spoke", () => {
         // ending having its answer.
         const exiting = yield* Deferred.make<Option.Option<RunStatus>>();
         const gate = yield* Deferred.make<boolean>();
+        // What the hub recorded of the spoke, and of the ending it meant.
+        const recorded: Array<string> = [];
+
+        const asked = (ending: "lost" | "superseded") => ({
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some({ ending, reason: `it was ${ending}` }),
+        });
 
         const spokes = yield* hubSpokes({
           home,
@@ -359,6 +399,16 @@ describe("ending a live spoke", () => {
           log: () => Effect.void,
           reports: () => Effect.succeed([]),
           apply: () => Effect.void,
+          record: (spoke) =>
+            Effect.sync(() => {
+              recorded.push(
+                `spoke ${spoke.runId} ${spoke.pid > 0} ${Option.isSome(spoke.startedAt)} ${spoke.hubPid === process.pid}`,
+              );
+            }),
+          intend: (meantFor, request) =>
+            Effect.sync(() => {
+              recorded.push(`meant ${meantFor} ${endingOf(request)}`);
+            }),
           onExit: (_run, _exit, intended) =>
             Deferred.succeed(exiting, intended).pipe(Effect.andThen(Deferred.await(gate))),
           bounds: DEFAULT_SPOKE_BOUNDS,
@@ -368,12 +418,12 @@ describe("ending a live spoke", () => {
         yield* spokes.start(handOver({ checkout: home }));
         expect(spokes.has(runId)).toBe(true);
 
-        const first = yield* Effect.forkChild(spokes.end(runId, "lost"));
+        const first = yield* Effect.forkChild(spokes.end(runId, asked("lost")));
         // The hub won't end the run from the exit: the first ending is meant.
         expect(yield* Deferred.await(exiting)).toEqual(Option.some("lost"));
         expect(spokes.has(runId)).toBe(false);
 
-        const second = yield* Effect.forkChild(spokes.end(runId, "superseded"));
+        const second = yield* Effect.forkChild(spokes.end(runId, asked("superseded")));
         yield* Deferred.succeed(gate, true);
 
         const [firstEnded, secondEnded] = [yield* Fiber.join(first), yield* Fiber.join(second)];
@@ -387,7 +437,11 @@ describe("ending a live spoke", () => {
         // Once the run's ending is recorded the hub forgets the spoke, and no
         // spoke of the run is left to end.
         yield* spokes.forget(runId);
-        expect(yield* spokes.end(runId, "cancelled")).toEqual(Option.none());
+        expect(yield* spokes.end(runId, asked("lost"))).toEqual(Option.none());
+
+        // Recorded once spawned, with its start time and the hub's own, and
+        // the ending meant for it recorded once, the first.
+        expect(recorded).toEqual([`spoke ${runId} true true true`, `meant ${runId} lost`]);
       }),
   );
 });
@@ -473,4 +527,266 @@ describe("a spoke measured against its bounds", () => {
       Option.some("ended past its idle bound: 39m over 30m"),
     );
   });
+});
+
+// A process standing in for a spoke the hub before left, its command line
+// naming the run as a spoke's does, once it has done what `first` says.
+const leftProcess = (runId: string, first: ReadonlyArray<string> = []) =>
+  Effect.gen(function* () {
+    const group = yield* spawnGroup(
+      "sh",
+      ["-c", [...first, "echo ready", "sleep 60", `: ci run --run ${runId}`].join("; ")],
+      { cwd: "/", env: { PATH: "/bin:/usr/bin" } },
+    );
+
+    yield* Stream.runHead(group.lines);
+
+    return group;
+  });
+
+const left = (runId: string, fields: Partial<LeftSpoke> = {}): LeftSpoke => ({
+  runId: RunId.make(runId),
+  pid: 0,
+  startedAt: Option.none(),
+  foldedSeq: 0,
+  ending: Option.none(),
+  ...fields,
+});
+
+const interrupted = {
+  by: "chernabog",
+  closeSessions: false,
+  endAs: Option.some({ ending: "interrupted" as const, reason: "its hub stopped" }),
+};
+
+const cancelledByAlice = { by: "alice", closeSessions: true, endAs: Option.none() };
+
+// A hub in a home of the test's own, over a journal holding `reports` (none
+// for one it can't read), folding them into `applied` by their seq.
+const hubOver = (reports: Option.Option<ReadonlyArray<SpokeReport>>, applied: Array<number>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-reap-" });
+
+    return yield* hubSpokes({
+      home,
+      variables: {},
+      log: () => Effect.void,
+      reports: (_runId, after) =>
+        Option.match(reports, {
+          onNone: () => Effect.die("file is not a database"),
+          onSome: (held) => Effect.succeed(held.filter((report) => report.seq > after)),
+        }),
+      apply: (_runId, report) =>
+        Effect.sync(() => {
+          applied.push(report.seq);
+        }),
+      record: () => Effect.void,
+      intend: () => Effect.void,
+      onExit: () => Effect.void,
+      bounds: DEFAULT_SPOKE_BOUNDS,
+      onBound: () => Effect.succeed(true),
+      memory: Effect.succeed(new Map()),
+      reapGrace: Duration.millis(300),
+    });
+  });
+
+describe("reaping the spokes of the hub before", () => {
+  test("a process is that spoke only by its start time and a command line naming its run", () => {
+    const found = {
+      startedAt: "Wed Nov 25 10:00:00 2026",
+      command: "bun main.ts ci run --run r-1",
+    };
+
+    const recorded = left("r-1", { startedAt: Option.some(found.startedAt) });
+
+    expect(isSpoke(recorded, found)).toBe(true);
+    expect(isSpoke(recorded, { ...found, startedAt: "Wed Nov 25 10:00:01 2026" })).toBe(false);
+    expect(isSpoke(recorded, { ...found, command: "bun main.ts ci run --run r-10" })).toBe(false);
+    expect(isSpoke(recorded, { ...found, command: "vim notes" })).toBe(false);
+    expect(isSpoke(left("r-1"), found)).toBe(true);
+  });
+
+  effect("ends one still running, that ignores SIGTERM, once it has checked its PID", () =>
+    Effect.gen(function* () {
+      const spokes = yield* hubOver(Option.some([]), []);
+      const group = yield* leftProcess("r-1", ["trap '' TERM"]);
+      const startedAt = Option.map(yield* processIdentity(group.pid), (found) => found.startedAt);
+
+      const reaped = yield* spokes.reap(left("r-1", { pid: group.pid, startedAt }));
+
+      expect(reaped.process).toBe("was still running, and was killed by SIGKILL");
+      expect(yield* groupAlive(group.pid)).toBe(false);
+    }),
+  );
+
+  effect("leaves alone a process that has the PID by reuse, or that is another run's", () =>
+    Effect.gen(function* () {
+      const spokes = yield* hubOver(Option.some([]), []);
+      const group = yield* leftProcess("r-1");
+      const startedAt = Option.map(yield* processIdentity(group.pid), (found) => found.startedAt);
+
+      const reused = yield* spokes.reap(
+        left("r-1", { pid: group.pid, startedAt: Option.some("Thu Jan 1 00:00:00 2015") }),
+      );
+
+      const another = yield* spokes.reap(left("r-2", { pid: group.pid, startedAt }));
+
+      expect([reused.process, another.process]).toEqual([
+        `was gone: PID ${group.pid} is another process's now, which the hub leaves alone`,
+        `was gone: PID ${group.pid} is another process's now, which the hub leaves alone`,
+      ]);
+      expect(yield* groupAlive(group.pid)).toBe(true);
+
+      yield* stopGroup(group, Duration.millis(300));
+    }),
+  );
+
+  effect(
+    "folds its journal past the position recorded, and answers for it with the ending meant first and the sessions it reported",
+    () =>
+      Effect.gen(function* () {
+        const applied: Array<number> = [];
+
+        const opened: SpokeReport = {
+          seq: 1,
+          at: "2026-11-25T00:00:01.000Z",
+          tag: "AgentSessionOpened",
+          payload: encodeOpened({ adapter: "claude", sessionId: "s-1", launch: "/l/s-1" }),
+        };
+
+        const spokes = yield* hubOver(
+          Option.some([opened, reported(2, "claim"), reported(3, "work"), reported(4, "push")]),
+          applied,
+        );
+
+        const reaped = yield* spokes.reap(
+          left("r-1", { foldedSeq: 2, ending: Option.some(cancelledByAlice) }),
+        );
+
+        expect(reaped).toEqual({ process: "was gone", journalRead: true });
+        expect(applied).toEqual([3, 4]);
+        expect(spokes.has(RunId.make("r-1"))).toBe(false);
+
+        const ended = Option.getOrThrow(yield* spokes.end(RunId.make("r-1"), interrupted));
+
+        expect(ended.endedFor).toBe("cancelled");
+        expect(ended.exit).toBe("its spoke from before was gone");
+        expect(ended.sessions.map((session) => session.sessionId)).toEqual(["s-1"]);
+
+        // One the hub before meant nothing for ends as first asked.
+        yield* spokes.reap(left("r-2"));
+
+        expect(
+          Option.map(yield* spokes.end(RunId.make("r-2"), interrupted), (one) => one.endedFor),
+        ).toEqual(Option.some("interrupted"));
+        expect(
+          Option.map(yield* spokes.end(RunId.make("r-2"), cancelledByAlice), (one) => one.endedFor),
+        ).toEqual(Option.some("interrupted"));
+
+        // Forgotten once its run's ending is recorded.
+        yield* spokes.forget(RunId.make("r-2"));
+
+        expect(yield* spokes.end(RunId.make("r-2"), interrupted)).toEqual(Option.none());
+      }),
+  );
+
+  effect("says a journal it can't read, and folds nothing from it", () =>
+    Effect.gen(function* () {
+      const applied: Array<number> = [];
+      const spokes = yield* hubOver(Option.none(), applied);
+
+      expect(yield* spokes.reap(left("r-1"))).toEqual({ process: "was gone", journalRead: false });
+      expect(applied).toEqual([]);
+    }),
+  );
+});
+
+describe("folding a report into state.db", () => {
+  // The runs' commands and queries over a state.db of the test's own, with
+  // the unit of work they declare, as the hub has them.
+  const stateDb = Layer.mergeAll(RunsCommandsLive, RunsQueriesLive).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        RunsRepositoryLive,
+        RunMarkersRepositoryLive,
+        HoldsRepositoryLive,
+        RunCreatedIssuesRepositoryLive,
+        RunLanesRepositoryLive,
+        RunNodesRepositoryLive,
+        RunPlansRepositoryLive,
+        RunWaitsRepositoryLive,
+        SkipsRepositoryLive,
+
+        RunSpokesRepositoryLive,
+        RunStepsRepositoryLive,
+        TokenUsagesRepositoryLive,
+        TokenUsageCursorsRepositoryLive,
+        RunLogsClientFake({}),
+        makeEventBus(),
+        RunsModule.unitOfWork,
+      ),
+    ),
+    Layer.provideMerge(sqliteAfter(Effect.void)),
+  );
+
+  effect(
+    "commits a report and the position past it together, and a refused report alone rolls back",
+    () =>
+      Effect.gen(function* () {
+        const runs = yield* RunsCommands;
+        const queries = yield* RunsQueries;
+        const inOneUnitOfWork = yield* RunsModule.inOneUnitOfWork;
+        const runId = RunId.make("3f2a");
+        const advance = (seq: number) => runs.AdvanceSpokeFoldCommand({ runId, seq });
+
+        const hold = runs
+          .HoldMarkerCommand({ runId, name: "chernabog/label", args: { number: 7 }, keepOn: [] })
+          .pipe(Effect.asVoid);
+
+        const position = queries
+          .ListSpokesQuery({})
+          .pipe(Effect.map((found) => found.spokes.map((spoke) => spoke.foldedSeq)));
+
+        const held = queries
+          .ListRunMarkersQuery({ runId, name: Option.none() })
+          .pipe(Effect.map((found) => found.markers.length));
+
+        yield* runs.RecordSpokeCommand({
+          runId,
+          pid: 42,
+          startedAt: Option.none(),
+          hubPid: 7,
+          hubStartedAt: Option.none(),
+        });
+
+        // A hub that dies between the report and the position keeps neither,
+        // so the next hub folds the report again, once.
+        yield* Effect.exit(
+          foldInUnitOfWork(
+            inOneUnitOfWork,
+            hold,
+            Effect.andThen(advance(1), Effect.die("hub killed")),
+          ),
+        );
+
+        expect([yield* held, yield* position]).toEqual([0, [0]]);
+
+        // A report whose command is refused (no such run) is skipped: the
+        // position moves past it, and nothing else is kept.
+        yield* foldInUnitOfWork(
+          inOneUnitOfWork,
+          runs
+            .EnterStepCommand({ runId: RunId.make("missing"), step: "claim" })
+            .pipe(Effect.result, Effect.asVoid),
+          advance(1),
+        );
+
+        expect([yield* held, yield* position]).toEqual([0, [1]]);
+
+        yield* foldInUnitOfWork(inOneUnitOfWork, hold, advance(2));
+
+        expect([yield* held, yield* position]).toEqual([1, [2]]);
+      }).pipe(Effect.provide(stateDb)),
+  );
 });

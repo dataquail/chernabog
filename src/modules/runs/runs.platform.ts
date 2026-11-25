@@ -33,6 +33,7 @@ export { type SpokeReport } from "./domain/run/spoke-report.value-object.ts";
 export { type FlowRef, WorkItem } from "./domain/run/work-item.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { MarkerReleases, RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
+export { endingOf, SpokeEndRequest } from "./domain/run-spoke/spoke-end-request.value-object.ts";
 export {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,
@@ -57,6 +58,7 @@ export {
   validityDue,
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
+export { SpokeRecordView } from "./queries/list-spokes.query.ts";
 export { LoggedAt, RunLog } from "./queries/read-run-log.query.ts";
 export {
   RunFlowsCommands,

@@ -19,7 +19,7 @@ import {
   makeDurableUnitOfWork,
   makeUnitOfWork,
   TransactionDriver,
-  type UnitOfWork,
+  UnitOfWork,
 } from "@effect-server-utils/unit-of-work";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -54,6 +54,17 @@ export const FileStoresTransactionDriver = Layer.succeed(
 // transaction driver: what a module's wiring declares its commands run in.
 export const unitOfWorkOver = <E, R>(driver: Layer.Layer<TransactionDriver, E, R>) =>
   makeUnitOfWork().pipe(Layer.provide(driver));
+
+// What runs an effect in one unit of work of `layer`'s, for a composition
+// root that commits several commands together: each command's own unit of
+// work joins it. A store that can't commit is a defect here, as in a
+// command over a file on this machine.
+export const runnerOf = <E, R>(layer: Layer.Layer<UnitOfWork | DeferralSink, E, R>) =>
+  Effect.map(Layer.build(layer), (built) => {
+    const unitOfWork = Context.get(built, UnitOfWork);
+
+    return <A, F, S>(effect: Effect.Effect<A, F, S>) => unitOfWork.run(effect).pipe(Effect.orDie);
+  });
 
 // The unit of work for the modules whose stores are files.
 export const FileStoresUnitOfWork = unitOfWorkOver(FileStoresTransactionDriver);

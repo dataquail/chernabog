@@ -1035,8 +1035,12 @@ How a CI run differs from a daemon run:
   seconds): it folds each new report (`ReadSpokeReportsQuery`) by
   dispatching its command on the hub's `CommandBus`, so status, `/events`
   and the dashboard see a spoke's steps as they'd see the hub's own; a
-  report it can't read or refuses goes to the run log and is skipped. The
-  fold position is the hub's memory until #664 keeps it in `om_spokes`.
+  report it can't read or refuses goes to the run log and is skipped. Each
+  report's command and the spoke's fold position past it
+  (`AdvanceSpokeFoldCommand`, `om_spokes.folded_seq`) commit in one
+  state.db transaction (`foldInUnitOfWork` over `RunsModule.unitOfWork`,
+  whose commands' own units of work join it as savepoints), so a report
+  takes effect once whatever stops the hub.
   When the spoke exits, the hub folds what's left, then
   reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
   (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
@@ -1045,8 +1049,10 @@ How a CI run differs from a daemon run:
   its spoke lives (cancelled, lost, superseded) ends the spoke first (ADR 23
   d5, #662): `CancelRunCommand` asks `RunSpokesClient.end`, which the hub
   provides through its `FlowRegistry` (`spokes`; no other process has any).
-  The hub records the ending it means for the spoke (its memory until #664's
-  `om_spokes`), so it won't end the run from the exit; SIGTERMs the group,
+  The hub records the ending it means for the spoke, the cancel request it
+  was asked (`SpokeEndRequest`: `by`, `closeSessions`, `endAs`), in memory
+  and on its record (`IntendSpokeEndingCommand`, the first one wins), so it
+  won't end the run from the exit; SIGTERMs the group,
   SIGKILLs it after 10 seconds, and waits for the exit and the last fold.
   Cancel then deletes the journal, records the ending, cleans up, and only
   then answers. A spoke reports each agent session it opens
@@ -1054,10 +1060,30 @@ How a CI run differs from a daemon run:
   the live spoke rather than folding; `--close-session` closes those by
   their launch records' handles. `concurrency` counts running runs,
   which are the live spokes; the hub renews their leases; a reload or a
-  drain starts no spoke and waits for none to be live. A hub that stops
-  SIGTERMs every spoke and waits for none; the next one ends every run it
-  finds running as `interrupted` (it keeps its markers and lets go of its
-  claim ref, so the phase repeats in a new run) before its first tick.
+  drain starts no spoke and waits for none to be live.
+- **Spokes die with the hub, and the next hub reaps them** (ADR 23 d7,
+  #664). The hub records each spoke it spawns in `om_spokes`
+  (`RunSpokeRoot`, `RecordSpokeCommand`): its PID (its process group's
+  too) and start time as `ps` says it, the hub's, the fold position and the
+  intended ending; a run's ending forgets it (`ForgetSpokeCommand`, from the
+  hub's `daemon/spoke-endings` subscription). A spoke whose stdin closes
+  SIGTERMs its own group and SIGKILLs what's left of it on its way out
+  (`stopWhenStdinCloses`), so what it started doesn't outlive its hub. A
+  hub that stops SIGTERMs every spoke and waits for none. Before its first
+  tick, a hub reaps every record (`ListSpokesQuery`, `Spokes.reap`): it
+  signals a group only once its leader's start time and command line
+  (`--run <run>`) say it is still that spoke (`isSpoke`, `processIdentity`;
+  a reused PID is left alone, never killed by name), SIGTERM then SIGKILL
+  after the grace, waiting until the group is gone (`endForeignGroup`);
+  folds the journal from the recorded position, collecting every
+  `AgentSessionOpened`; and answers `RunSpokesClient.end` for it as for a
+  spoke it ended. It then ends each run still running through
+  `CancelRunCommand`: with the intended ending if one was recorded, else
+  `interrupted` (it keeps its markers and lets go of its claim ref, so the
+  phase repeats in a new run); a journal it couldn't read says so in the
+  run's summary. `test/acceptance/hub-reap.test.ts` kills a hub with
+  SIGKILL under a spoke with a child that ignores SIGTERM and one spinning
+  synchronously, and under a cancel.
   `RecoverRunsCommand` resumes nothing from a journal.
 - **The hub bounds every spoke** (ADR 23 d4, #663): telemetry bytes,
   run-log bytes, phase time, idle time and its process group's memory,

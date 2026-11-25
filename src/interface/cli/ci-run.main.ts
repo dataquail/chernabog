@@ -679,7 +679,8 @@ const PARKED_REASON =
 // What a spoke reports as its run's ending, for the hub to end the run with
 // once the spoke has exited (ADR 23, decision 2): how its workflow ended, or
 // at its park, or past its time. None for a spoke stopped by a signal or its
-// stdin closing, whose run the hub ends as it finds it (#664).
+// stdin closing, whose run the hub that ends it ends, or the next hub reaps
+// (ADR 23, decision 7).
 export const spokeEndingOf = (exit: Exit.Exit<CiRunEnding, unknown>) => {
   if (Exit.isFailure(exit)) {
     return Option.none<SpokeEnding>();
