@@ -627,7 +627,12 @@ const eventOf = (verdict: Verdict["verdict"]): ReviewEvent => {
 // keeps what the review saw and who gave it in which session (ADR 21,
 // decision 7), which the merge gate reads and a re-review resumes by; it is
 // written again over a record at the same phase that keeps another review,
-// such as a recheck's earlier round.
+// such as a recheck's earlier round. The record is written first (#698): a
+// persona's review on GitHub always finds its run's record there, so the
+// author's address-review source never takes it for a person's, which no run
+// records, and reconciles it as an observer's. A post that then fails for
+// good leaves the record with no review behind it, which changesByRecord
+// holds; a retry finds this review's record and posts without writing again.
 const postReview = (
   pull: PullRequest,
   review: Phases.Reviewed,
@@ -636,15 +641,6 @@ const postReview = (
 ) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const event = eventOf(verdict.verdict);
-    yield* github.review(pull.number, {
-      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}`,
-      commitSha: pull.headSha,
-      comments: verdict.comments,
-      event,
-    });
-    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`.`);
-
     const item = Phases.pullRequestItem(pull.number);
     const to = phaseAfter(verdict.verdict);
 
@@ -659,6 +655,14 @@ const postReview = (
     );
 
     yield* Phases.record(item, to, Phases.reviewData(review), { always: !recorded });
+
+    yield* github.review(pull.number, {
+      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}`,
+      commitSha: pull.headSha,
+      comments: verdict.comments,
+      event: eventOf(verdict.verdict),
+    });
+    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`.`);
   });
 
 const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>

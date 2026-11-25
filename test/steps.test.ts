@@ -279,6 +279,51 @@ describe("the review steps", () => {
         expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
       }),
   );
+
+  // #698: the review is on GitHub only once the run has recorded its phase,
+  // so the author's address-review source never finds a persona's review
+  // asking for changes on a record still before changes-asked, which it would
+  // reconcile as an observer's before the run records it as its own.
+  effect("Review.round records the phase its review leaves before it posts the review", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("request-changes");
+      fake.people.me = "data-quail";
+      fake.recordPhase(`pr-${PULL}`, "review-asked");
+      const atPost: Array<ReturnType<ReturnType<typeof fake.records>["get"]>> = [];
+      fake.reviewing.hooks.push(() => {
+        atPost.push(fake.records().get(`pr-${PULL}`));
+      });
+
+      expect((yield* runToEnd(fake, "round")).status).toBe("done");
+
+      expect(atPost).toHaveLength(1);
+      expect(atPost[0]).toMatchObject({
+        phase: "changes-asked",
+        data: Option.some({ review: { sha: HEAD, round: 1, reviewer: "data-quail" } }),
+      });
+      // The run's record is the only one: nothing wrote changes-asked again.
+      expect(fake.records().get(`pr-${PULL}`)).toBe(atPost[0]);
+    }),
+  );
+
+  // What the observer is for: a person's review, which no run will record.
+  effect(
+    "a person's review asking for changes on the head still moves a review-asked record on, as an observer",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.recordPhase(`pr-${PULL}`, "review-asked");
+        fake.submitted.push({ author: "a-person", state: "CHANGES_REQUESTED", commitSha: HEAD });
+
+        const items = yield* triggered(fake, Review.changesToAddress);
+
+        expect(items.map((found) => found.key)).toEqual([`pr-${PULL}-changes-asked-v2`]);
+        expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
+          phase: "changes-asked",
+          by: "observer:review.changesRequested",
+        });
+      }),
+  );
 });
 
 describe("agents per role", () => {
