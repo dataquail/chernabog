@@ -1,57 +1,28 @@
 // The sandbox driver (ADR 22, decision 7): the domain layer over the real CLI
 // and daemon in openSandbox (test/acceptance/sandbox.ts), against the fake
 // GitHub (test/acceptance/fake-github.ts) and the fake gh, claude and codex in
-// test/fakebin/.
+// test/fakebin/. How it sets the machine up, acts and reads the world is
+// what it shares with the ci driver (on-sandbox.ts).
 //
-// A scenario's personas and reviewer pool are machine and repo config, so the
-// driver opens the sandbox and starts the daemon only when the scenario first
-// acts or looks, as the in-process driver makes its fake. Each persona runs
-// the cast's flows (cast.ts) every two seconds and no others, with Claude
-// writing and Codex reviewing, as test/acceptance/review.test.ts sets them up.
-// Closing the scenario's scope stops the daemon this driver started, and the
-// fake GitHub.
+// The driver starts the daemon only when the scenario first acts or looks,
+// as the in-process driver makes its fake, and each persona's cast flows run
+// every two seconds. Closing the scenario's scope stops the daemon this
+// driver started, and the fake GitHub.
 //
-// What it sees is the fake GitHub's records, the pushes the bare repo took
-// (by the persona whose token pushed), and the fake agents' calls (by the
-// persona whose token they ran with, and the branch or commit they worked
-// on), read into the domain's terms by the rules in cast.ts. Each is in the
-// sandbox's one order of events, its event log, which the fake GitHub, the
-// bare repo and the fake agents each append to as things happen: an event's
-// sequence is its line there (test/acceptance/sandbox.ts). A wait
-// looks again every POLL_MS for up to WAIT_MS; settling waits until the
-// daemon, asked for its status, has nothing running or queued and each of
-// its flows has ticked IDLE_TICKS times with no run starting or ending.
+// A wait looks again every POLL_MS for up to WAIT_MS; settling waits until
+// the daemon, asked for its status, has nothing running or queued and each
+// of its flows has ticked IDLE_TICKS times with no run starting or ending.
 
-import type { Json } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Order from "effect/Order";
 import * as Schedule from "effect/Schedule";
 
 import type { DaemonStatus } from "../../../src/interface/daemon/daemon.protocol.ts";
-import type { FakePull } from "../../acceptance/fake-github.ts";
-import { type AgentSession, openSandbox, type Sandbox } from "../../acceptance/sandbox.ts";
-import {
-  type Domain,
-  DomainFailed,
-  type Login,
-  type PullRequestSeen,
-  type PushSeen,
-  type Sequenced,
-  type World,
-} from "../domain.ts";
+import type { Sandbox } from "../../acceptance/sandbox.ts";
+import type { DomainFailed } from "../domain.ts";
 import type { Driver } from "../runner.ts";
-import {
-  A_PERSON,
-  answersAReview,
-  flowsOf,
-  handsOff,
-  issueOfBranch,
-  reasonsOf,
-  RECIPES,
-  verdictOf,
-} from "./cast.ts";
+import { failed, openOn, worldOf } from "./on-sandbox.ts";
 
 // How often a wait looks again, and how long it waits.
 const POLL_MS = 250;
@@ -60,58 +31,13 @@ const WAIT_MS = 90_000;
 // How many ticks of every flow, with nothing running, make the machine settled.
 const IDLE_TICKS = 2;
 
-// A persona's flows run every two seconds; the ones it doesn't run are off.
+// A persona's cast flows run every two seconds.
 const OFTEN = { schedule: "*/2 * * * * *" };
-const OFF = { enabled: false };
-
-const NO_COMMIT = /^0+$/;
 
 type Running = {
   readonly sandbox: Sandbox;
   daemon: Option.Option<ReturnType<Sandbox["cli"]>>;
 };
-
-// What a scenario set up, and the sandbox once it starts to act.
-type Machine = {
-  personas: ReadonlyArray<Login>;
-  pool: ReadonlyArray<Login>;
-  disputing: Set<Login>;
-  running: Option.Option<Running>;
-  // How many pull requests people opened, to name each one's branch.
-  opened: number;
-};
-
-const failed = (message: string) => new DomainFailed({ message });
-
-const flowsFor = (login: Login, pool: ReadonlyArray<Login>): Readonly<Record<string, Json>> =>
-  Object.fromEntries(
-    RECIPES.map((name) => [
-      name,
-      Option.match(
-        Option.liftPredicate(name, (found) => flowsOf(login, pool).includes(found)),
-        {
-          onNone: () => OFF,
-          onSome: () => OFTEN,
-        },
-      ),
-    ]),
-  );
-
-// The machine as the scenario set it up, reviews by Codex as review.test.ts has them.
-const sandboxOf = (machine: Machine) =>
-  openSandbox(
-    {
-      reviewers: [...machine.pool],
-      flows: { review: { agent: "codex" }, "re-review": { agent: "codex" } },
-    },
-    {
-      github: [...machine.personas],
-      personas: [...machine.personas],
-      personaFlows: Object.fromEntries(
-        machine.personas.map((login) => [login, flowsFor(login, machine.pool)]),
-      ),
-    },
-  );
 
 // Trusts the repo's .chernabog/ and starts the daemon, as a person does.
 const daemonUp = (running: Running) =>
@@ -135,251 +61,13 @@ const daemonUp = (running: Running) =>
     });
   });
 
-// The sandbox and its daemon, started the first time a scenario acts or
-// looks: it is the machine's, never another, however often it is asked for.
-const runningOf = (machine: Machine) =>
-  Effect.suspend(() =>
-    Option.match(machine.running, {
-      onSome: Effect.succeed,
-      onNone: () =>
-        Effect.gen(function* () {
-          const sandbox = yield* Effect.try({
-            try: () => sandboxOf(machine),
-            catch: (error) => failed(`the sandbox didn't open: ${String(error)}`),
-          });
-
-          const running: Running = { sandbox, daemon: Option.none() };
-          machine.running = Option.some(running);
-
-          for (const login of machine.disputing) {
-            sandbox.disagreeAs(login);
-          }
-
-          yield* daemonUp(running);
-
-          return running;
-        }),
-    }),
-  );
-
-// Stops the daemon this driver started, only it, and the fake GitHub.
+// Stops the daemon this driver started, only it.
 const stopped = ({ daemon, sandbox }: Running) =>
   Effect.forEach(
     Option.toArray(daemon),
     (child) => Effect.promise(() => sandbox.stopDaemon(child)),
-    {
-      discard: true,
-    },
-  ).pipe(Effect.andThen(Effect.promise(() => sandbox.github.stop())));
-
-// Setting up the machine comes before anything happens on it.
-const beforeActing = (machine: Machine, what: string, change: () => void) =>
-  Option.match(machine.running, {
-    onNone: () => Effect.sync(change),
-    onSome: () => Effect.fail(failed(`${what} must be set up before anything happens`)),
-  });
-
-const added = (known: ReadonlyArray<Login>, logins: ReadonlyArray<Login>) => [
-  ...known,
-  ...logins.filter((login) => !known.includes(login)),
-];
-
-type GitHub = Sandbox["github"];
-
-const pullsOf = (github: GitHub) =>
-  Arr.sort(
-    [...github.pulls.values()],
-    Order.mapInput(Order.Number, (pull: FakePull) => pull.number),
+    { discard: true },
   );
-
-// A pull request's head commit now, or the one it merged at once its branch is gone.
-const headOf = (github: GitHub, pull: FakePull) =>
-  Option.getOrElse(
-    Option.orElse(github.refSha(`refs/heads/${pull.head}`), () =>
-      Option.fromUndefinedOr(pull.mergedHead),
-    ),
-    () => "",
-  );
-
-const pullRequestSeen = (github: GitHub, pull: FakePull): PullRequestSeen => ({
-  number: pull.number,
-  author: pull.author,
-  issue: issueOfBranch(pull.head),
-  head: headOf(github, pull),
-  requested: [...pull.reviewers],
-  mergedBy: Option.map(
-    Arr.findLast(github.merges, (merge) => merge.number === pull.number),
-    (merge) => merge.by,
-  ),
-});
-
-// The pull request whose head is `branch`, which work on it before it opened belongs to.
-const pullOn = (pulls: ReadonlyArray<FakePull>, branch: string) =>
-  Arr.findLast(pulls, (pull) => pull.head === branch);
-
-const bySequence = Order.mapInput(Order.Number, (event: Sequenced) => event.sequence);
-
-// Where each of the fake GitHub's records is in the event log, by what it
-// said it recorded (fake-github.ts' Recorded).
-type Sequences = ReadonlyMap<string, number>;
-
-type Logged = ReturnType<Sandbox["events"]>;
-
-// The records the event log has a place for, in its order: one it doesn't
-// have yet was made as the log was read, and the next look sees it.
-const sequenced = <A>(
-  sequences: Sequences,
-  found: ReadonlyArray<{ readonly recorded: string; readonly seen: A }>,
-): ReadonlyArray<A & Sequenced> =>
-  Arr.sort(
-    found.flatMap(({ recorded, seen }) =>
-      Option.toArray(Option.fromUndefinedOr(sequences.get(recorded))).map((sequence) => ({
-        ...seen,
-        sequence,
-      })),
-    ),
-    bySequence,
-  );
-
-const reviewsSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>, sequences: Sequences) =>
-  sequenced(
-    sequences,
-    pulls.flatMap((pull) =>
-      github.reviewsOf(pull.number).map((found) => ({
-        recorded: `review ${found.id}`,
-        seen: {
-          pullRequest: pull.number,
-          reviewer: found.author,
-          verdict: verdictOf(found.state),
-          head: found.commit_id,
-          lineComments: found.comments.length,
-        },
-      })),
-    ),
-  );
-
-const repliesSeen = (github: GitHub, pulls: ReadonlyArray<FakePull>, sequences: Sequences) =>
-  sequenced(
-    sequences,
-    pulls.flatMap((pull) =>
-      github
-        .commentsOn(pull.number)
-        .filter((comment) => answersAReview(comment.body))
-        .map((comment) => ({
-          recorded: `comment ${comment.id}`,
-          seen: {
-            pullRequest: pull.number,
-            author: comment.user.login,
-            reasons: reasonsOf(comment.body),
-          },
-        })),
-    ),
-  );
-
-// Each push to a pull request's branch, before it opened too.
-const pushesSeen = (logged: Logged, pulls: ReadonlyArray<FakePull>) =>
-  logged.pushes
-    .filter((push) => push.ref.startsWith("refs/heads/") && !NO_COMMIT.test(push.after))
-    .flatMap((push) =>
-      Option.toArray(pullOn(pulls, push.ref.slice("refs/heads/".length))).map((pull) => ({
-        pullRequest: pull.number,
-        by: Option.getOrElse(push.by, () => A_PERSON),
-        head: push.after,
-        sequence: push.sequence,
-      })),
-    );
-
-// The pull request an agent call worked on: the one on its branch, or, on no
-// branch (as a review's worktree is), the one whose branch was at its commit.
-const pullOfCall = (
-  github: GitHub,
-  pulls: ReadonlyArray<FakePull>,
-  pushes: ReadonlyArray<PushSeen>,
-  call: AgentSession,
-) =>
-  Option.orElse(pullOn(pulls, call.branch), () =>
-    Arr.findLast(
-      pulls,
-      (pull) =>
-        headOf(github, pull) === call.head ||
-        pushes.some((push) => push.pullRequest === pull.number && push.head === call.head),
-    ),
-  );
-
-// Each agent call made as a persona on a pull request, before it opened too.
-const sessionsSeen = (
-  sandbox: Sandbox,
-  logged: Logged,
-  pulls: ReadonlyArray<FakePull>,
-  pushes: ReadonlyArray<PushSeen>,
-) =>
-  logged.agentSessions.flatMap((call) =>
-    Option.toArray(
-      Option.all({
-        persona: call.persona,
-        pull: pullOfCall(sandbox.github, pulls, pushes, call),
-      }).pipe(
-        Option.map(({ persona, pull }) => ({
-          pullRequest: pull.number,
-          persona,
-          session: call.session,
-          resumed: call.call === "resume",
-          sequence: call.sequence,
-        })),
-      ),
-    ),
-  );
-
-const worldOf = ({ sandbox }: Running): World => {
-  const { github } = sandbox;
-  // The log first, and once: what it has is a prefix of the order, and a
-  // record made after it is left for the next look rather than seen out of
-  // its order.
-  const logged = sandbox.events();
-  const sequences = logged.records;
-  const pulls = pullsOf(github);
-  const numbers = new Set(pulls.map((pull) => pull.number));
-  const pushes = pushesSeen(logged, pulls);
-
-  return {
-    issues: Arr.sort(
-      [...github.issues.values()],
-      Order.mapInput(Order.Number, (issue: { readonly number: number }) => issue.number),
-    ).map((issue) => ({ number: issue.number, labels: [...issue.labels] })),
-    pullRequests: pulls.map((pull) => pullRequestSeen(github, pull)),
-    reviews: reviewsSeen(github, pulls, sequences),
-    replies: repliesSeen(github, pulls, sequences),
-    pushes,
-    reviewRequests: sequenced(
-      sequences,
-      github.reviewRequests.flatMap((asked, index) =>
-        asked.reviewers.map((reviewer) => ({
-          recorded: `review-request ${index}`,
-          seen: { pullRequest: asked.number, reviewer, by: asked.by },
-        })),
-      ),
-    ),
-    handOffs: sequenced(
-      sequences,
-      github.labelled.flatMap((found, index) =>
-        Option.toArray(
-          Option.liftPredicate(
-            { recorded: `label ${index}`, seen: { pullRequest: found.number } },
-            () => numbers.has(found.number) && handsOff(found.label),
-          ),
-        ),
-      ),
-    ),
-    sessions: sessionsSeen(sandbox, logged, pulls, pushes),
-    merges: sequenced(
-      sequences,
-      github.merges.map((found, index) => ({
-        recorded: `merge ${index}`,
-        seen: { pullRequest: found.number, by: found.by },
-      })),
-    ),
-  };
-};
 
 // The end of the daemon's log, for a failure to show what it did.
 const logTail = ({ sandbox }: Running) =>
@@ -516,73 +204,21 @@ const settle = (running: Running) =>
     );
   });
 
-const domainOver = (machine: Machine): Domain => ({
-  personas: (logins) =>
-    beforeActing(machine, "personas", () => {
-      machine.personas = added(machine.personas, logins);
-    }),
-  reviewForTheTeam: (logins) =>
-    beforeActing(machine, "the reviewer pool", () => {
-      machine.pool = added(machine.pool, logins);
-    }),
-  willDispute: (author) =>
-    Effect.sync(() => {
-      machine.disputing.add(author);
-
-      for (const { sandbox } of Option.toArray(machine.running)) {
-        sandbox.disagreeAs(author);
-      }
-    }),
-  fileIssue: (labels) =>
-    Effect.map(runningOf(machine), ({ sandbox }) => sandbox.github.addIssue("Filed work", labels)),
-  openPullRequest: (author) =>
-    Effect.flatMap(runningOf(machine), ({ sandbox }) =>
-      Effect.tryPromise({
-        try: () => {
-          machine.opened += 1;
-
-          return sandbox.openPullAs(author, `person-${machine.opened}`);
-        },
-        catch: (error) => failed(`${author} couldn't open a pull request: ${String(error)}`),
-      }),
-    ),
-  askToReview: (pullRequest, reviewers) =>
-    Effect.flatMap(runningOf(machine), ({ sandbox }) =>
-      Effect.try({
-        try: () => {
-          sandbox.github.requestReview(pullRequest, reviewers, A_PERSON);
-        },
-        catch: () => failed(`there is no pull request #${pullRequest} to ask about`),
-      }),
-    ),
-  world: Effect.map(runningOf(machine), worldOf),
-  waitUntil: (description, find) =>
-    Effect.flatMap(runningOf(machine), (running) =>
-      pollFor(
-        running,
-        () => Effect.sync(() => find(worldOf(running))),
-        () => `waited ${WAIT_MS / 1000}s for ${description}`,
-      ),
-    ),
-  settle: Effect.flatMap(runningOf(machine), settle),
-});
-
 export const sandbox: Driver = {
   name: "sandbox",
-  open: Effect.gen(function* () {
-    const machine: Machine = {
-      personas: [],
-      pool: [],
-      disputing: new Set(),
-      running: Option.none(),
-      opened: 0,
-    };
-
-    yield* Effect.addFinalizer(() =>
-      Effect.forEach(Option.toArray(machine.running), stopped, { discard: true }),
-    );
-
-    return domainOver(machine);
+  open: openOn<Running>({
+    on: OFTEN,
+    repoConfig: {},
+    make: (opened) => ({ sandbox: opened, daemon: Option.none() }),
+    start: daemonUp,
+    stop: stopped,
+    waitUntil: (running, description, find) =>
+      pollFor(
+        running,
+        () => Effect.sync(() => find(worldOf(running.sandbox))),
+        () => `waited ${WAIT_MS / 1000}s for ${description}`,
+      ),
+    settle,
   }),
   timeout: 240_000,
 };
