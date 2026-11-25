@@ -6,7 +6,14 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { effect } from "../../test/effect-test.ts";
-import { FileTelemetry, telemetryOfArgs } from "./telemetry.ts";
+import { formatBytes } from "../kernel/spoke-bounds.value-object.ts";
+import { TELEMETRY_RETENTION } from "./retention.ts";
+import {
+  dayCapping,
+  FileTelemetry,
+  type FileTelemetryOptions,
+  telemetryOfArgs,
+} from "./telemetry.ts";
 
 // What a test reads of a line, decoded as any reader of the files would.
 const TelemetryLine = Schema.Struct({
@@ -334,6 +341,241 @@ describe("FileTelemetry", () => {
       yield* traced(dir, flooding);
 
       expect(yield* allRecords(dir)).toHaveLength(200);
+    }),
+  );
+
+  // Runs `program` under the telemetry layer as `options` set it up.
+  const tracedWith = <A, E, R>(options: FileTelemetryOptions, program: Effect.Effect<A, E, R>) =>
+    program.pipe(Effect.provide(FileTelemetry.layer(options)));
+
+  // A process with no bound of its own (the daemon or a CLI call), its day
+  // capped at `dayCap`, saying it stopped on `warnings` and `notices`.
+  const capped = <E, R>(
+    dir: string,
+    dayCap: number,
+    program: Effect.Effect<void, E, R>,
+    said: { warnings: Array<string>; notices: Array<string> } = { warnings: [], notices: [] },
+  ) =>
+    tracedWith(
+      {
+        dir,
+        process: "daemon",
+        dayCap,
+        warn: (line) => said.warnings.push(line),
+        notice: (line) => Effect.sync(() => said.notices.push(line)),
+      },
+      program,
+    );
+
+  // The text of every file in one day's folder, by name.
+  const folder = (dir: string, day: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const texts: Record<string, string> = {};
+
+      for (const name of (yield* fs.readDirectory(`${dir}/${day}`)).toSorted()) {
+        texts[name] = yield* fs.readFileString(`${dir}/${day}/${name}`);
+      }
+
+      return texts;
+    });
+
+  const ownFile = `daemon-${process.pid}.jsonl`;
+
+  const linesOf = (text: string) => text.split("\n").filter((line) => line.length > 0);
+
+  // The lines of this process's own file in a day's folder; none without one.
+  const ownLines = (texts: Readonly<Record<string, string>>) =>
+    Option.match(Option.fromUndefinedOr(texts[ownFile]), {
+      onNone: () => [],
+      onSome: linesOf,
+    });
+
+  // Logs a line a second, so a long-running process's flushes each take one.
+  const aLineASecond = (count: number, size: number) =>
+    Effect.forEach(
+      Array.from({ length: count }, (_, at) => at),
+      (at) =>
+        Effect.log(`line ${at} ${"x".repeat(size)}`).pipe(
+          Effect.andThen(TestClock.adjust("1 second")),
+        ),
+      { discard: true },
+    );
+
+  effect("a day past its cap stops being written, and says so once, on stderr and the log", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+      const said = { warnings: new Array<string>(), notices: new Array<string>() };
+      yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+
+      yield* capped(dir, 2_000, aLineASecond(20, 200), said);
+
+      const texts = yield* folder(dir, "2026-11-22");
+      const written = ownLines(texts);
+
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.length).toBeLessThan(20);
+      // What it wrote stays within the cap.
+      expect(Buffer.byteLength(String(texts[ownFile]))).toBeLessThanOrEqual(2_000);
+      expect(said.warnings).toHaveLength(1);
+      expect(said.warnings[0]).toContain("writes no more telemetry until the next UTC day");
+      expect(said.notices).toHaveLength(1);
+      expect(said.notices[0]).toContain("writes no more telemetry until the next UTC day");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("what other processes wrote to the day counts toward its cap", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      const said = { warnings: new Array<string>(), notices: new Array<string>() };
+      yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+      yield* fs.makeDirectory(`${dir}/2026-11-22`, { recursive: true });
+      yield* fs.writeFileString(`${dir}/2026-11-22/cli-1.jsonl`, "y".repeat(1_900));
+
+      yield* capped(dir, 2_000, aLineASecond(3, 200), said);
+
+      expect(Object.keys(yield* folder(dir, "2026-11-22"))).toEqual(["cli-1.jsonl"]);
+      expect(said.notices).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect(
+    "measures the folder when it first sees a day and once a minute after, its own writes added between",
+    () =>
+      Effect.gen(function* () {
+        // What other processes' files in the folder hold, as a stat would find it.
+        let others = 0;
+        const measured: Array<string> = [];
+        const stopped: Array<[string, number]> = [];
+        yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+
+        const admit = dayCapping({
+          cap: 1_000,
+          measure: (day) =>
+            Effect.sync(() => {
+              measured.push(day);
+
+              return others;
+            }),
+          stopped: (day, held) => Effect.sync(() => stopped.push([day, held])),
+        });
+
+        // Lines of 100 bytes each, as written with their newline.
+        const lines = (count: number) => Array.from({ length: count }, () => "x".repeat(99));
+
+        expect(yield* admit("2026-11-22", lines(2))).toHaveLength(2);
+        // Another process writes beside it; within the minute, this one goes by
+        // what it measured and what it wrote since.
+        others = 850;
+        expect(yield* admit("2026-11-22", lines(1))).toHaveLength(1);
+        expect(measured).toEqual(["2026-11-22"]);
+
+        // A minute on, it measures again: 850 and one line fit, the next doesn't.
+        yield* TestClock.adjust("1 minute");
+        expect(yield* admit("2026-11-22", lines(2))).toHaveLength(1);
+        expect(measured).toEqual(["2026-11-22", "2026-11-22"]);
+        expect(stopped).toEqual([["2026-11-22", 1_050]]);
+
+        // Stopped, it measures nothing more that day and says nothing again.
+        yield* TestClock.adjust("1 minute");
+        expect(yield* admit("2026-11-22", lines(1))).toEqual([]);
+        expect(measured).toHaveLength(2);
+        expect(stopped).toHaveLength(1);
+
+        // The next day is measured afresh and written.
+        others = 0;
+        expect(yield* admit("2026-11-23", lines(3))).toHaveLength(3);
+        expect(measured).toEqual(["2026-11-22", "2026-11-22", "2026-11-23"]);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("a capped day leaves the next UTC day to be written", () =>
+    Effect.gen(function* () {
+      const dir = yield* scratch;
+      const said = { warnings: new Array<string>(), notices: new Array<string>() };
+      yield* TestClock.setTime(Date.parse("2026-11-22T23:59:50Z"));
+
+      yield* capped(
+        dir,
+        1_000,
+        Effect.gen(function* () {
+          yield* aLineASecond(5, 300);
+          yield* TestClock.setTime(Date.parse("2026-11-23T00:00:30Z"));
+          yield* aLineASecond(2, 100);
+        }),
+        said,
+      );
+
+      const capDay = ownLines(yield* folder(dir, "2026-11-22"));
+      const nextDay = ownLines(yield* folder(dir, "2026-11-23"));
+
+      expect(capDay.length).toBeLessThan(5);
+      expect(nextDay).toHaveLength(2);
+      expect(said.notices).toHaveLength(1);
+      expect(said.notices[0]).toContain("2026-11-22");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("with no day cap given, today's folder is held to the retention policy's", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      const notices: Array<string> = [];
+      yield* TestClock.setTime(Date.parse("2026-11-22T12:00:00Z"));
+      yield* fs.makeDirectory(`${dir}/2026-11-22`, { recursive: true });
+      // A sparse file, so the test writes next to nothing.
+      yield* fs.writeFileString(`${dir}/2026-11-22/cli-1.jsonl`, "");
+      yield* fs.truncate(`${dir}/2026-11-22/cli-1.jsonl`, TELEMETRY_RETENTION.maxBytes - 10);
+
+      yield* tracedWith(
+        {
+          dir,
+          process: "daemon",
+          warn: () => {},
+          notice: (line) => Effect.sync(() => notices.push(line)),
+        },
+        aLineASecond(1, 100),
+      );
+
+      expect(Object.keys(yield* folder(dir, "2026-11-22"))).toEqual(["cli-1.jsonl"]);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain(formatBytes(TELEMETRY_RETENTION.maxBytes));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  effect("a spoke keeps its own bound, whatever today's folder holds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      const today = new Date().toISOString().slice(0, 10);
+      const warnings: Array<string> = [];
+      yield* fs.makeDirectory(`${dir}/${today}`, { recursive: true });
+      // Far past any day cap a test could give.
+      yield* fs.writeFileString(`${dir}/${today}/daemon-1.jsonl`, "y".repeat(50_000));
+
+      yield* tracedWith(
+        {
+          dir,
+          process: "spoke-run-4",
+          limit: Option.some(10_000),
+          dayCap: 1_000,
+          warn: (line) => warnings.push(line),
+        },
+        flooding,
+      );
+
+      const text = String((yield* spokeFiles(dir, "run-4"))[0]?.text);
+      const lines = linesOf(text);
+
+      // It writes to its bound, as a spoke without a day cap does, and says
+      // only that it stopped there.
+      expect(Buffer.byteLength(text)).toBeGreaterThan(10_000);
+      expect(String((yield* decodeLine(String(lines.at(-1)))).message)).toContain(
+        "telemetry stopped at its bound of 10 kB",
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("reached its bound");
     }),
   );
 });

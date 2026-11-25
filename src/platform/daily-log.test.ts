@@ -101,4 +101,37 @@ describe("dailyLogWriting", () => {
       }),
     ),
   );
+
+  effect(
+    "two in one process asking for the same log share one writer, so neither turns it over by a stale day",
+    () =>
+      onTestClock(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dir = yield* scratch;
+          yield* fs.writeFileString(`${dir}/daemon.log`, "yesterday\n");
+          yield* fs.utimes(
+            `${dir}/daemon.log`,
+            new Date("2026-11-24T12:00:00Z"),
+            new Date("2026-11-24T12:00:00Z"),
+          );
+          yield* at("2026-11-25T09:00:00Z");
+
+          // The telemetry layer's, made first, then the daemon's own.
+          const telemetry = yield* dailyLogWriting(`${dir}/daemon.log`);
+          const daemon = yield* dailyLogWriting(`${dir}/daemon.log`);
+
+          yield* daemon.log("started");
+          yield* at("2026-11-25T10:00:00Z");
+          yield* telemetry.log("telemetry: capped");
+
+          expect(telemetry).toBe(daemon);
+          expect(yield* entries(dir)).toEqual(["daemon.2026-11-24.log", "daemon.log"]);
+          expect(yield* read(`${dir}/daemon.2026-11-24.log`)).toBe("yesterday\n");
+          expect(yield* read(`${dir}/daemon.log`)).toBe(
+            "2026-11-25T09:00:00.000Z started\n2026-11-25T10:00:00.000Z telemetry: capped\n",
+          );
+        }),
+      ),
+  );
 });

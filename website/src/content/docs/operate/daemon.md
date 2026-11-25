@@ -97,7 +97,7 @@ A run's log is one line an entry, `<time> <text>` as `chernabog logs` prints it.
 
 The daemon keeps these to a retention policy, sweeping when it starts and every 24 hours:
 
-- **Telemetry:** a day folder goes once it's more than 30 days old, and then the oldest go while the rest hold more than 500 MB. Today's is never removed.
+- **Telemetry:** a day folder goes once it's more than 30 days old, and then the oldest go while the rest hold more than 500 MB. Today's is never removed, but it's held to 500 MB as it's written: past that, the daemon or a CLI command stops writing telemetry until the next UTC day, and the daemon says so in `daemon.log`. A run's own telemetry is held to its spoke's bound instead.
 - **Run logs:** a run's log goes 30 days after the run finished. A run still running, or parked waiting, keeps its log; a log with no run in `state.db` goes 30 days after it was last written.
 - **`daemon.log`:** the daemon moves it to `daemon.<YYYY-MM-DD>.log` at its first write of each new UTC day, and the sweep deletes those older than 30 days.
 

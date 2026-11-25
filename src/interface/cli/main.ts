@@ -44,6 +44,7 @@ import {
   syncLabels,
 } from "../../modules/runs/runs.platform.ts";
 import { trustEndpoints } from "../../modules/trust/interface/cli/trust.endpoint-groups.ts";
+import { dailyLogWriting } from "../../platform/daily-log.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -503,10 +504,21 @@ const TelemetryLive = Layer.unwrap(
     // The arguments the command line is parsed from, as Command.run reads them.
     const args = yield* (yield* Stdio.Stdio).args;
 
+    const paths = homePaths(root);
     // Which process this is, for the name of its telemetry files: the
     // daemon, one run's spoke, limited to its bound, or a CLI call (every
     // other command, the TUI and the children runs start).
-    return FileTelemetry.layer({ dir: homePaths(root).telemetry, ...telemetryOfArgs(args) });
+    const telemetry = telemetryOfArgs(args);
+
+    // The daemon also says in daemon.log, through its one writer of it, when
+    // it stops writing a day's telemetry for the day's cap (#701).
+    if (telemetry.process === "daemon") {
+      const { log } = yield* dailyLogWriting(paths.daemonLog);
+
+      return FileTelemetry.layer({ dir: paths.telemetry, ...telemetry, notice: log });
+    }
+
+    return FileTelemetry.layer({ dir: paths.telemetry, ...telemetry });
   }),
 );
 

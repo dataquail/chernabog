@@ -14,6 +14,15 @@
 // its run's files may hold, summed over every day folder. At the limit it
 // writes one last line saying it stopped, and drops everything after, so no
 // flood grows a run's telemetry past its bound on any day.
+//
+// A process with no such bound (the daemon, a CLI call) is held instead to a
+// cap on its day's folder, which the retention sweep never touches
+// (TELEMETRY_RETENTION.maxBytes, 500 MB): once the folder, every process's
+// files in it counted, would pass the cap, it writes nothing more to that
+// day, says so once (on stderr, and on `notice`: the daemon's daemon.log),
+// and writes again on the next UTC day. It measures the folder when it first
+// writes a day and again at most once a minute, adding its own writes
+// between, so a write never costs a stat of the folder.
 
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -29,6 +38,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Tracer from "effect/Tracer";
 
 import { formatBytes } from "../kernel/spoke-bounds.value-object.ts";
+import { TELEMETRY_RETENTION } from "./retention.ts";
 
 // Which process writes: the daemon, a CLI call, or one run's spoke.
 export type TelemetryProcess = "daemon" | "cli" | `spoke-${string}`;
@@ -40,6 +50,13 @@ export type FileTelemetryOptions = {
   // The bytes every file of this process's name may hold, over every day
   // folder: a spoke's bound. None for no limit.
   readonly limit?: Option.Option<number>;
+  // The bytes a day's folder may hold, every process's files counted, before
+  // a process with no limit stops writing it: TELEMETRY_RETENTION's cap by
+  // default. A process with a limit is held to that alone.
+  readonly dayCap?: number;
+  // Where a process also says it stopped writing a day, besides `warn`: the
+  // daemon's daemon.log. Nowhere else by default.
+  readonly notice?: (line: string) => Effect.Effect<void>;
   // Where the one warning about a failed write goes; stderr by default.
   readonly warn?: (line: string) => void;
 };
@@ -85,6 +102,14 @@ type SpanStatus = "ok" | "error" | "unfinished";
 type Pending = { readonly day: string; readonly line: string };
 
 const FLUSH_EVERY = "1 second";
+
+// How long a measure of a day's folder stands before it's taken again, so
+// other processes' writes since are counted.
+const MEASURE_EVERY_MS = 60_000;
+
+// What a day's folder held when last measured, with this process's writes
+// since, and when that was.
+type DayMeasure = { readonly day: string; readonly held: number; readonly at: number };
 
 const NANOS_PER_MILLI = BigInt(1_000_000);
 
@@ -144,6 +169,60 @@ class RecordedSpan extends Tracer.NativeSpan {
   }
 }
 
+// Holds each day's folder to `cap` bytes, every process's files in it
+// counted: answers which of the lines this process would write to `day` still
+// fit, and calls `stopped`, once, for the day the first doesn't, after which
+// it keeps none of that day's. It measures the folder when it first sees a
+// day and again once a measure is a minute old (by the clock), adding the
+// bytes it keeps in between, so a write costs no stat of the folder.
+export const dayCapping = (options: {
+  readonly cap: number;
+  readonly measure: (day: string) => Effect.Effect<number>;
+  readonly stopped: (day: string, held: number) => Effect.Effect<void>;
+}) => {
+  let measure = Option.none<DayMeasure>();
+  // The days this process stopped writing, for being past their cap.
+  const cappedDays = new Set<string>();
+
+  return (day: string, lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      if (cappedDays.has(day)) {
+        return [];
+      }
+
+      const now = yield* Clock.currentTimeMillis;
+
+      const standing = Option.filter(
+        measure,
+        (known) => known.day === day && now - known.at < MEASURE_EVERY_MS,
+      );
+
+      const at = Option.match(standing, { onNone: () => now, onSome: (known) => known.at });
+
+      let held = yield* Option.match(standing, {
+        onNone: () => options.measure(day),
+        onSome: (known) => Effect.succeed(known.held),
+      });
+
+      const kept: Array<string> = [];
+
+      for (const line of lines) {
+        if (held + bytesOf(line) > options.cap) {
+          cappedDays.add(day);
+          yield* options.stopped(day, held + bytesOf(line));
+          break;
+        }
+
+        kept.push(line);
+        held += bytesOf(line);
+      }
+
+      measure = Option.some({ day, held, at });
+
+      return kept;
+    });
+};
+
 const make = (options: FileTelemetryOptions) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -159,6 +238,14 @@ const make = (options: FileTelemetryOptions) =>
     // there at the first write; none until then, or with no limit.
     let used = Option.none<number>();
     let stopped = false;
+
+    // A day's cap, for a process with no limit of its own.
+    const dayCap = Option.match(limit, {
+      onSome: () => Option.none<number>(),
+      onNone: () => Option.some(options.dayCap ?? TELEMETRY_RETENTION.maxBytes),
+    });
+
+    const notice = options.notice ?? (() => Effect.void);
 
     const warnOnce = (line: string) => {
       if (!warned) {
@@ -302,6 +389,46 @@ const make = (options: FileTelemetryOptions) =>
         return kept;
       });
 
+    // What every file in a day's folder holds now; nothing for a folder
+    // that isn't there yet.
+    const folderBytes = (folder: string) =>
+      Effect.gen(function* () {
+        let total = 0;
+
+        for (const name of yield* fs.readDirectory(folder)) {
+          const file = yield* fs.stat(`${folder}/${name}`).pipe(
+            Effect.map((info) => Option.liftPredicate(info, ({ type }) => type === "File")),
+            Effect.orElseSucceed(() => Option.none<FileSystem.File.Info>()),
+          );
+
+          total += Option.match(file, { onNone: () => 0, onSome: ({ size }) => Number(size) });
+        }
+
+        return total;
+      }).pipe(Effect.orElseSucceed(() => 0));
+
+    // Says once that this process stopped writing `day`, on stderr and
+    // `notice`. Saying so never fails the flush it's said in.
+    const sayCapped = (day: string, held: number, cap: number) =>
+      Effect.suspend(() => {
+        const line = `telemetry: ${options.dir}/${day} holds ${formatBytes(held)}, and a day's may hold ${formatBytes(cap)}; this ${options.process} (pid ${process.pid}) writes no more telemetry until the next UTC day`;
+        warn(`chernabog: ${line}`);
+
+        return notice(line).pipe(Effect.ignoreCause);
+      });
+
+    // The lines that fit within the day's cap, its folder counted whole; all
+    // of them for a process with a limit, which withinLimit holds instead.
+    const withinDayCap = Option.match(dayCap, {
+      onNone: () => (_day: string, lines: ReadonlyArray<string>) => Effect.succeed(lines),
+      onSome: (cap) =>
+        dayCapping({
+          cap,
+          measure: (day) => folderBytes(`${options.dir}/${day}`),
+          stopped: (day, held) => sayCapped(day, held, cap),
+        }),
+    });
+
     const writeDay = (day: string, lines: ReadonlyArray<string>) => {
       const folder = `${options.dir}/${day}`;
       const file = `${folder}/${fileName}`;
@@ -332,6 +459,7 @@ const make = (options: FileTelemetryOptions) =>
             byDay,
             ([day, records]) =>
               withinLimit(records.map((record) => record.line)).pipe(
+                Effect.flatMap((lines) => withinDayCap(day, lines)),
                 Effect.flatMap((lines) =>
                   Effect.when(writeDay(day, lines), Effect.succeed(lines.length > 0)),
                 ),
