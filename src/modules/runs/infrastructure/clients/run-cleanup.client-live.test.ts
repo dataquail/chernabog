@@ -442,6 +442,57 @@ describe("RunCleanupClientLive", () => {
     }),
   );
 
+  effect(
+    "finds which of the sessions a spoke reported are open, by the launch record each names",
+    () =>
+      Effect.gen(function* () {
+        const { client, fs } = yield* opened(freshState());
+        const home = (yield* Home).root;
+
+        for (const [sessionId, alive] of [
+          ["open", "true"],
+          ["gone", "false"],
+        ] as const) {
+          const files = sessionFiles(home, sessionId);
+          yield* fs.makeDirectory(files.dir, { recursive: true });
+          yield* fs.writeFileString(
+            files.launch,
+            yield* Schema.encodeEffect(LaunchRecord)({
+              launcher: {
+                name: "mine",
+                from: "machine config",
+                custom: Option.some({
+                  start: ["true"],
+                  close: ["true"],
+                  alive: Option.some([alive]),
+                  attach: Option.none(),
+                }),
+              },
+              handle: `handle-${sessionId}`,
+              at: "t",
+            }),
+          );
+        }
+
+        const reported = (sessionId: string) => ({
+          adapter: "claude",
+          sessionId,
+          launch: sessionFiles(home, sessionId).launch,
+        });
+
+        // A headless session keeps no launch record; one reported twice (a
+        // resume) is one session.
+        expect(
+          yield* client.openReported([
+            reported("open"),
+            reported("gone"),
+            reported("headless"),
+            reported("open"),
+          ]),
+        ).toEqual([{ sessionId: "open", launcher: "mine", handle: "handle-open" }]);
+      }),
+  );
+
   effect("a persona the repo no longer has can't clean up", () =>
     Effect.gen(function* () {
       const { client } = yield* opened(freshState());

@@ -74,6 +74,7 @@ import {
   runLogFor,
   RunsCommands,
   RunsQueries,
+  type RunStatus,
   RunValidity,
   type RunView,
   servicesFrom,
@@ -141,7 +142,7 @@ import {
 } from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
-import { hubSpokes, ReportFold, reportFold } from "./spokes.server.ts";
+import { hubSpokes, ReportFold, reportFold, type Spokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -605,12 +606,26 @@ export const runDaemon = Effect.gen(function* () {
 
   // What the runs module drives a tick through: the flows loaded here, each
   // with its persona's services, and their workflows in the engine.
+  // The hub's spokes, once it has them: they are built over the runtime the
+  // registry below makes, and the runs module ends a run's spoke through
+  // them (ADR 23, decision 5). Before then no spoke is live.
+  const hubSpokesHandle = yield* Ref.make(Option.none<Spokes>());
+
   const registry: FlowRegistry = {
     handles,
     services: (repoName, persona) =>
       Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
         servicesFrom(personas)(persona),
       ),
+    spokes: {
+      end: (runId, ending) =>
+        Effect.flatMap(Ref.get(hubSpokesHandle), (found) =>
+          Option.match(found, {
+            onNone: () => Effect.succeedNone,
+            onSome: (live) => live.end(runId, ending),
+          }),
+        ),
+    },
   };
 
   // The modules a process with an engine adds, and the flows loaded here, which
@@ -814,10 +829,22 @@ export const runDaemon = Effect.gen(function* () {
       // reported in its journal (ADR 23, decision 2), and lets the run's
       // ending delete the journal (discard-run-journal). A spoke that exited
       // before it said ends its run failed, with how it exited; one whose run
-      // the hub already ended (lost, superseded) leaves it as it is.
-      const endSpokeRun = (runId: RunId, exit: GroupExit) =>
+      // the hub already ended leaves it as it is, and one the hub ended for
+      // an ending of its own (a cancel, a lost lease) leaves the run to
+      // whoever asked, who ends it once the spoke is gone (decision 5).
+      const endSpokeRun = (runId: RunId, exit: GroupExit, intended: Option.Option<RunStatus>) =>
         Effect.gen(function* () {
-          yield* log(`spoke for ${shortRunId(runId)} ${describeExit(exit)}`);
+          yield* log(
+            Option.match(intended, {
+              onNone: () => `spoke for ${shortRunId(runId)} ${describeExit(exit)}`,
+              onSome: (ending) =>
+                `spoke for ${shortRunId(runId)} ${describeExit(exit)}, ended for its run to end ${ending}`,
+            }),
+          );
+
+          if (Option.isSome(intended)) {
+            return;
+          }
 
           const found = Option.filter(
             (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId }))).run,
@@ -874,6 +901,8 @@ export const runDaemon = Effect.gen(function* () {
       const foldReport = (runId: RunId, report: SpokeReport) =>
         ReportFold.$match(reportFold(report), {
           Ending: () => Effect.void,
+          // Kept on the live spoke by hubSpokes, never folded into state.db.
+          Session: () => Effect.void,
           Skip: ({ why }) => noteInRun(runId, why),
           Dispatch: ({ command, payload }) =>
             Effect.gen(function* () {
@@ -918,6 +947,9 @@ export const runDaemon = Effect.gen(function* () {
         apply: foldReport,
         onExit: endSpokeRun,
       });
+
+      // The runs module ends a run's spoke through these, from now on.
+      yield* Ref.set(hubSpokesHandle, Option.some(spokes));
 
       // A run the hub ends while its spoke still runs (lost, superseded, a
       // person's), ends its spoke too: SIGTERM to its group, then SIGKILL

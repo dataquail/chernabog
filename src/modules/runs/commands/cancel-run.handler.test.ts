@@ -8,9 +8,12 @@ import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunSpokesClient } from "../domain/ports/clients/run-spokes.client.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
+import { type EndedSpoke } from "../domain/run/ended-spoke.value-object.ts";
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
@@ -25,6 +28,11 @@ import {
   RunCleanupClientFake,
 } from "../infrastructure/clients/run-cleanup.client-fake.ts";
 import { RunLogsClientFake } from "../infrastructure/clients/run-logs.client-fake.ts";
+import {
+  type FakeSpokes,
+  fakeSpokes,
+  RunSpokesClientFake,
+} from "../infrastructure/clients/run-spokes.client-fake.ts";
 import {
   type FakeEngine,
   fakeEngine,
@@ -93,6 +101,7 @@ const runtime = (
     readonly waits?: ReadonlyArray<RunWaitRoot>;
     readonly markers?: ReadonlyArray<RunMarkerRoot>;
     readonly flows?: Readonly<Record<string, FakeFlow>>;
+    readonly spokes?: FakeSpokes;
   },
 ) =>
   Layer.mergeAll(
@@ -104,6 +113,7 @@ const runtime = (
     RunCleanupClientFake(holdings),
     RunMarkersRepositoryFake(stored.markers ?? []),
     FlowsClientFake(stored.flows ?? {}),
+    RunSpokesClientFake(stored.spokes ?? fakeSpokes()),
   );
 
 const heldMarker = (runId: string, name: string, fields: Partial<RunMarkerRoot> = {}) =>
@@ -720,6 +730,118 @@ describe("cancelRunHandler", () => {
     }).pipe(Effect.provide(runtime(spoked, fakeHoldings(), { runs: [run("a")] }))),
   );
 
+  // A spoke live here, which saw its run still running when it was ended.
+  const liveSpoke = (seen: Array<string>, spoke: EndedSpoke) =>
+    Layer.effect(
+      RunSpokesClient,
+      Effect.gen(function* () {
+        const runs = yield* RunsRepository;
+
+        return RunSpokesClient.of({
+          end: (runId, ending) =>
+            Effect.gen(function* () {
+              const found = yield* runs.findOne(RunSpecifications.withId(runId));
+              seen.push(
+                `${ending} while ${Option.getOrElse(
+                  Option.map(found, (one) => one.status),
+                  () => "gone",
+                )}`,
+              );
+
+              return Option.some(spoke);
+            }).pipe(Effect.orDie),
+        });
+      }),
+    );
+
+  const reported = (sessionId: string) => ({
+    adapter: "claude",
+    sessionId,
+    launch: `/l/${sessionId}`,
+  });
+
+  const inSpoke = (spokeOf: FakeEngine, held: FakeHoldings, seen: Array<string>) =>
+    Layer.provideMerge(
+      liveSpoke(seen, { exit: "killed by SIGTERM", sessions: [reported("s1")] }),
+      runtime(spokeOf, held, { runs: [run("a")] }),
+    );
+
+  const spokeEngine = fakeEngine();
+  spokeEngine.journals.push(RunId.make("a"));
+  spokeEngine.inSpokes.push(RunId.make("a"));
+  const spokeSeen: Array<string> = [];
+
+  const spokeHoldings = fakeHoldings({
+    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+  });
+
+  effect(
+    "a run whose spoke is live here ends the spoke and deletes its journal before it is recorded cancelled",
+    () =>
+      Effect.gen(function* () {
+        const cancelled = yield* cancelRunHandler({ target: byId("a"), ...asAlice });
+
+        // The spoke was ended while its run still ran, so what it reported
+        // landed on a running run, and then the run was recorded.
+        expect(spokeSeen).toEqual(["cancelled while running"]);
+        expect(spokeEngine.discarded).toEqual([RunId.make("a")]);
+        expect(spokeEngine.interrupted).toEqual([]);
+        expect(cancelled.run.status).toBe("cancelled");
+        expect(cancelled.stopped).toBe(true);
+        expect(cancelled.spokeExited).toBe("killed by SIGTERM");
+        expect(yield* statusOf("a")).toEqual(Option.some("cancelled"));
+        expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RunFinished"]);
+        // Without --close-session, the session its spoke reported is left open.
+        expect(cancelled.openSessions).toEqual([
+          { sessionId: "s1", launcher: "orca", handle: "term-1" },
+        ]);
+        expect(spokeHoldings.closed).toEqual([]);
+      }).pipe(Effect.provide(inSpoke(spokeEngine, spokeHoldings, spokeSeen))),
+  );
+
+  const closingSpokeHoldings = fakeHoldings({
+    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+  });
+
+  effect("with --close-session, closes the sessions its spoke reported by their handles", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunHandler({
+        target: byId("a"),
+        by: "alice",
+        closeSessions: true,
+        endAs: Option.none(),
+      });
+
+      expect(closingSpokeHoldings.closed).toEqual(["term-1"]);
+      expect(cancelled.closedSessions).toEqual([
+        { sessionId: "s1", launcher: "orca", handle: "term-1" },
+      ]);
+      expect(cancelled.openSessions).toEqual([]);
+    }).pipe(Effect.provide(inSpoke(fakeEngine(), closingSpokeHoldings, []))),
+  );
+
+  const lostSeen: Array<string> = [];
+
+  const lostHoldings = fakeHoldings({
+    sessions: { earlier: [{ sessionId: "s1", launcher: "orca", handle: "term-1" }] },
+  });
+
+  effect("a run lost while its spoke lives ends the spoke as lost, and keeps its sessions", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunHandler({
+        target: byId("a"),
+        by: "chernabog",
+        closeSessions: false,
+        endAs: Option.some({ ending: "lost", reason: "taken over" }),
+      });
+
+      expect(lostSeen).toEqual(["lost while running"]);
+      expect(cancelled.run.status).toBe("lost");
+      expect(cancelled.spokeExited).toBe("killed by SIGTERM");
+      expect(lostHoldings.closed).toEqual([]);
+    }).pipe(Effect.provide(inSpoke(fakeEngine(), lostHoldings, lostSeen))),
+  );
+
   const unexecuted = fakeEngine();
 
   effect("a run with no execution yet is cancelled with nothing to interrupt", () =>
@@ -758,6 +880,7 @@ describe("cancelRunHandler", () => {
       RunCleanupClientFake(fakeHoldings()),
       RunMarkersRepositoryFake([]),
       FlowsClientFake({}),
+      RunSpokesClientFake(fakeSpokes()),
     ).pipe(Layer.provideMerge(sqliteAfter(Effect.void)));
 
   const brokenDisk = stoppingEngine("a");

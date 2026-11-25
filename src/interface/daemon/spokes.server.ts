@@ -12,10 +12,17 @@
 // push nothing: what the hub knows of a run in flight is what its spoke wrote
 // to disk. The hub reads nothing of a spoke's stdout but log lines.
 //
+// A run the hub ends while its spoke lives (a cancel, a lost lease, an item
+// that went) ends the spoke first, through `end` (ADR 23, decisions 5 and
+// 6): the hub records the ending it means for the spoke, signals its group
+// and waits for it to exit and for its last reports to be folded, and the
+// command that asked then ends the run. The hub keeps the agent sessions a
+// spoke reported opening, so that command can close them by their handles.
+//
 // What later layers hook into: `start`'s handle (the PID and process group
-// `om_spokes` records, #664, which also keeps the fold position there, in
-// the fold's transaction, where here it is the hub's memory), `stop`
-// (cancel, #662, and the bounds, #663).
+// `om_spokes` records, #664, which also keeps the fold position and the
+// intended ending there, where here they are the hub's memory), `end` (the
+// bounds, #663, which also watch the sessions' transcripts).
 
 import type { Command } from "@effect-server-utils/cqrs";
 import * as Data from "effect/Data";
@@ -34,7 +41,11 @@ import * as Stream from "effect/Stream";
 
 import { type RunId, shortRunId } from "../../kernel/run-id.id.ts";
 import {
+  type AgentSessionOpened,
+  type EndedSpoke,
+  type RunStatus,
   type RunView,
+  sessionOpenedIn,
   SpokeHandOverJson,
   type SpokeReport,
   spokeReportCommands,
@@ -43,6 +54,7 @@ import {
 } from "../../modules/runs/runs.platform.ts";
 import { homePaths } from "../../platform/home.ts";
 import {
+  describeExit,
   type GroupExit,
   type ProcessGroup,
   spawnGroup,
@@ -80,6 +92,12 @@ export type Spokes = {
   // Stops the run's spoke, if it is live: SIGTERM to its group, then
   // SIGKILL after the grace. Its exit is handled as any other.
   readonly stop: (runId: RunId) => Effect.Effect<void>;
+  // Ends the run's spoke, if it is live, for the ending its run is about to
+  // take: the hub won't end the run from its exit, since whoever asked will.
+  // SIGTERM to its group, SIGKILL after the grace, and waits until it has
+  // exited and its last reports are folded. How it exited, and the agent
+  // sessions it reported; none when no spoke of the run is live.
+  readonly end: (runId: RunId, ending: RunStatus) => Effect.Effect<Option.Option<EndedSpoke>>;
 };
 
 const encodeHandOver = Schema.encodeSync(SpokeHandOverJson);
@@ -117,14 +135,16 @@ export const spokeEnvironment = (
 });
 
 // What folding a report does: dispatch one of the runs' commands with its
-// payload, skip it saying why, or nothing, for the spoke's ending, which the
-// hub reads apart once the spoke has exited.
+// payload, skip it saying why, keep an agent session the spoke opened on the
+// live spoke, or nothing, for the spoke's ending, which the hub reads apart
+// once the spoke has exited.
 export type ReportFold = Data.TaggedEnum<{
   Dispatch: {
     readonly command: Command.Any;
     readonly payload: unknown;
   };
   Skip: { readonly why: string };
+  Session: { readonly opened: AgentSessionOpened };
   Ending: Record<never, never>;
 }>;
 
@@ -135,6 +155,14 @@ export const ReportFold = Data.taggedEnum<ReportFold>();
 export const reportFold = (report: SpokeReport): ReportFold => {
   if (report.tag === "RunEnded") {
     return ReportFold.Ending();
+  }
+
+  if (report.tag === "AgentSessionOpened") {
+    return Option.match(sessionOpenedIn(report), {
+      onNone: () =>
+        ReportFold.Skip({ why: `the hub skipped a ${report.tag} whose payload it couldn't read` }),
+      onSome: (opened) => ReportFold.Session({ opened }),
+    });
   }
 
   return Option.match(
@@ -246,7 +274,13 @@ export const hubSpokes = <R>(options: {
     after: number,
   ) => Effect.Effect<ReadonlyArray<SpokeReport>, never, R>;
   readonly apply: (runId: RunId, report: SpokeReport) => Effect.Effect<void, never, R>;
-  readonly onExit: (runId: RunId, exit: GroupExit) => Effect.Effect<void, never, R>;
+  // Ends a run once its spoke exited, from what it reported, unless the hub
+  // meant an ending for it (`end`), which whoever asked gives the run.
+  readonly onExit: (
+    runId: RunId,
+    exit: GroupExit,
+    intended: Option.Option<RunStatus>,
+  ) => Effect.Effect<void, never, R>;
 }): Effect.Effect<Spokes, never, R | FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -254,11 +288,19 @@ export const hubSpokes = <R>(options: {
     const context = yield* Effect.context<R>();
     const paths = homePaths(options.home);
 
-    // Each live spoke: its process group, and a fold of its journal, which
-    // runs one at a time however many ask for it.
+    // Each live spoke: its process group; a fold of its journal, which runs
+    // one at a time however many ask for it; the agent sessions it reported;
+    // the ending the hub means for it, once one does; and done once it has
+    // exited and been folded for the last time.
     const live = new Map<
       RunId,
-      { readonly group: ProcessGroup; readonly fold: Effect.Effect<void> }
+      {
+        readonly group: ProcessGroup;
+        readonly fold: Effect.Effect<void>;
+        readonly sessions: Array<AgentSessionOpened>;
+        readonly intended: Ref.Ref<Option.Option<RunStatus>>;
+        readonly done: Deferred.Deferred<boolean>;
+      }
     >();
 
     const [program, ...prefix] = selfCommand();
@@ -309,13 +351,29 @@ export const hubSpokes = <R>(options: {
 
         const folded = yield* Ref.make(0);
         const folding = yield* Semaphore.make(1);
+        const sessions: Array<AgentSessionOpened> = [];
+        const intended = yield* Ref.make(Option.none<RunStatus>());
+        const done = yield* Deferred.make<boolean>();
 
-        const fold = foldSpoke(handOver.runId, folded, options.reports, options.apply).pipe(
+        // A session the spoke opened stays with the spoke; any other report
+        // is the hub's to fold into state.db.
+        const apply = (runId: RunId, report: SpokeReport) =>
+          ReportFold.$match(reportFold(report), {
+            Session: ({ opened }) =>
+              Effect.sync(() => {
+                sessions.push(opened);
+              }),
+            Dispatch: () => options.apply(runId, report),
+            Skip: () => options.apply(runId, report),
+            Ending: () => options.apply(runId, report),
+          });
+
+        const fold = foldSpoke(handOver.runId, folded, options.reports, apply).pipe(
           folding.withPermits(1),
           Effect.provideContext(context),
         );
 
-        live.set(handOver.runId, { group, fold });
+        live.set(handOver.runId, { group, fold, sessions, intended, done });
 
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
@@ -337,8 +395,8 @@ export const hubSpokes = <R>(options: {
             yield* fold;
             live.delete(handOver.runId);
             yield* fs.remove(handOverFile, { force: true }).pipe(Effect.ignore);
-            yield* options.onExit(handOver.runId, exit);
-          }).pipe(Effect.provideContext(context)),
+            yield* options.onExit(handOver.runId, exit, yield* Ref.get(intended));
+          }).pipe(Effect.ensuring(Deferred.succeed(done, true)), Effect.provideContext(context)),
           scope,
         );
       }).pipe(Effect.mapError((error) => `could not hand it to a spoke: ${error.message}`));
@@ -357,6 +415,26 @@ export const hubSpokes = <R>(options: {
           onNone: () => Effect.void,
           onSome: ({ group }) =>
             Effect.forkIn(stopGroup(group, STOP_GRACE), scope).pipe(Effect.asVoid),
+        }),
+      end: (runId, ending) =>
+        Option.match(Option.fromUndefinedOr(live.get(runId)), {
+          onNone: () => Effect.succeedNone,
+          onSome: (spoke) =>
+            Effect.gen(function* () {
+              // The first ending meant for it holds: a cancel and a lost
+              // lease at once end it as whichever asked first.
+              yield* Ref.update(
+                spoke.intended,
+                Option.orElse(() => Option.some(ending)),
+              );
+              const exit = yield* stopGroup(spoke.group, STOP_GRACE);
+              yield* Deferred.await(spoke.done);
+
+              return Option.some<EndedSpoke>({
+                exit: describeExit(exit),
+                sessions: [...spoke.sessions],
+              });
+            }),
         }),
     } satisfies Spokes;
   });

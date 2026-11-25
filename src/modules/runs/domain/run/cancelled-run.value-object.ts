@@ -65,4 +65,7 @@ export class CancelledRun extends Schema.Class<CancelledRun, { readonly brand: "
   openSessions: Schema.Array(OpenSessionView),
   // What it left, each a sentence saying what and why.
   leftForPerson: Schema.Array(Schema.String),
+  // How the run's spoke exited once cancel ended it (`killed by SIGTERM`),
+  // its journal gone; absent for a run with no live spoke (ADR 23).
+  spokeExited: Schema.optionalKey(Schema.String),
 }) {}

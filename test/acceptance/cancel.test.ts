@@ -129,12 +129,11 @@ describe("chernabog cancel", () => {
 
     expect(code).toBe(0);
     expect(output).toContain(`cancelled ${runId}`);
-    // Its workflow is in its spoke, which the daemon ends once the run has.
-    expect(output).toContain("its workflow is interrupted in the engine");
-    await waitFor(
-      () => sandbox.daemonLog().includes(`spoke for ${runId.slice(0, 8)} `),
-      "the run's spoke to exit",
-    );
+    // Its workflow is in its spoke, which had exited, its journal gone,
+    // before cancel answered (ADR 23, decision 5).
+    expect(output).toContain("and its journal is deleted");
+    expect(sandbox.daemonLog()).toContain(`spoke for ${runId.slice(0, 8)} `);
+    expect(existsSync(join(sandbox.home, "journals", `${runId}.db`))).toBe(false);
     expect(output).toContain(
       `released the claim on #${issue} and deleted branch auto/issue-${issue}`,
     );

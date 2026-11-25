@@ -15,12 +15,14 @@ import {
   type WorktreeCleanup,
 } from "../domain/ports/clients/run-cleanup.client.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
+import { RunSpokesClient } from "../domain/ports/clients/run-spokes.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import {
   CancelledRun,
   CancelTarget,
   type EndAs,
 } from "../domain/run/cancelled-run.value-object.ts";
+import { type EndedSpoke } from "../domain/run/ended-spoke.value-object.ts";
 import {
   type CleanupFailed,
   RunAlreadyFinished,
@@ -269,6 +271,23 @@ const releaseEnded = (found: RunRoot) =>
     });
   });
 
+// The sessions the run left open: those its spoke reported opening, for a run
+// whose spoke this process ended, or else those its agent calls recorded.
+const sessionsLeft = (run: RunRoot, spoke: Option.Option<EndedSpoke>) =>
+  RunCleanupClient.use((cleanup) =>
+    Option.match(spoke, {
+      onNone: () => cleanup.openSessions(run),
+      onSome: (ended) => cleanup.openReported(ended.sessions),
+    }),
+  );
+
+// How the run's spoke exited, for the result; nothing for a run with none.
+const spokeExitOf = (spoke: Option.Option<EndedSpoke>) =>
+  Option.match(spoke, {
+    onNone: () => ({}),
+    onSome: (ended) => ({ spokeExited: ended.exit }),
+  });
+
 export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   target,
   ...options
@@ -277,6 +296,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const waits = yield* RunWaitsRepository;
   const workflows = yield* WorkflowsClient;
   const cleanup = yield* RunCleanupClient;
+  const spokes = yield* RunSpokesClient;
   const found = yield* named(target);
 
   if (found.status !== "running" && Option.isNone(options.endAs)) {
@@ -291,6 +311,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       onSome: (endAs) => endedAs(found, endAs, at),
     }),
   );
+
+  // A run whose spoke is live here ends it first (ADR 23, decisions 5 and 6):
+  // the spoke is signalled and waited for, and what it reported is folded
+  // into state.db while its run still runs, so its last steps and markers
+  // land, and the ending releases them. Its journal goes with it. Only then
+  // is the run's ending recorded, and cleaning up after it starts.
+  const spoke = yield* spokes.end(found.id, cancelled.status);
+
+  if (Option.isSome(spoke)) {
+    yield* workflows.discard(found.id);
+  }
 
   // The run's ending and its waits go together; stopping its workflow and
   // cleaning up after it come once they have, and saying it ended last. A run
@@ -313,13 +344,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   }).pipe(inUnitOfWork);
 
   const flow = { repo: found.repo, flow: found.flow, persona: found.persona };
-  let stopped = Option.isNone(found.executionId);
+  let stopped = Option.isNone(found.executionId) || Option.isSome(spoke);
 
-  for (const executionId of Option.toArray(found.executionId)) {
+  // A workflow that executes in this process is interrupted here; one in a
+  // spoke stopped with its spoke, above.
+  for (const executionId of Option.toArray(
+    Option.filter(found.executionId, () => Option.isNone(spoke)),
+  )) {
     yield* workflows.interrupt(flow, executionId);
 
-    // A workflow in a spoke stops with its spoke, which the hub ends once
-    // the run has (ADR 23): only one executing here is waited for.
+    // Only a workflow executing here is waited for: one in a spoke no
+    // process here runs stops with its spoke.
     if (workflows.runs(flow) && (yield* workflows.executing(found.id))) {
       stopped = yield* stopping(found, executionId);
     }
@@ -358,8 +393,9 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       releasedClaims: [...releasedClaims],
       released: Option.none(),
       closedSessions: [],
-      openSessions: yield* cleanup.openSessions(cancelled),
+      openSessions: yield* sessionsLeft(cancelled, spoke),
       leftForPerson,
+      ...spokeExitOf(spoke),
     });
   }
 
@@ -402,7 +438,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
   const released = yield* releaseIssueClaim(cancelled, leftForPerson);
 
-  const sessions = yield* cleanup.openSessions(cancelled);
+  const sessions = yield* sessionsLeft(cancelled, spoke);
   const closedSessions: Array<OpenSession> = [];
   const openSessions: Array<OpenSession> = [];
 
@@ -437,5 +473,6 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     closedSessions,
     openSessions,
     leftForPerson,
+    ...spokeExitOf(spoke),
   });
 });

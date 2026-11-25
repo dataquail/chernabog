@@ -1042,8 +1042,17 @@ How a CI run differs from a daemon run:
   (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
   said nothing ends `failed`, with how it exited. The run's ending releases
   its markers and deletes its journal, in the hub. A run the hub ends while
-  its spoke lives (lost, superseded, cancelled) stops the spoke: SIGTERM to
-  its group, SIGKILL after 10 seconds. `concurrency` counts running runs,
+  its spoke lives (cancelled, lost, superseded) ends the spoke first (ADR 23
+  d5, #662): `CancelRunCommand` asks `RunSpokesClient.end`, which the hub
+  provides through its `FlowRegistry` (`spokes`; no other process has any).
+  The hub records the ending it means for the spoke (its memory until #664's
+  `om_spokes`), so it won't end the run from the exit; SIGTERMs the group,
+  SIGKILLs it after 10 seconds, and waits for the exit and the last fold.
+  Cancel then deletes the journal, records the ending, cleans up, and only
+  then answers. A spoke reports each agent session it opens
+  (`AgentSessionOpened`, beside `recordRunSession`), which the hub keeps on
+  the live spoke rather than folding; `--close-session` closes those by
+  their launch records' handles. `concurrency` counts running runs,
   which are the live spokes; the hub renews their leases; a reload or a
   drain starts no spoke and waits for none to be live. A hub that stops
   SIGTERMs every spoke and waits for none; the next one ends every run it

@@ -7,7 +7,8 @@
 // next one ends their runs as interrupted, so their phases repeat in new runs
 // from what the ledger recorded. The hub tails each spoke's journal and folds
 // what it reports into state.db, so status and /events show a run's steps
-// while its spoke runs (#661).
+// while its spoke runs (#661). A cancel ends the spoke and answers only once
+// it has exited and its journal is gone, whatever its lanes are doing (#662).
 
 import { type ChildProcess, spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -28,9 +29,11 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // saying when it started and ended. One titled "park ..." parks on `go`,
 // recording `waiting`: its trigger holds it there until the issue is
 // labelled `go`, and then offers it, for a run that takes it up from that
-// record. The flow takes its label off once done, so its trigger offers each
+// record. One titled "lanes ..." with no phase yet holds the run in two lanes
+// at once, one in a step that never ends and one asleep on a durable clock
+// (#675). The flow takes its label off once done, so its trigger offers each
 // issue until a run gets that far.
-const HUB = `import { activity, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs } from "@chernabog/sdk";
+const HUB = `import { activity, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs, sleep } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -76,6 +79,13 @@ export default defineFlow({
 
       if (title.startsWith("hold") && before === "none") {
         yield* activity("hold", Effect.sleep("60 seconds"));
+      }
+
+      if (title.startsWith("lanes") && before === "none") {
+        yield* Effect.all([activity("stuck", Effect.never), sleep("nap", "5 seconds")], {
+          concurrency: 2,
+          discard: true,
+        });
       }
 
       if (title.startsWith("slow")) {
@@ -279,6 +289,90 @@ describe("the daemon as a hub of spokes", () => {
     const cancelled = await sandbox.runCli(["cancel", run.id.slice(0, 8)]);
     expect(cancelled.code).toBe(0);
     await waitFor(() => !alive(spoke.pid), "the cancelled run's spoke to exit", 30_000);
+  }, 120_000);
+
+  // The id of the issue's run in flight, once the hub's status shows it in `step`.
+  const inStep = async (issue: number, step: string) => {
+    const deadline = Date.now() + 60_000;
+
+    while (Date.now() < deadline) {
+      const found = Arr.findFirst(
+        DaemonStatus.pipe(Schema.decodeUnknownSync)(
+          await (await fetch("http://daemon/status", { unix: socket() })).json(),
+        ).active,
+        (run) => run.itemKey === `issue-${issue}` && Option.contains(run.currentStep, step),
+      );
+
+      if (Option.isSome(found)) {
+        return found.value.id;
+      }
+
+      await Bun.sleep(250);
+    }
+
+    throw new Error(`timed out waiting for the run for #${issue} to be in ${step}`);
+  };
+
+  // Takes the issue's label off, so its trigger offers it to no new run.
+  const unlabel = (issue: number) => {
+    const { labels } = sandbox.github.issue(issue);
+    labels.splice(labels.indexOf("hub"), 1);
+  };
+
+  const journalOf = (runId: string) => join(sandbox.home, "journals", `${runId}.db`);
+
+  test("cancel answers once the spoke has exited and its journal is gone, and a restarted daemon leaves the run cancelled", async () => {
+    const issue = sandbox.github.addIssue("hold until cancelled", ["hub"]);
+    const runId = await inStep(issue, "hold");
+    const spoke = Option.getOrThrow(Arr.head(ranIn(issue)));
+    expect(alive(spoke.pid)).toBe(true);
+    expect(existsSync(journalOf(runId))).toBe(true);
+    unlabel(issue);
+
+    const cancelled = await sandbox.runCli(["cancel", runId.slice(0, 8)]);
+
+    expect(cancelled.code).toBe(0);
+    expect(cancelled.output).toContain(`cancelled ${runId}`);
+    expect(cancelled.output).toContain("its journal is deleted");
+    // By the time cancel answered, the spoke had exited and its journal was gone.
+    expect(alive(spoke.pid)).toBe(false);
+    expect(existsSync(journalOf(runId))).toBe(false);
+    expect(Option.isNone(sandbox.github.refSha(claimRef(issue)))).toBe(true);
+    expect(finished(issue)).toEqual([{ runId, status: "cancelled" }]);
+
+    // A restarted daemon doesn't take the run up again: it stays cancelled,
+    // and nothing runs for it.
+    await stopDaemon();
+    await startDaemon();
+    await Bun.sleep(6000);
+
+    expect(finished(issue)).toEqual([{ runId, status: "cancelled" }]);
+    expect(ranIn(issue)).toHaveLength(1);
+    expect(
+      DaemonStatus.pipe(Schema.decodeUnknownSync)(
+        await (await fetch("http://daemon/status", { unix: socket() })).json(),
+      ).active.some((run) => run.id === runId),
+    ).toBe(false);
+  }, 180_000);
+
+  test("cancel stops a run with one lane in a step and another asleep on a durable clock, within the grace (#675)", async () => {
+    const issue = sandbox.github.addIssue("lanes held two ways", ["hub"]);
+    const runId = await inStep(issue, "stuck");
+    const spoke = Option.getOrThrow(Arr.head(ranIn(issue)));
+    unlabel(issue);
+    // Into the other lane's sleep, as #675's scratch run was.
+    await Bun.sleep(600);
+
+    const asked = Date.now();
+    const cancelled = await sandbox.runCli(["cancel", runId.slice(0, 8)]);
+    const took = Date.now() - asked;
+
+    expect(cancelled.code).toBe(0);
+    expect(alive(spoke.pid)).toBe(false);
+    expect(existsSync(journalOf(runId))).toBe(false);
+    // SIGTERM, then SIGKILL after 10 seconds at most, and the CLI's own start.
+    expect(took).toBeLessThan(15_000);
+    expect(finished(issue)).toEqual([{ runId, status: "cancelled" }]);
   }, 120_000);
 
   test("keeps no more spokes live than the machine's concurrency", async () => {

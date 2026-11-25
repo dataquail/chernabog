@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
+import { type AgentSessionOpened } from "../../run/agent-session-opened.value-object.ts";
 import { type CleanupFailed } from "../../run/run.errors.ts";
 import { type RunRoot } from "../../run/run.root.ts";
 
@@ -50,6 +51,12 @@ export type RunCleanupClientService = {
   ) => Effect.Effect<Option.Option<ReleasedClaim>, CleanupFailed>;
   // The agent sessions the run opened that are still open.
   readonly openSessions: (run: RunRoot) => Effect.Effect<ReadonlyArray<OpenSession>>;
+  // Those of the sessions a run's spoke reported opening that are still open,
+  // by the launch record each reported: a headless session, which keeps
+  // none, died with its spoke's process group.
+  readonly openReported: (
+    sessions: ReadonlyArray<AgentSessionOpened>,
+  ) => Effect.Effect<ReadonlyArray<OpenSession>>;
   // Closes a session through its launcher, by the handle it recorded.
   readonly closeSession: (session: OpenSession) => Effect.Effect<void, CleanupFailed>;
 };

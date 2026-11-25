@@ -114,6 +114,12 @@ const reported = (seq: number, step: string): SpokeReport => ({
   }),
 });
 
+const encodeOpened = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({ adapter: Schema.String, sessionId: Schema.String, launch: Schema.String }),
+  ),
+);
+
 describe("folding a spoke's reports", () => {
   test("a report is the runs' command it carries, with the payload the spoke wrote", () => {
     expect(reportFold(reported(1, "claim"))).toEqual(
@@ -133,6 +139,19 @@ describe("folding a spoke's reports", () => {
     );
     expect(reportFold({ seq: 3, at: "", tag: "EnterStepCommand", payload: "{" })).toEqual(
       ReportFold.Skip({ why: "the hub skipped a EnterStepCommand whose payload it couldn't read" }),
+    );
+  });
+
+  test("an agent session the spoke opened is kept on the spoke, and one that won't read skipped", () => {
+    const opened = { adapter: "claude", sessionId: "s-1", launch: "/home/s-1/launch.json" };
+
+    expect(
+      reportFold({ seq: 4, at: "", tag: "AgentSessionOpened", payload: encodeOpened(opened) }),
+    ).toEqual(ReportFold.Session({ opened }));
+    expect(reportFold({ seq: 5, at: "", tag: "AgentSessionOpened", payload: "{}" })).toEqual(
+      ReportFold.Skip({
+        why: "the hub skipped a AgentSessionOpened whose payload it couldn't read",
+      }),
     );
   });
 

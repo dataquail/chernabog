@@ -35,9 +35,10 @@ import {
 import { CleanupFailed } from "../../domain/run/run.errors.ts";
 import { type RunRoot } from "../../domain/run/run.root.ts";
 import { itemTarget } from "../../domain/run/work-item.value-object.ts";
-import { knownLaunch, sessionFiles } from "../runtime/agents/session-files.ts";
+import { LaunchRecord, readDecoded, sessionFiles } from "../runtime/agents/session-files.ts";
 import { runSessions } from "../runtime/agents/sessions.ts";
 import { launcherFor } from "../runtime/launchers.ts";
+import { type Launcher } from "../runtime/launchers/launcher.ts";
 
 // What cleaning up uses of a persona's services.
 type CleanupServices = GitHub | Repo | Git | Worktree;
@@ -139,11 +140,17 @@ const workOnBranch = (branch: string, base: string) =>
     return Option.liftPredicate(`it has ${commits(ahead)} not on ${base}`, () => ahead > 0);
   });
 
+// What finding a session's launch needs of the process.
+type Platform = Exec | Home | FileSystem.FileSystem;
+
+// A session's launcher, and the handle it runs under there.
+type LaunchOf = Option.Option<{ readonly launcher: Launcher; readonly handle: string }>;
+
 export const RunCleanupClientLive = (services: CleanupServicesFor) =>
   Layer.effect(
     RunCleanupClient,
     Effect.gen(function* () {
-      const platform = yield* Effect.context<Exec | Home | FileSystem.FileSystem>();
+      const platform = yield* Effect.context<Platform>();
       const fs = yield* FileSystem.FileSystem;
 
       // Runs `effect` as the run's persona.
@@ -167,17 +174,33 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
             ),
         });
 
-      // A session's launcher and handle, while its launcher says it's open.
-      const launchOf = (sessionId: string) =>
-        Effect.gen(function* () {
-          const record = yield* knownLaunch(sessionFiles((yield* Home).root, sessionId));
-
-          return Option.flatMap(record, (launch) =>
+      // A session's launcher and handle, from the launch record at `file`.
+      const launchAt = (file: string) =>
+        Effect.map(readDecoded(LaunchRecord, file), (record) =>
+          Option.flatMap(record, (launch) =>
             Option.map(launcherFor(launch.launcher), (launcher) => ({
               launcher,
               handle: launch.handle,
             })),
-          );
+          ),
+        );
+
+      // A session's launcher and handle, by its id.
+      const launchOf = (sessionId: string) =>
+        Effect.flatMap(Home.use(Effect.succeed), (home) =>
+          launchAt(sessionFiles(home.root, sessionId).launch),
+        );
+
+      // The session, under its launcher, while the launcher says it's open.
+      const stillOpen = (sessionId: string, launch: Effect.Effect<LaunchOf, never, Platform>) =>
+        Effect.gen(function* () {
+          for (const { handle, launcher } of Option.toArray(yield* launch)) {
+            if (yield* launcher.alive(handle).pipe(Effect.orElseSucceed(() => false))) {
+              return Option.some<OpenSession>({ sessionId, launcher: launcher.name, handle });
+            }
+          }
+
+          return Option.none<OpenSession>();
         });
 
       return RunCleanupClient.of({
@@ -281,18 +304,15 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
               (yield* runSessions(run.id)).map((session) => session.sessionId),
             );
 
-            const open: Array<OpenSession> = [];
-
-            for (const sessionId of ids) {
-              for (const { handle, launcher } of Option.toArray(yield* launchOf(sessionId))) {
-                if (yield* launcher.alive(handle).pipe(Effect.orElseSucceed(() => false))) {
-                  open.push({ sessionId, launcher: launcher.name, handle });
-                }
-              }
-            }
-
-            return open;
+            return Arr.getSomes(
+              yield* Effect.forEach(ids, (sessionId) => stillOpen(sessionId, launchOf(sessionId))),
+            );
           }).pipe(Effect.provideContext(platform)),
+        openReported: (sessions) =>
+          Effect.forEach(
+            Arr.dedupeWith(sessions, (one, other) => one.sessionId === other.sessionId),
+            (session) => stillOpen(session.sessionId, launchAt(session.launch)),
+          ).pipe(Effect.map(Arr.getSomes), Effect.provideContext(platform)),
         closeSession: (session) =>
           Effect.gen(function* () {
             const launch = yield* launchOf(session.sessionId);
