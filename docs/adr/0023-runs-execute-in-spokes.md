@@ -8,7 +8,7 @@ disposable, and every park is a phase boundary). Supersedes the passages of
 ADR 10, ADR 20 and ADR 21 that have the daemon run flows in its own process
 or resume a run from a journal in `state.db`; each carries a note. Where the
 code still runs flows in the daemon, this ADR wins and the code is a gap,
-closed by the epic's tasks in the order the table at the end gives.
+closed by the epic's tasks in the order the last paragraph gives.
 
 ## Context
 
@@ -68,7 +68,11 @@ takes up its phase again from the ledger, and every other run carries on.
       with the item it is for, then spawns the spoke with the run's id, the
       repo, flow, persona and item on its command line, and a pipe on the
       spoke's stdin that the hub holds open. It records the spoke
-      (decision 7) once it has the spoke's PID.
+      (decision 7) once it has the spoke's PID. A run's workflow execution
+      is keyed by its run, as today, so the hub attaches it
+      (`AttachExecutionCommand`) from the run's id without asking the spoke,
+      and the lease checks that need it (`CheckRunLeasesCommand`) find it in
+      `state.db`.
    2. The spoke creates its journal (decision 3) and runs the flow. The
       flow takes the item's claim itself, as it does today
       (`Implement.claim`, `Claims.acquire`), inside the spoke: the hub
