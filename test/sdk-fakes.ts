@@ -115,7 +115,6 @@ import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 import { TestTimeout } from "./effect-test.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
-import { wakeParkedRuns } from "./wake-signals.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -1702,28 +1701,6 @@ export const pollRun = (run: EngineRun) =>
       () => run,
     );
   }).pipe(Effect.orDie);
-
-// Wakes the runs parked on the signals `items` carry, in the test's engine,
-// once their journals are folded: a test-only wake (wake-signals.ts). Goes
-// once no test uses it (#695).
-export const deliverSignals = (
-  handle: FlowHandle,
-  persona: Persona,
-  items: ReadonlyArray<WorkItem>,
-) =>
-  Effect.gen(function* () {
-    const running = yield* (yield* RunsQueries).ListActiveRunsQuery({
-      repo: Option.none(),
-      persona: Option.none(),
-      flow: Option.none(),
-    });
-
-    for (const run of running.runs) {
-      yield* foldRun(run.id);
-    }
-
-    return yield* wakeParkedRuns(refOf(handle, persona), items);
-  });
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(

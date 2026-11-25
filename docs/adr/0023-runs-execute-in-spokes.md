@@ -552,10 +552,10 @@ run` under Actions, which has no hub, renews its own lease.
    spoke's (`endAsSaid`). So a park ends a foreground run too
    (`ended-at-park`), and the command returns rather than wait in the
    process. A hub that starts after one of these died folds the rest of its
-   journal exactly once. The SDK's block tests still wake a parked run in
-   their own engine, through a test-only wake (`test/wake-signals.ts`) that
-   `only-tests-wake-runs` keeps out of `src/`, `packages/` and `scripts/`;
-   #695 rewrites them so a park ends the run and a new run takes it up.
+   journal exactly once. The SDK's block tests take that path too: a park
+   ends the run in their engine as a spoke's does (`ended-at-park`, its
+   claims let go through `heldClaims`), and a new run takes the item up
+   from what the flow's trigger offers from its record (#695).
 
 ## Rejected
 
@@ -660,6 +660,8 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   reap and the foreground takeover close a left run's agent sessions but
   never a person's (#696). `interrupted` re-queues the issue (#696).
 - **9.** The foreground `run`, `rehearse` and `ci run` under Actions are
-  their own hub (#696). `hub-runs-no-flow` and `only-tests-wake-runs` keep
-  the hub and production code from executing or waking a flow (#696). The
-  block tests' wake is #695.
+  their own hub (#696). `hub-runs-no-flow` keeps the hub from executing a
+  flow (#696). The block tests' test-only wake, and `only-tests-wake-runs`,
+  are gone: a park ends the run there too, and a new run takes it up
+  (#695). A foreground run that parks still keeps claims other than its
+  item's own (#709).
