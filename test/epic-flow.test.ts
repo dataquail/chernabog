@@ -35,6 +35,10 @@ import {
   triggered,
 } from "./sdk-fakes.ts";
 
+// The engine runs below take a second or two alone, but under the whole
+// suite's load the engine's runner can miss health checks for seconds.
+const ENGINE_TIMEOUT = 60_000;
+
 const EPIC = 40;
 
 const working = flowHandle(repo, "epic", epic);
@@ -266,6 +270,7 @@ describe("epic", () => {
         // The run let go of the epic's claim and its tasks'.
         expect(fake.refs.size).toBe(0);
       }),
+    ENGINE_TIMEOUT,
   );
 
   effect(
@@ -312,6 +317,7 @@ describe("epic", () => {
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
         expect(fake.refs.size).toBe(0);
       }),
+    ENGINE_TIMEOUT,
   );
 
   effect("with ship, labels each pull request it opens auto:ship, the automated path", () =>

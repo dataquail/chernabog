@@ -126,6 +126,12 @@ export type Inspect = (
   run: EngineRun,
 ) => Effect.Effect<void, never, RuntimeServices | BunServices.BunServices>;
 
+// Where a test stops following a run that is still running, beside its end
+// and its scenario's last park: never, unless a test says.
+export type StopsAt = (
+  run: EngineRun,
+) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>;
+
 export const observe = (
   flow: Flow,
   name: string,
@@ -134,6 +140,7 @@ export const observe = (
   wake?: Wake | Parks,
   settings: FlowInput = {},
   inspect: Inspect = () => Effect.void,
+  stopsAt: StopsAt = () => Effect.succeed(false),
 ) =>
   Effect.gen(function* () {
     const fake = setup();
@@ -168,6 +175,12 @@ export const observe = (
         );
 
         if (run.status !== "running") {
+          yield* readSteps;
+
+          return true;
+        }
+
+        if (yield* stopsAt(run)) {
           yield* readSteps;
 
           return true;

@@ -66,7 +66,6 @@ import {
   PULL,
   repo,
   type RuntimeServices,
-  runToEnd,
   runUntil,
   summaryOf,
 } from "./sdk-fakes.ts";
@@ -123,6 +122,10 @@ type Park = {
   // Whether an agent works in the phase before the park, the middle of
   // which the sabotage lands in; a park reached without one has none.
   readonly agent: boolean;
+  // Whether the run that takes the item up parks again, as an epic's does
+  // in its next round, rather than end: then the journey follows it to that
+  // park.
+  readonly parksAgain?: boolean;
 };
 
 // A person's pull request closes the issue, as GitHub's GraphQL API gives it.
@@ -466,6 +469,7 @@ const PARKS: ReadonlyArray<Park> = [
     work: item(`issue-${EPIC}`, { issue: EPIC }),
     // Its rounds take the tasks it can as far as they go, then it parks.
     parked: waitsOn(Epic.LAYER_CHANGED),
+    parksAgain: true,
     // A person answers #12 and queues it again.
     settle: (fake) => {
       fake.setLabels(12, [DEFAULT_LABELS.eligible]);
@@ -636,7 +640,15 @@ const journey = (park: Park, flow: Flow, sabotaged: Option.Option<Sabotage>) =>
 
     const offered = yield* flowTriggered(fake, flow, park.settings ?? {}).pipe(Effect.orDie);
     const taken = yield* Effect.fromOption(Arr.findFirst(offered, mayStart)).pipe(Effect.orDie);
-    const finished = yield* runToEnd(handle, fake, taken);
+
+    // runUntil stops once the run ends; a run that parks again stops there.
+    const finished = yield* runUntil(handle, fake, taken, (run) => {
+      if (park.parksAgain === true) {
+        return park.parked(run);
+      }
+
+      return Effect.succeed(false);
+    });
 
     // Labels projected again, as the next projection of each item would.
     for (const number of park.numbers) {

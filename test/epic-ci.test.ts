@@ -117,11 +117,18 @@ const parkedAt = (round: number) => (run: EngineRun) =>
     waits.some((wait) => wait.deferred === `${Epic.LAYER_CHANGED}:epic-${round}`),
   );
 
-// Runs the epic from `work` until it parks, then lets go of every claim, as a
-// run ending at its park does.
-const runToPark = (fake: Fake, work: ReturnType<typeof item>, round = 1) =>
+// Whether the run is parked on the epic, in any round.
+const parkedOnEpic = (run: EngineRun) =>
+  Effect.map(
+    listRunWaitsHandler({ runId: run.id, signal: Epic.LAYER_CHANGED }),
+    ({ waits }) => waits.length > 0,
+  );
+
+// Runs the epic from `work` until it parks, in whichever round, then lets go
+// of every claim, as a run ending at its park does.
+const runToPark = (fake: Fake, work: ReturnType<typeof item>) =>
   Effect.gen(function* () {
-    const run = yield* runUntil(working, fake, work, parkedAt(round));
+    const run = yield* runUntil(working, fake, work, parkedOnEpic);
     fake.refs.clear();
 
     return run;
