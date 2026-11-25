@@ -490,12 +490,13 @@ export const openSandbox = (
   // machine's state.db, as the implicit persona, and answers its id. In a
   // child process of its own, as the CLI is, through the runs module's own
   // StartRunCommand handler.
-  const recordRun = (flow: string, item: Json) => {
-    const script = join(root, `record-run-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
-
-    writeFileSync(
-      script,
-      `import { BunServices } from "@effect/platform-bun";
+  const recordRun = (flow: string, item: Json) =>
+    // Evaluated from the repo's root, so its packages resolve from there.
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `import { BunServices } from "@effect/platform-bun";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -504,7 +505,7 @@ import { RunId } from "${ROOT}src/kernel/run-id.id.ts";
 import { startRunHandler } from "${ROOT}src/modules/runs/commands/start-run.handler.ts";
 import { StateAt } from "${ROOT}test/sdk-fakes.ts";
 
-const item = JSON.parse(process.argv[3]);
+const item = JSON.parse(process.env.RECORD_ITEM);
 const id = RunId.make(crypto.randomUUID());
 
 await Effect.runPromise(
@@ -514,26 +515,31 @@ await Effect.runPromise(
     configTree: Option.none(),
     repo: "demo",
     persona: Option.none(),
-    flow: process.argv[2],
+    flow: process.env.RECORD_FLOW,
     itemKey: item.key,
     itemTitle: Option.fromUndefinedOr(item.title),
     itemUrl: Option.fromUndefinedOr(item.url),
     item: Option.some(item),
   }).pipe(
-    Effect.provide(StateAt(${JSON.stringify(home)}).pipe(Layer.provideMerge(BunServices.layer))),
+    Effect.provide(StateAt(process.env.RECORD_HOME).pipe(Layer.provideMerge(BunServices.layer))),
     Effect.scoped,
   ),
 );
 
 process.stdout.write(id);
 `,
-    );
-
-    return execFileSync(process.execPath, [script, flow, JSON.stringify(item)], {
-      cwd: ROOT,
-      encoding: "utf8",
-    }).trim();
-  };
+      ],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RECORD_FLOW: flow,
+          RECORD_ITEM: JSON.stringify(item),
+          RECORD_HOME: home,
+        },
+      },
+    ).trim();
 
   // The CLI as a hub starts a spoke on this machine: its stdin a pipe the
   // test holds open, as a hub holds a spoke's, and closes to stop it.
