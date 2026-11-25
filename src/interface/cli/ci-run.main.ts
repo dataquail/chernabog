@@ -8,8 +8,15 @@
 // the next one, so before it exits for any reason it pushes what the agent
 // left in its worktrees, and keeps the run log and the agent's transcripts
 // where the workflow uploads them from.
+//
+// On a machine it is a spoke (ADR 23, #658): the hub has recorded the run and
+// hands it over with `--run <id>` and the item (`--work-item-file`, or
+// `--work-item`), and the spoke runs that one run, against the machine's home
+// and a journal of the run's own, to its next phase boundary, then exits. It
+// stops as on SIGTERM when its stdin closes, so it dies with the hub that
+// holds the other end.
 
-import { Claims, Git, triggerOf, type WorkItem } from "@chernabog/core";
+import { Claims, Git, triggerOf } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -24,9 +31,10 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../../kernel/persona.value-object.ts";
-import { type RunId, runLabel } from "../../kernel/run-id.id.ts";
+import { RunId, runLabel } from "../../kernel/run-id.id.ts";
 import {
   buildPersonaContexts,
+  CancelTarget,
   CiPlan,
   EngineLive,
   type FlowHandle,
@@ -40,6 +48,7 @@ import {
   servicesFrom,
   withRepo,
   withRepoReservedFor,
+  WorkItem,
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
 import { type Environment, HostEnvironment } from "../../platform/environment.ts";
@@ -48,6 +57,7 @@ import { viewerAs, viewerLoginAs } from "../../platform/github-api.ts";
 import { GH_TOKEN_CREDENTIAL_HELPER } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { stopWhenStdinCloses } from "../../platform/shutdown.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import { tailer } from "./run.main.ts";
 
@@ -177,7 +187,87 @@ export type CiRunOptions = {
   // The workflow run the job is part of (GITHUB_RUN_ID), whose plan job
   // reserved the item for it (#519); none outside Actions.
   readonly workflowRun: Option.Option<string>;
+  // The hub's hand-over, which makes this a spoke on a machine: the run it
+  // recorded, and the item, as JSON inline or in a file. None in a CI job.
+  readonly run: Option.Option<string>;
+  readonly workItem: Option.Option<string>;
+  readonly workItemFile: Option.Option<string>;
 };
+
+// The run a hub recorded and handed to this spoke, with the item it is for.
+export type HandedOver = { readonly runId: RunId; readonly item: WorkItem };
+
+const WorkItemJson = Schema.fromJsonString(WorkItem);
+
+// The hub's hand-over, from the item's JSON as given: none for a CI job,
+// which is given neither. Refused when only half of it is given, or the item
+// isn't the one `--item` names.
+export const handedOverFrom = (
+  options: Pick<CiRunOptions, "run" | "item">,
+  itemJson: Option.Option<string>,
+): Effect.Effect<Option.Option<HandedOver>, ConfigError> => {
+  if (Option.isNone(options.run)) {
+    return Option.match(itemJson, {
+      onNone: () => Effect.succeedNone,
+      onSome: () =>
+        Effect.fail(
+          new ConfigError({
+            message: "--work-item and --work-item-file are a hub's hand-over: give --run with them",
+          }),
+        ),
+    });
+  }
+
+  const runId = RunId.make(options.run.value);
+
+  return Option.match(itemJson, {
+    onNone: () =>
+      Effect.fail(
+        new ConfigError({
+          message: `--run ${runId} needs the item it is for: --work-item-file, or --work-item`,
+        }),
+      ),
+    onSome: (text) =>
+      Schema.decodeEffect(WorkItemJson)(text).pipe(
+        Effect.mapError(
+          (issue) =>
+            new ConfigError({ message: `the work item for ${runId} isn't one: ${issue.message}` }),
+        ),
+        Effect.filterOrFail(
+          (item) => item.key === options.item,
+          (item) =>
+            new ConfigError({
+              message: `--item ${options.item} isn't the item handed over with ${runId}, ${item.key}`,
+            }),
+        ),
+        Effect.map((item) => Option.some<HandedOver>({ runId, item })),
+      ),
+  });
+};
+
+// The item's JSON as the hub gave it: inline, or in a file, never both.
+const itemJsonOf = (options: CiRunOptions) =>
+  Effect.gen(function* () {
+    if (Option.isSome(options.workItem) && Option.isSome(options.workItemFile)) {
+      return yield* new ConfigError({
+        message: "give the work item once: --work-item or --work-item-file",
+      });
+    }
+
+    for (const path of Option.toArray(options.workItemFile)) {
+      return Option.some(
+        yield* (yield* FileSystem.FileSystem)
+          .readFileString(path)
+          .pipe(
+            Effect.mapError(
+              (error) => new ConfigError({ message: `reading the work item: ${error.message}` }),
+            ),
+          ),
+      );
+    }
+
+    return options.workItem;
+  });
 
 const JsonText = Schema.fromJsonString(Schema.Json);
 
@@ -318,12 +408,12 @@ export const asCiJob = (repo: EffectiveRepo): EffectiveRepo => ({
 
 // Follows a run until it ends, parks on a signal, loses its claim or runs out
 // of the job's time, renewing its claim's short lease as it goes.
-const followToBoundary = (runId: RunId, options: CiRunOptions, stopAt: number) =>
+const followToBoundary = (runId: RunId, leaseTtl: Duration.Duration, stopAt: number) =>
   Effect.gen(function* () {
     const commands = yield* RunFlowsCommands;
     const queries = yield* RunsQueries;
     const tail = tailer(yield* runLogFile(runId));
-    const renewEvery = Duration.toMillis(options.leaseTtl) / 3;
+    const renewEvery = Duration.toMillis(leaseTtl) / 3;
     let renewedAt = yield* Clock.currentTimeMillis;
 
     for (;;) {
@@ -365,7 +455,7 @@ const followToBoundary = (runId: RunId, options: CiRunOptions, stopAt: number) =
 
         const leases = yield* commands.CheckRunLeasesCommand({
           runId,
-          renew: Option.some(options.leaseTtl),
+          renew: Option.some(leaseTtl),
         });
 
         if (Predicate.isTagged(leases, "Lost")) {
@@ -545,8 +635,81 @@ const describeEnding = (ending: CiRunEnding) => {
   }
 };
 
+// Why a spoke's run ended at its park, for its summary, as the daemon says it.
+const PARKED_REASON =
+  "it waits on a person or another system: its record carries the wait, and a later run takes it up";
+
+// How a spoke's run ends where the spoke stops following it: at its park, or
+// lost to another run's claim. None for a run that ended by itself, or a
+// spoke stopped by a signal, whose run the hub reaps (#664).
+export const spokeEndingOf = (exit: Exit.Exit<CiRunEnding, unknown>) => {
+  if (Exit.isFailure(exit)) {
+    return Option.none<EndAs>();
+  }
+
+  switch (exit.value.kind) {
+    case "parked":
+      return Option.some<EndAs>({ ending: "ended-at-park", reason: PARKED_REASON });
+    case "elsewhere":
+      return Option.some<EndAs>({ ending: "lost", reason: exit.value.why });
+    case "ended":
+    case "out-of-time":
+      return Option.none<EndAs>();
+  }
+};
+
+type EndAs = { readonly ending: "ended-at-park" | "lost"; readonly reason: string };
+
+// Ends a spoke's run at its boundary, so its RunFinished deletes its journal
+// and its claim ref goes, as the daemon ends a parked or lost run today.
+//
+// Interim, until #659: the hub ends a spoke's run, from the ending its
+// journal reports, once the spoke has exited.
+const endSpokeRun = (runId: RunId, endAs: EndAs) =>
+  RunFlowsCommands.use((runs) =>
+    runs.CancelRunCommand({
+      target: CancelTarget.cases.ById.make({ asked: runId }),
+      by: "chernabog",
+      closeSessions: false,
+      endAs: Option.some(endAs),
+    }),
+  ).pipe(
+    Effect.flatMap(() => Console.log(`ended ${runId} as ${endAs.ending}`)),
+    Effect.catch((error) =>
+      Console.error(`could not end ${runId} as ${endAs.ending}: ${error.message}`),
+    ),
+  );
+
+// A spoke's run: the one the hub recorded, executed here in a journal of its
+// own for the item it handed over, without asking the trigger again (#656).
+const spokeProgram = (
+  over: HandedOver,
+  leaseTtl: Duration.Duration,
+  stopAt: number,
+  onStarted: (runId: RunId) => void,
+) =>
+  Effect.gen(function* () {
+    // Interim, until #659: the spoke attaches its execution in state.db.
+    const run = yield* (yield* RunFlowsCommands)
+      .ExecuteRunCommand({ runId: over.runId, item: over.item })
+      .pipe(
+        Effect.mapError(
+          (error) => new ConfigError({ message: `executing ${over.runId}: ${error.message}` }),
+        ),
+      );
+
+    onStarted(run.id);
+    yield* Console.log(`started ${run.id} (${runLabel(run)}) for ${over.item.key}`);
+
+    // Interim, until #659: the spoke renews its own claim's lease, which the
+    // hub renews for its spokes (ADR 23, decision 6).
+    return yield* followToBoundary(run.id, leaseTtl, stopAt);
+  });
+
 // One item on one runner, to the next phase boundary. Fails only for a run
 // that failed or ran out of the job's time, so the workflow keeps its logs.
+// Handed a run (`--run`), it is a spoke on a machine instead: the run the hub
+// recorded, against the machine's home.
 export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -554,14 +717,23 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     const variables = (yield* HostEnvironment).variables;
     const paths = homePaths(home.root);
 
-    const refused = refusalOf(variables, yield* fs.exists(paths.state));
+    const handedOver = yield* handedOverFrom(options, yield* itemJsonOf(options));
+    const spoke = Option.isSome(handedOver);
+
+    // A spoke runs in the machine's own home, which holds its state.db.
+    const refused = refusalOf(variables, !spoke && (yield* fs.exists(paths.state)));
 
     if (Option.isSome(refused)) {
       return yield* new ConfigError({ message: refused.value });
     }
 
     const stopAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(options.stopAfter);
-    yield* prepareHome(options);
+
+    if (spoke) {
+      yield* stopWhenStdinCloses();
+    } else {
+      yield* prepareHome(options);
+    }
 
     const { enrolled, machine } = yield* config(options.repo);
     const opened = yield* openRepo(machine, enrolled, options.fromCheckout);
@@ -576,26 +748,38 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     // The plan job's reservation of the item, which the run's claim replaces.
     const claim = CiPlan.claimName(options.item);
 
-    const reservation = Option.map(options.workflowRun, (workflowRun) =>
-      CiPlan.reservationFor(workflowRun, claim),
+    const reservation = Option.map(
+      Option.filter(options.workflowRun, () => !spoke),
+      (workflowRun) => CiPlan.reservationFor(workflowRun, claim),
     );
 
-    // The job renews the claim itself, on a lease short enough that a killed
-    // job's runs out before long.
-    const repo: EffectiveRepo = {
-      ...asCiJob(opened.repo),
-      leases: {
-        ...opened.repo.leases,
-        ttl: options.leaseTtl,
-        ...Option.match(reservation, {
-          onNone: () => ({}),
-          onSome: (takesOver) => ({ takesOver }),
-        }),
-      },
-    };
+    // A spoke runs the repo as the machine does. A job renews the claim
+    // itself, on a lease short enough that a killed job's runs out before
+    // long, and parks where a flow can resume rather than bill the wait.
+    const repo: EffectiveRepo = Option.match(handedOver, {
+      onSome: () => opened.repo,
+      onNone: () => ({
+        ...asCiJob(opened.repo),
+        leases: {
+          ...opened.repo.leases,
+          ttl: options.leaseTtl,
+          ...Option.match(reservation, {
+            onNone: () => ({}),
+            onSome: (takesOver) => ({ takesOver }),
+          }),
+        },
+      }),
+    });
 
     const handle = flowHandle(repo, options.flow, flow.value, Option.none());
-    yield* acquireLock(paths.engineLock, `ci run ${options.flow} ${options.item}`);
+
+    // A job's home is its own, so its engine is the only one there. A spoke
+    // shares the machine's home with the hub and its other spokes, and takes
+    // no lock: its journal is its run's alone (ADR 23, decision 3).
+    if (!spoke) {
+      yield* acquireLock(paths.engineLock, `ci run ${options.flow} ${options.item}`);
+    }
+
     const persona = yield* personaOf(repo, options.persona);
     const contexts = yield* buildPersonaContexts(repo, machine);
 
@@ -611,7 +795,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
 
     let started = Option.none<RunId>();
 
-    const program = Effect.gen(function* () {
+    const jobProgram = Effect.gen(function* () {
       // The plan job's reservation is this job's to take over, not another run's.
       const holder = Option.filter(
         yield* withRepo(context, Claims.liveHolder(claim)).pipe(
@@ -655,7 +839,15 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
       started = Option.some(run.value.id);
       yield* Console.log(`started ${run.value.id} (${runLabel(run.value)}) for ${options.item}`);
 
-      return yield* followToBoundary(run.value.id, options, stopAt);
+      return yield* followToBoundary(run.value.id, repo.leases.ttl, stopAt);
+    });
+
+    const program = Option.match(handedOver, {
+      onSome: (over) =>
+        spokeProgram(over, repo.leases.ttl, stopAt, (runId) => {
+          started = Option.some(runId);
+        }),
+      onNone: () => jobProgram,
     });
 
     // Whatever ends the job, its work is pushed, a claim it still holds let
@@ -671,6 +863,14 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
             Effect.catch((error) => Console.error(`could not push the work: ${String(error)}`)),
           );
           yield* releaseClaims(runId, context);
+        }
+
+        // A spoke's run that parked or was lost ends here, letting go of its
+        // journal.
+        for (const runId of Option.toArray(Option.filter(started, () => spoke))) {
+          for (const endAs of Option.toArray(spokeEndingOf(exit))) {
+            yield* endSpokeRun(runId, endAs);
+          }
         }
 
         // A reservation the run never took over, as when nothing started, is

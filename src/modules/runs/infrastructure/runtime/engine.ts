@@ -103,6 +103,15 @@ export class RunFailed extends Schema.TaggedError<RunFailed, { readonly brand: "
   },
 ) {}
 
+// How long a write to state.db waits for another process's write to finish.
+//
+// Interim, until #661: a spoke (`ci run --run`) writes the run's records to
+// state.db itself, beside the daemon, so two processes write it. WAL lets
+// either read while the other writes, and each waits out the other's write
+// rather than failing it. Once a spoke reports through its journal and the
+// hub folds it, the hub is state.db's only writer again (ADR 23, decision 3).
+export const STATE_DB_BUSY_TIMEOUT = Duration.seconds(30);
+
 // state.db under the chernabog home at `root`, which a newer chernabog's
 // stamp refuses, and an older one's is copied before it moves up: the
 // machine's own records, and no workflow journal (ADR 23, decision 3).
@@ -110,7 +119,12 @@ export const StateDbAt = (root: string) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const database = homePaths(root).state;
-      const prepared = yield* prepareState((yield* Home).root, database);
+
+      const prepared = yield* prepareState(
+        (yield* Home).root,
+        database,
+        Duration.toMillis(STATE_DB_BUSY_TIMEOUT),
+      );
 
       for (const kept of Option.toArray(prepared.kept)) {
         yield* Console.error(
@@ -118,7 +132,11 @@ export const StateDbAt = (root: string) =>
         );
       }
 
-      return SqliteClient.layer({ filename: database });
+      return SqliteClient.layer({
+        filename: database,
+        disableWAL: false,
+        busyTimeout: STATE_DB_BUSY_TIMEOUT,
+      });
     }).pipe(Effect.catchTag("PlatformError", Effect.die)),
   );
 

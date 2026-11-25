@@ -993,6 +993,17 @@ How a CI run differs from a daemon run:
 - **Still interactive, still subscription-billed.** `ci run` refuses to start
   while `ANTHROPIC_API_KEY` is set, and seeds `~/.claude.json` so `claude`
   starts at its prompt.
+- **On a machine, `ci run --run` is a spoke** (ADR 23, #658). A hub has
+  recorded the run (`StartRunCommand`) and hands it over:
+  `ci run --run <id> --repo --flow --persona --item <key> --work-item-file <path>`
+  (or `--work-item <json>`). It runs in the machine's own home, writes no
+  machine config, takes no `state.db.lock`, doesn't ask the trigger again,
+  and runs the repo as the machine does (no `asCiJob`). `ExecuteRunCommand`
+  executes the recorded run in its own journal; a park ends it
+  `ended-at-park` and a lost claim `lost`. It stops as on SIGTERM when its
+  stdin closes. Until #659/#661 it writes `state.db` itself beside the
+  daemon (WAL, `STATE_DB_BUSY_TIMEOUT`) and renews its own lease; then the
+  hub folds its journal's reports and renews for it.
 
 ## Versions (#123, #163)
 

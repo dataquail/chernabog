@@ -65,6 +65,7 @@ export const runsCommandSpanAttributes = {
 export const runFlowsCommandSpanAttributes = {
   CheckRunLeasesCommand: ofRun,
   DeliverSignalsCommand: ofFlowRef,
+  ExecuteRunCommand: ofRun,
   GateFlowCommand: ofFlowRef,
   PlanTickCommand: ofFlowRef,
   PollRunCommand: ofRun,
