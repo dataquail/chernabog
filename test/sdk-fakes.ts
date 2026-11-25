@@ -88,9 +88,11 @@ import {
   type FlowHandle,
   flowLayer,
   forEveryPersona,
+  type OnParked,
   type ServicesFor,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
+import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
 import { RunsModule } from "../src/modules/runs/runs.platform.ts";
 import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
@@ -1484,10 +1486,13 @@ export const engineOver = <R>(
   registry: FlowRegistry,
   servicesFor: ServicesFor<R>,
   home: string,
+  onParked: OnParked = () => Effect.void,
 ) =>
   Layer.mergeAll(
     applicationModules.engine,
-    flowLayer(handle, servicesFor).pipe(Layer.provide(applicationModules.engine)),
+    flowLayer(handle, servicesFor, noHooks, onParked).pipe(
+      Layer.provide(applicationModules.engine),
+    ),
   ).pipe(
     Layer.provideMerge(applicationModules.runtime(registry)),
     Layer.provideMerge(StateAt(home)),

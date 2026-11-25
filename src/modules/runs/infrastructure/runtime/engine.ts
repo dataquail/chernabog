@@ -578,6 +578,13 @@ const markerHolds = (runId: RunId, flow: Flow) =>
     });
   });
 
+// What the process executing a run hears of its park, once the run's wait is
+// recorded: a spoke ends there, at its phase boundary, and says so in its
+// journal (ADR 23, decision 2). Nothing by default.
+export type OnParked = (runId: RunId) => Effect.Effect<void>;
+
+const ignoreParks: OnParked = () => Effect.void;
+
 // A flow's workflow, registered in the engine. Its runs take their steps,
 // markers and subjects through the runs' dispatchers, which the composition
 // root provides from the runs module.
@@ -585,6 +592,7 @@ export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
   hooks: StepHooks = noHooks,
+  onParked: OnParked = ignoreParks,
 ) =>
   handle.workflow.toLayer((payload, executionId) =>
     Effect.gen(function* () {
@@ -657,7 +665,9 @@ export const flowLayer = <R>(
 
       const park = yield* capturing(
         (parking: { signal: string; deferred: string; token: string }) =>
-          RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
+          RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })).pipe(
+            Effect.tap(() => onParked(runId)),
+          ),
       );
 
       // A subject named after its run ended changes nothing.

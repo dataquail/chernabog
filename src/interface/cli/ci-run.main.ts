@@ -42,6 +42,7 @@ import {
   flowHandle,
   flowLayer,
   type FlowRef,
+  noHooks,
   openRepo,
   type RepoContext,
   RunFlowsCommands,
@@ -697,11 +698,19 @@ const reportEnding = (runId: RunId, ending: SpokeEnding) =>
 
 // Follows a spoke's run until its workflow ends, it parks or the spoke runs
 // out of time. It ends nothing in state.db and renews no lease: the hub
-// does both (ADR 23, decisions 2 and 6).
-const followSpoke = (over: HandedOver, executionId: string, flow: FlowRef, stopAt: number) =>
-  Effect.gen(function* (): Effect.fn.Return<CiRunEnding, never, RunFlowsQueries | RunsQueries> {
+// does both (ADR 23, decisions 2 and 6). Its park is what the engine told
+// this process (`parked`), once the run's wait was recorded, so the spoke
+// ends at its phase boundary: no run sleeps inside a process, and the run
+// that takes the item up starts from its record in a spoke of its own.
+const followSpoke = (
+  over: HandedOver,
+  executionId: string,
+  flow: FlowRef,
+  stopAt: number,
+  parked: ReadonlySet<RunId>,
+) =>
+  Effect.gen(function* (): Effect.fn.Return<CiRunEnding, never, RunFlowsQueries> {
     const flows = yield* RunFlowsQueries;
-    const queries = yield* RunsQueries;
 
     for (;;) {
       const polled = yield* flows.PollExecutionQuery({ runId: over.runId, executionId, flow });
@@ -710,15 +719,7 @@ const followSpoke = (over: HandedOver, executionId: string, flow: FlowRef, stopA
         return { kind: "ended", status: ended.status, summary: ended.summary };
       }
 
-      // Interim, until parks end the spoke (#660): its park is recorded in
-      // state.db, which it reads back.
-      const active = yield* queries.ListActiveRunsQuery({
-        repo: Option.none(),
-        persona: Option.none(),
-        flow: Option.none(),
-      });
-
-      if (active.runs.some((run) => run.id === over.runId && run.parked)) {
+      if (parked.has(over.runId)) {
         return { kind: "parked" } satisfies CiRunEnding;
       }
 
@@ -737,6 +738,7 @@ const spokeProgram = (
   over: HandedOver,
   flow: FlowRef,
   stopAt: number,
+  parked: ReadonlySet<RunId>,
   onStarted: (runId: RunId) => void,
 ) =>
   Effect.gen(function* () {
@@ -758,7 +760,7 @@ const spokeProgram = (
       ),
     );
 
-    return yield* followSpoke(over, executionId, flow, stopAt);
+    return yield* followSpoke(over, executionId, flow, stopAt, parked);
   });
 
 // One item on one runner, to the next phase boundary. Fails only for a run
@@ -858,6 +860,9 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
 
     let started = Option.none<RunId>();
 
+    // The runs this process's engine parked, as it tells them.
+    const parked = new Set<RunId>();
+
     const jobProgram = Effect.gen(function* () {
       // The plan job's reservation is this job's to take over, not another run's.
       const holder = Option.filter(
@@ -911,7 +916,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
       Effect.Services<typeof jobProgram> | RunFlowsQueries
     > = Option.match(handedOver, {
       onSome: (over) =>
-        spokeProgram(over, refOf(handle, persona), stopAt, (runId) => {
+        spokeProgram(over, refOf(handle, persona), stopAt, parked, (runId) => {
           started = Option.some(runId);
         }),
       onNone: () => jobProgram,
@@ -963,7 +968,13 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
           handles: [handle],
           services: (_repo, one) => servicesFrom(contexts)(one),
         },
-        flows: [flowLayer(handle, servicesFrom(contexts))],
+        flows: [
+          flowLayer(handle, servicesFrom(contexts), noHooks, (runId) =>
+            Effect.sync(() => {
+              parked.add(runId);
+            }),
+          ),
+        ],
         engine: EngineLive,
       }),
     );
