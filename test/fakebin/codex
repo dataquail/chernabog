@@ -3,7 +3,12 @@
 // the real CLI prints: thread.started, item.started/completed, turn.completed.
 // It commits a change, writes the final message to -o, and logs a session file
 // with rate limits under $CODEX_HOME/sessions, as Codex does.
-import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+// FAKE_AGENT_PERSONAS: as fakebin/claude reads it.
+// FAKE_CODEX_COMMENT_ON_CHANGE: a review's line comment goes on the first change-*.txt in its
+// worktree, which its pull request adds, rather than README.md, as a real GitHub needs a line
+// of the diff.
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -26,9 +31,16 @@ if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, `${re
 if (process.env.FAKE_AGENT_TOKEN_LOG) appendFileSync(process.env.FAKE_AGENT_TOKEN_LOG, `codex ${process.env.GH_TOKEN ?? 'none'}\n`);
 // Each call, as fakebin/claude logs it: the persona its token is for, and the branch and commit it starts on.
 if (process.env.FAKE_AGENT_SESSION_LOG) {
-  const persona = /^token-(.+)$/.exec(process.env.GH_TOKEN ?? '')?.[1] ?? null;
+  const personasFile = process.env.FAKE_AGENT_PERSONAS;
+  const tokenHash = createHash('sha256').update(process.env.GH_TOKEN ?? '').digest('hex');
+  const persona =
+    /^token-(.+)$/.exec(process.env.GH_TOKEN ?? '')?.[1] ??
+    (personasFile && existsSync(personasFile)
+      ? readFileSync(personasFile, 'utf8').split('\n').map((line) => line.split(' ')).find(([hash]) => hash === tokenHash)?.[1]
+      : undefined) ??
+    null;
   const revParse = (...names: Array<string>) => spawnSync('git', ['rev-parse', ...names, 'HEAD'], { cwd, encoding: 'utf8' }).stdout?.trim() ?? '';
-  appendFileSync(process.env.FAKE_AGENT_SESSION_LOG, `session ${JSON.stringify({ agent: 'codex', call: resuming ? 'resume' : 'start', session: thread, persona, branch: revParse('--abbrev-ref'), head: revParse(), cwd })}\n`);
+  appendFileSync(process.env.FAKE_AGENT_SESSION_LOG, `session ${JSON.stringify({ agent: 'codex', call: resuming ? 'resume' : 'start', session: thread, persona, branch: revParse('--abbrev-ref'), head: revParse(), cwd, at: new Date().toISOString() })}\n`);
 }
 console.log(JSON.stringify({ type: 'thread.started', thread_id: thread }));
 console.log(JSON.stringify({ type: 'turn.started' }));
@@ -45,12 +57,15 @@ const reviewing = prompt.includes('# Review pull request') || prompt.includes('#
 if (reviewing) {
   const round = Number(prompt.match(/This is review (\d+)/)?.[1] ?? 1);
   const rechecking = prompt.includes('# Re-check pull request');
+  const commentPath = process.env.FAKE_CODEX_COMMENT_ON_CHANGE
+    ? (readdirSync(cwd).filter((name) => /^change-\d+\.txt$/.test(name)).sort()[0] ?? 'README.md')
+    : 'README.md';
   const approved = { verdict: 'approve', summary: 'The test is there now. Looks good.', comments: [] };
   const verdict =
     rechecking
       ? { ...approved, findings: [{ finding: 'Mention the change in the README', remediated: true }] }
       : round === 1
-        ? { verdict: 'request-changes', summary: 'Please add a test for the change.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change here.' }] }
+        ? { verdict: 'request-changes', summary: 'Please add a test for the change.', comments: [{ path: commentPath, line: 1, body: 'Mention the change here.' }] }
         : approved;
   console.log(JSON.stringify({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: JSON.stringify(verdict) } }));
   console.log(JSON.stringify({ type: 'turn.completed', usage: {} }));

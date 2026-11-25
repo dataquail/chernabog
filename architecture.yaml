@@ -1787,8 +1787,8 @@ tree:
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
       # The acceptance tier: its tests, and the harnesses they share — the sandbox they drive the
-      # built CLI in, the fake GitHub and registry it talks to, the lockfile reader, and the
-      # timings the shards split by.
+      # built CLI in, the fake GitHub and registry it talks to, the lockfile reader, the live
+      # feature driver's machine on a real GitHub, and the timings the shards split by.
       "acceptance/":
         children:
           "*.test.ts":
@@ -1797,6 +1797,7 @@ tree:
           "fake-github.ts": {}
           "fake-registry.ts": {}
           "lockfile.ts": {}
+          "live-machine.ts": {}
           "timings.json": {}
       "fakebin/": { layout: open }
       # The behavior specs' runner, domain layer, step definitions and drivers
