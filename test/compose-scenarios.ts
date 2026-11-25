@@ -126,6 +126,10 @@ export type Inspect = (
   run: EngineRun,
 ) => Effect.Effect<void, never, RuntimeServices | BunServices.BunServices>;
 
+// How many polls running a run parks on the same unanswered waits before
+// observe takes it as parked there for good.
+const SETTLED_POLLS = 4;
+
 export const observe = (
   flow: Flow,
   name: string,
@@ -143,6 +147,10 @@ export const observe = (
     // The parks already woken, by their waits, and the changes made so far.
     const answered = new Set<string>();
     let changed = 0;
+    // How many polls running the run has been parked on the same waits, which
+    // no wake of the scenario answers.
+    let stuck = 0;
+    let stuckOn = "";
 
     // Delivers what the flow's own trigger then reports as a signal: how many runs it woke.
     const signal = Effect.gen(function* () {
@@ -168,6 +176,36 @@ export const observe = (
         );
 
         if (run.status !== "running") {
+          yield* readSteps;
+
+          return true;
+        }
+
+        // A run parked on waits the scenario never answers stays there, and
+        // that is where it got to: a flow that asks a person for what the
+        // recipe doesn't ask parks rather than ends. The waits are the same
+        // a few polls running, as a wait on several signals registers them
+        // one at a time.
+        const { waits: parkedOn } = yield* readRunHistoryHandler({ runId: run.id }).pipe(
+          Effect.orDie,
+        );
+
+        const answerable = Option.match(Option.fromUndefinedOr(wake), {
+          onNone: () => false,
+          onSome: (waking) => parkedOn.some((wait) => wait.signal === waking.signal),
+        });
+
+        const unanswered = parkedOn.map((wait) => wait.deferred).join(" ");
+
+        if (parkedOn.length > 0 && !answerable && unanswered === stuckOn) {
+          stuck += 1;
+        } else {
+          stuck = 0;
+        }
+
+        stuckOn = unanswered;
+
+        if (stuck >= SETTLED_POLLS) {
           yield* readSteps;
 
           return true;

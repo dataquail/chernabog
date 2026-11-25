@@ -97,6 +97,7 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
 import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import {
   RunFlowsQueries,
   RunsModule,
@@ -1640,6 +1641,8 @@ const quietLog = Layer.succeed(
 
 // Starts a run of the flow on the fake, and polls until `until` says it has got far enough,
 // at most `polls` times, 25ms apart: about five seconds, unless a slower case asks for more.
+// A run that never gets there fails the test, rather than handing back wherever it had got
+// to: a case that waited out the polls would pass on a run that stopped short.
 export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
@@ -1682,7 +1685,27 @@ export const runUntil = (
           }),
         ),
       ),
-      Effect.map((step) => step.polled),
+      Effect.flatMap((step) =>
+        Effect.gen(function* () {
+          if (step.done) {
+            return step.polled;
+          }
+
+          const { waits } = yield* readRunHistoryHandler({ runId: step.polled.id });
+
+          const on = Option.getOrElse(
+            Option.liftPredicate(
+              waits.map((wait) => wait.deferred).join(", "),
+              (listed) => listed.length > 0,
+            ),
+            () => "nothing",
+          );
+
+          return yield* Effect.die(
+            `runUntil: the run of ${handle.name} never got where the case waits for, in ${polls} polls; it is ${step.polled.status}, waiting on ${on}`,
+          );
+        }),
+      ),
       // A run that ended has its markers released, as the daemon releases them.
       Effect.tap((polled) =>
         Effect.when(
