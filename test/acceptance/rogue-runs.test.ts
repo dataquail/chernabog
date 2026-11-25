@@ -31,6 +31,7 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // session's launch is recorded, and then goes wrong as its title says.
 const ROGUE = `import { activity, Agent, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs, RunLog } from "@chernabog/sdk";
 import { spawn } from "node:child_process";
+import { randomFillSync } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
@@ -142,10 +143,12 @@ export default defineFlow({
         yield* activity("await-agent", Fiber.join(session).pipe(Effect.ignore));
       }
 
+      // Random bytes, which the OS can't compress out of its resident memory
+      // under pressure, as it can a buffer of one byte repeated.
       if (title.startsWith("memory")) {
         yield* activity(
           "allocate",
-          Effect.suspend(() => working(Number.POSITIVE_INFINITY, Buffer.alloc(1_200_000_000, 1))),
+          Effect.suspend(() => working(Number.POSITIVE_INFINITY, randomFillSync(Buffer.allocUnsafe(1_200_000_000)))),
         );
       }
 
