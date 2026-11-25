@@ -42,6 +42,7 @@ import {
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
   STAGE_FILES,
+  willCompile,
 } from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 
@@ -1220,6 +1221,7 @@ describe("tsc on a document's flow file", () => {
   const TIMEOUT = 120_000;
 
   const rejected = (name: string, doc: Doc, says: string) => {
+    willCompile(doc);
     effect(
       name,
       () =>
@@ -1231,6 +1233,15 @@ describe("tsc on a document's flow file", () => {
     );
   };
 
+  willCompile(
+    implement,
+    review,
+    reReview,
+    addressReview,
+    postMerge,
+    resolveConflicts,
+    humanInitiated,
+  );
   effect(
     "compiles the implement, review, re-review, address-review, resolve-conflicts, post-merge and human-initiated documents",
     () =>
@@ -1246,6 +1257,7 @@ describe("tsc on a document's flow file", () => {
     TIMEOUT,
   );
 
+  willCompile(draft);
   effect(
     "compiles a document that opens its pull request as a draft",
     () =>
@@ -1255,6 +1267,7 @@ describe("tsc on a document's flow file", () => {
     TIMEOUT,
   );
 
+  willCompile(givenToPerson, implementReady);
   effect(
     "compiles a document that gives its pull request to a person",
     () =>
@@ -1447,22 +1460,23 @@ describe("tsc on a document's flow file", () => {
   );
 
   // A team's to choose: the types don't say otherwise.
+  const withoutGate = without(implement, "gate");
+
+  const withoutCi = without(
+    changing(implement, "done", (step) => ({
+      ...step,
+      in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
+    })),
+    "ci",
+  );
+
+  willCompile(withoutGate, withoutCi);
   effect(
     "leaves the local gate and CI to the team",
     () =>
       Effect.gen(function* () {
-        expect(yield* compileErrors(without(implement, "gate"))).toEqual([]);
-        expect(
-          yield* compileErrors(
-            without(
-              changing(implement, "done", (step) => ({
-                ...step,
-                in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
-              })),
-              "ci",
-            ),
-          ),
-        ).toEqual([]);
+        expect(yield* compileErrors(withoutGate)).toEqual([]);
+        expect(yield* compileErrors(withoutCi)).toEqual([]);
       }),
     TIMEOUT,
   );
@@ -1835,6 +1849,7 @@ describe("a document with a loop and lanes", () => {
   });
 
   const rejected = (name: string, doc: Doc, says: string) => {
+    willCompile(doc);
     effect(
       name,
       () =>
@@ -1846,6 +1861,7 @@ describe("a document with a loop and lanes", () => {
     );
   };
 
+  willCompile(epic);
   effect(
     "compiles the epic document",
     () =>
@@ -3032,6 +3048,7 @@ describe("a document that runs a stage", () => {
 
   describe("tsc", () => {
     const rejected = (name: string, doc: Doc, says: string) => {
+      willCompile(doc);
       effect(
         name,
         () =>
@@ -3050,16 +3067,18 @@ describe("a document that runs a stage", () => {
       failure: FAILURE,
     });
 
+    const fromTheDocument = changingStage(staged, (step) => ({
+      ...step,
+      with: { note: "from the document" },
+    }));
+
+    willCompile(staged, fromTheDocument);
     effect(
       "compiles a stage wired correctly, in and out",
       () =>
         Effect.gen(function* () {
           expect(yield* compileErrors(staged)).toEqual([]);
-          expect(
-            yield* compileErrors(
-              changingStage(staged, (step) => ({ ...step, with: { note: "from the document" } })),
-            ),
-          ).toEqual([]);
+          expect(yield* compileErrors(fromTheDocument)).toEqual([]);
         }),
       TIMEOUT,
     );
@@ -3356,6 +3375,7 @@ describe("the plan document", () => {
     expect(listed.loopStates).toContain("plan.changes");
   });
 
+  willCompile(plan);
   effect(
     "compiles",
     () =>
@@ -3366,6 +3386,7 @@ describe("the plan document", () => {
   );
 
   const rejected = (name: string, doc: Doc, says: string) => {
+    willCompile(doc);
     effect(
       name,
       () =>
