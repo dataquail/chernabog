@@ -1,7 +1,8 @@
 // The world is input, never record (ADR 21, epic #557). Each bundled recipe
 // and its document twin runs an item to each of its parks; then everything
 // chernabog wrote on GitHub, every status label and every comment of its own,
-// is deleted, or separately edited, and the run is finished. The records and
+// is deleted, or separately edited, and the item is taken up again, to the
+// end of its run, or an epic's to its next park. The records and
 // the outcome are the untouched run's, and once projected again so are the
 // labels: nothing chernabog reads back from GitHub is a record of what it
 // did. The same holds when the labels and comments change while a run is in
@@ -116,6 +117,12 @@ type Park = {
     run: EngineRun,
   ) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>;
   readonly settle: (fake: Fake) => void;
+  // How far the run that takes the item up again goes: to its end, unless the
+  // flow can't end there, as an epic whose tasks' pull requests aren't merged
+  // parks again.
+  readonly resumed?: (
+    run: EngineRun,
+  ) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>;
   // The issues and pull requests whose labels the journey looks at.
   readonly numbers: ReadonlyArray<number>;
   readonly repo?: typeof repo;
@@ -464,12 +471,17 @@ const PARKS: ReadonlyArray<Park> = [
       return fake;
     },
     work: item(`issue-${EPIC}`, { issue: EPIC }),
-    // Its rounds take the tasks it can as far as they go, then it parks.
-    parked: waitsOn(Epic.LAYER_CHANGED),
+    // Its rounds take the tasks it can as far as they go, then it parks: #10
+    // and #12 in its first, #11 once #10 is done in its second, and nothing
+    // left to start in its third.
+    parked: waitsOn(Epic.LAYER_CHANGED, Option.some("epic-3")),
     // A person answers #12 and queues it again.
     settle: (fake) => {
       fake.setLabels(12, [DEFAULT_LABELS.eligible]);
     },
+    // The new run counts its rounds afresh: #12 in its first, then nothing
+    // left to start, and no pull request merged for the epic to finish.
+    resumed: waitsOn(Epic.LAYER_CHANGED, Option.some("epic-2")),
     numbers: [EPIC, 10, 11, 12, PULL],
   },
 ];
@@ -594,8 +606,9 @@ const withoutIds = (value: Json): Json => {
 };
 
 // Runs `park` with `flow` to its park, as a run ending there does, then on
-// to the end from the item its trigger offers once the world settles,
-// sabotaged as `sabotaged` says. What it recorded and how it ended.
+// from the item its trigger offers once the world settles, as far as
+// `park.resumed` says, sabotaged as `sabotaged` says. What it recorded and
+// where it got to.
 const journey = (park: Park, flow: Flow, sabotaged: Option.Option<Sabotage>) =>
   Effect.gen(function* () {
     const fake = park.world();
@@ -636,7 +649,11 @@ const journey = (park: Park, flow: Flow, sabotaged: Option.Option<Sabotage>) =>
 
     const offered = yield* flowTriggered(fake, flow, park.settings ?? {}).pipe(Effect.orDie);
     const taken = yield* Effect.fromOption(Arr.findFirst(offered, mayStart)).pipe(Effect.orDie);
-    const finished = yield* runToEnd(handle, fake, taken);
+
+    const finished = yield* Option.match(Option.fromUndefinedOr(park.resumed), {
+      onNone: () => runToEnd(handle, fake, taken),
+      onSome: (resumed) => runUntil(handle, fake, taken, resumed),
+    });
 
     // Labels projected again, as the next projection of each item would.
     for (const number of park.numbers) {
