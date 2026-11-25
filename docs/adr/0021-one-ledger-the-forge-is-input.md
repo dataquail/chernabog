@@ -8,7 +8,10 @@ person" a phase, decision 4 makes a park a phase boundary, decision 6 keeps
 the linking markers until `Items`, and decisions 7 and 8 are new. Where the
 code still does what an amended paragraph replaced, the amendment wins and
 the code is a gap, listed in [the audit](../run-progress/audit.md) with the
-epic's task that closes it.
+epic's task that closes it. Amended 2026-11-24 by
+[ADR 23](0023-runs-execute-in-spokes.md) (epic #612): a run's journal is a
+file of its own, deleted when the run ends, and a daemon restarted
+mid-phase repeats the phase as CI does, rather than resuming it.
 
 ## Context
 
@@ -55,7 +58,10 @@ change.
      `Claims`, by compare-and-set.
    - The **journal** is execution: where a run has got to within one phase,
      its transcripts and its usage. It is private to the machine running it
-     and can be lost. Losing it costs time, never correctness.
+     and can be lost. Losing it costs time, never correctness. (Amended by
+     [ADR 23](0023-runs-execute-in-spokes.md), decision 3: it is a file per
+     run, which only that run's spoke writes and the hub deletes when the
+     run ends.)
    - The **world** is everything else: labels, reviews, pull requests, CI
      results, a Jira ticket's status. Anyone may change it. Chernabog reads
      it as input and writes it as projection.
@@ -652,6 +658,13 @@ change.
 - Once every wait parks, the daemon's durable workflows only cover one
   phase. A daemon restarted mid-phase still resumes from its journal. CI
   can't, and repeats the phase.
+
+  **Amended by [ADR 23](0023-runs-execute-in-spokes.md):** a daemon
+  doesn't resume either. Each run executes in a spoke, a process of its
+  own, against a journal of its own that is deleted when the run ends. A
+  hub restart kills its spokes, ends their runs `interrupted`, and their
+  phases repeat from the record, as in CI.
+
 - The daemon ends every run that parks, as `ci run` does, not only the parks
   a source can take up from the record. A run that ends there has status
   `ended-at-park`: it keeps every marker, worktree and agent session for the

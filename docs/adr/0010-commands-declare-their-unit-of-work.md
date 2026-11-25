@@ -1,7 +1,10 @@
 # 10. Commands declare their unit of work
 
 Status: accepted, 2026-10-31. Issue #289. Supersedes decision 5 of
-[ADR 6](0006-use-cases-become-commands-and-queries.md).
+[ADR 6](0006-use-cases-become-commands-and-queries.md). Amended by
+[ADR 23](0023-runs-execute-in-spokes.md): the workflow engine's journal
+leaves `state.db` for a file per run, and the hub is `state.db`'s only
+writer. The rule against calling out inside a transaction stands.
 
 ## Context
 
