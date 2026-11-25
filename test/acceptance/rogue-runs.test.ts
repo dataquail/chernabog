@@ -8,8 +8,9 @@
 // opened an agent session first. Each is ended within its bound, its run
 // failed naming the bound, its process group gone (by SIGKILL after the
 // grace, for the one deaf to SIGTERM), its journal deleted and its agent
-// session closed; meanwhile the hub stays up, the ordinary runs finish, and
-// the hub takes new work once the rogues are gone.
+// session closed, and its item is taken up again by a new run from the phase
+// it recorded; meanwhile the hub stays up, the ordinary runs finish, and the
+// hub takes new work once the rogues are gone.
 
 import { type ChildProcess, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -23,12 +24,15 @@ import * as Schema from "effect/Schema";
 
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
-// Says on the issue which process it runs in and takes the issue's label
-// off, so no later tick starts it again. An "ordinary ..." issue then takes
-// its claim, works for 20 seconds, a line a second, and records its phase.
-// Any other is a rogue: it claims the issue, opens an agent session in a
-// worktree (held at its prompt, so it never answers), waits until the
-// session's launch is recorded, and then goes wrong as its title says.
+// Says on the issue which process it runs in. An "ordinary ..." issue then
+// takes its label off, so no later tick starts it again, takes its claim,
+// works for 20 seconds, a line a second, and records its phase. Any other is
+// a rogue: it claims the issue, records the phase `went-rogue`, opens an
+// agent session in a worktree (held at its prompt, so it never answers),
+// waits until the session's launch is recorded, and then goes wrong as its
+// title says. It keeps its label, so once its run is ended the trigger offers
+// the item again, and the run that takes it up finds the phase recorded and
+// works as an ordinary one does, briefly.
 const ROGUE = `import { activity, Agent, Claims, defineFlow, GitHub, Implement, Issue, Phases, reportAs, RunLog } from "@chernabog/sdk";
 import { spawn } from "node:child_process";
 import { randomFillSync } from "node:crypto";
@@ -91,17 +95,40 @@ export default defineFlow({
       const title = item.title ?? "";
       const pid = yield* activity("pid", Effect.sync(() => String(process.pid)), Schema.String);
       yield* Issue.comment(issue, \`pid \${pid}\`);
-      yield* activity("unlabel", Effect.flatMap(GitHub, (github) => github.removeLabel(issue, "rogue")));
+
+      const before = yield* activity(
+        "phase-before",
+        Phases.current(item.key).pipe(
+          Effect.map(Option.match({ onNone: () => "none", onSome: (found) => found.phase })),
+        ),
+        Schema.String,
+      );
+
+      // Takes the issue's label off, does its work, and records its phase.
+      const work = (seconds: number) =>
+        Effect.gen(function* () {
+          yield* activity("unlabel", Effect.flatMap(GitHub, (github) => github.removeLabel(issue, "rogue")));
+          yield* activity("claim", Claims.acquire(item.key).pipe(Effect.asVoid));
+          yield* activity("work", working(seconds));
+          yield* activity("record-phase", Phases.record(item.key, "worked"));
+        });
 
       if (title.startsWith("ordinary")) {
-        yield* activity("claim", Claims.acquire(item.key).pipe(Effect.asVoid));
-        yield* activity("work", working(20));
-        yield* activity("record-phase", Phases.record(item.key, "worked"));
+        yield* work(20);
 
         return "worked beside the rogues";
       }
 
+      // A rogue's item, taken up again once its rogue run was ended, from the
+      // phase that run recorded.
+      if (before === "went-rogue") {
+        yield* work(3);
+
+        return "taken up again after its rogue run";
+      }
+
       const { base, branch } = yield* Implement.claim(issue);
+      yield* activity("record-rogue", Phases.record(item.key, "went-rogue"));
       const worktree = yield* Implement.prepareWorktree(branch, { base });
       const session = yield* openSession(issue, worktree);
 
@@ -253,6 +280,19 @@ describe("the rogue-run rehearsal", () => {
       }),
     );
 
+  // How each of the issue's runs the daemon logged finishing ended, and why.
+  const endings = (issue: number) =>
+    [
+      ...sandbox
+        .daemonLog()
+        .matchAll(
+          new RegExp(
+            `finished [\\da-f-]{36} \\(demo/rogue issue-${issue}\\): ([a-z-]+): (.*)`,
+            "g",
+          ),
+        ),
+    ].map((found) => `${String(found[1])}: ${String(found[2])}`);
+
   // When the hub found the run past a bound and began to end its spoke.
   const endingBegan = (runId: string) =>
     Option.map(
@@ -380,6 +420,21 @@ describe("the rogue-run rehearsal", () => {
       "every run to end",
       240_000,
     );
+
+    // Each rogue's item is taken up again, from the phase its rogue run
+    // recorded, by a run that finishes.
+    await waitFor(
+      () => rogues.every((rogue) => endings(rogue.issue).length >= 2),
+      "every rogue's item to be taken up again",
+      120_000,
+    );
+
+    for (const rogue of rogues) {
+      expect([rogue.title, endings(rogue.issue).slice(1)]).toEqual([
+        rogue.title,
+        ["done: taken up again after its rogue run"],
+      ]);
+    }
 
     expect(Option.fromNullishOr(daemon.exitCode)).toEqual(Option.none());
     expect(answered).toBeGreaterThan(0);
