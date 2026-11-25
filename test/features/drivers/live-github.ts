@@ -172,9 +172,11 @@ export type LiveRecords = {
 };
 
 // The world's one order (domain.ts' Sequenced), from the times GitHub and
-// the fake agents give. GitHub gives whole seconds, so within one second a
-// kind of event goes in the order the loop makes them: a push before the
-// review request that follows it, a review before the merge it allows.
+// the fake agents give. GitHub gives whole seconds, so every time is taken
+// to its second (the fake agents' milliseconds too), and within one second a
+// kind of event goes in the order the loop makes them: an agent's session
+// before the push it makes, a push before the review request that follows
+// it, a review before the merge it allows.
 const RANKS = {
   session: 0,
   push: 1,
@@ -187,8 +189,10 @@ const RANKS = {
 
 const RANKED = 10;
 
+const SECOND = 1000;
+
 export const sequenceAt = (at: string, kind: keyof typeof RANKS) =>
-  Date.parse(at) * RANKED + RANKS[kind];
+  Math.floor(Date.parse(at) / SECOND) * RANKED + RANKS[kind];
 
 const bySequence = Order.mapInput(Order.Number, (event: Sequenced) => event.sequence);
 

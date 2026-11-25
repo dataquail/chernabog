@@ -198,6 +198,12 @@ describe("the world from GitHub's records", () => {
     expect(new Set(order).size).toBe(3);
   });
 
+  test("an agent's session is before the push it made in the same second, whatever its milliseconds", () => {
+    expect(sequenceAt("2026-11-24T10:00:00.400Z", "session")).toBeLessThan(
+      sequenceAt("2026-11-24T10:00:00Z", "push"),
+    );
+  });
+
   test("a later second is later, whatever the kind", () => {
     expect(sequenceAt(AT, "merge")).toBeLessThan(sequenceAt(LATER, "session"));
   });
