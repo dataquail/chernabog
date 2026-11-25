@@ -34,7 +34,6 @@ import {
   GitLive,
   WorktreeLive,
 } from "../src/modules/runs/infrastructure/runtime/sdk-live.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import type { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
@@ -43,12 +42,14 @@ import type { Home } from "../src/platform/home.ts";
 import { startFakeGitHub } from "./acceptance/fake-github.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 import {
-  deliverSignals,
+  follow,
   item,
   makeFake,
+  onEngine,
   repoAs,
   runUntil,
   settings,
+  takeUp,
   triggered,
 } from "./sdk-fakes.ts";
 
@@ -288,61 +289,46 @@ const startEpic = (
     const headOf = (branch: string) =>
       Option.getOrElse(github.refSha(`refs/heads/${branch}`), () => "");
 
-    // Runs the epic and, each time it parks, records each layer's head on
-    // origin, does the next of `acts` and signals the change; once they are
-    // done, stops at the next park.
+    // Runs the epic and, each time a run ends at its park, records each
+    // layer's head on origin, does the next of `acts`, and takes the epic up
+    // in a new run from what Epic.queued then offers, as a tick would; once
+    // they are done, stops at the next park. The last run, and the heads at
+    // each park.
     const throughParks = (acts: ReadonlyArray<Effect.Effect<void>>) =>
-      Effect.gen(function* () {
-        const parks: Array<ReadonlyArray<string>> = [];
-        const answered = new Set<string>();
-        let acted = 0;
+      onEngine(
+        working,
+        fake,
+        Effect.gen(function* () {
+          const parks: Array<ReadonlyArray<string>> = [];
+          const work = item(`issue-${epicNumber}`, { issue: epicNumber });
+          let run = yield* follow(working, work);
 
-        const run = yield* runUntil(
-          working,
-          fake,
-          item(`issue-${epicNumber}`, { issue: epicNumber }),
-          (current) =>
-            Effect.gen(function* () {
-              if (current.status !== "running") {
-                return true;
-              }
+          while (run.status === "ended-at-park") {
+            parks.push(tasks.map((task) => headOf(`auto/issue-${task}`)));
+            const act = Arr.get(acts, parks.length - 1);
 
-              const { waits } = yield* listRunWaitsHandler({
-                runId: current.id,
-                signal: Epic.LAYER_CHANGED,
-              });
+            if (Option.isNone(act)) {
+              break;
+            }
 
-              const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
+            yield* act.value;
 
-              if (Option.isNone(parked)) {
-                return false;
-              }
+            const offered = (yield* triggered(fake, Epic.queued).pipe(Effect.orDie)).filter(
+              (found) => found.key === work.key,
+            );
 
-              if (parks.length === answered.size) {
-                parks.push(tasks.map((task) => headOf(`auto/issue-${task}`)));
-              }
+            run = yield* Effect.flatMap(
+              takeUp(working, offered),
+              Option.match({
+                onNone: () => Effect.die(`nothing took the epic up after park ${parks.length}`),
+                onSome: Effect.succeed,
+              }),
+            );
+          }
 
-              if (parks.length > acts.length) {
-                return true;
-              }
-
-              if (acted < parks.length) {
-                yield* acts[acted] ?? Effect.void;
-                acted += 1;
-              }
-
-              const found = yield* triggered(fake, Epic.queued).pipe(Effect.orDie);
-
-              if ((yield* deliverSignals(working, IMPLICIT, found)) > 0) {
-                answered.add(parked.value.deferred);
-              }
-
-              return false;
-            }),
-        );
-
-        return { run, parks };
-      });
+          return { run, parks };
+        }),
+      );
 
     return { github, pulls, asked, throughParks, recordPhase: base.recordPhase };
   });
@@ -374,7 +360,7 @@ describe("epic: carrying a change up the stack", () => {
           ),
         ]);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(parks).toHaveLength(2);
 
         // First park: nothing had moved, so nothing was pushed.
@@ -459,7 +445,7 @@ describe("epic: carrying a change up the stack", () => {
           ),
         ]);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(parks).toHaveLength(3);
 
         // Second park: the middle layer went to a person, and the top layer
@@ -529,7 +515,7 @@ describe("epic: landing layers that ship", () => {
           ),
         ]);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
 
         // The run moved the middle layer onto main, reconciled the squash
         // without asking bob again, and merged it: its approval stood.
@@ -719,7 +705,9 @@ const mergedBelow = ({ refuseRetry = false, when, work }: MergedBelow) =>
         ),
     );
 
-    expect(run.status).toBe("running");
+    // Followed until the task opened or went to a person: still going, or, had
+    // it got as far, ended at its next park; never failed or ended otherwise.
+    expect(["running", "ended-at-park"]).toContain(run.status);
 
     if (refuseRetry) {
       // One more try, on main, refused again: the task is a person's, with
