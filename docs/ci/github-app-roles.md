@@ -112,6 +112,15 @@ the reviewer as a bypass actor lets it write records there, beside whoever
 else writes them. Claim refs live outside `refs/heads/`, where branch
 rulesets don't reach, so both Apps can claim.
 
+Since these probes, every run writes its item's record to its thread (ADR
+21), the author's runs too, so both Apps write under `chernabog/threads/*`.
+The `chernabog-threads-write` ruleset that
+[progress](https://dataquail.github.io/chernabog/operate/progress/) sets up
+lets the personas team bypass it, and an App can't be a team's member. So
+each App goes on that ruleset's bypass list as its own `Integration` actor,
+as the probe's reviewer did, and its `<slug>[bot]` is listed under the
+repo's `personas:`.
+
 ### 4. Can `environment:` come from the matrix, and does its branch limit hold for default-branch runs?
 
 **Yes, and yes.**
