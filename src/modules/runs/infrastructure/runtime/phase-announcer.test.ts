@@ -1,16 +1,18 @@
-import { type Json, Phase, type PhaseRead, PhaseWriter, RunLog } from "@chernabog/core";
+import { type Json, Phase, type PhaseRead, PhaseWriter, Progress, RunLog } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { makeThreadsFake } from "../../../../../test/github-threads-fake.ts";
 import { progressContract } from "../../../../../test/progress-contract.ts";
+import { settings } from "../../../../../test/sdk-fakes.ts";
 import { githubTestLayer } from "../../../../platform/github-api.ts";
 import { announcing } from "./phase-announcer.ts";
-import { makeRepoProgress, makeThreadsProgress } from "./progress.ts";
+import { makeRepoProgress, makeThreadsProgress, ProgressLive } from "./progress.ts";
 
 const SLUG = "acme/app";
 const DISPATCHES = `/repos/${SLUG}/dispatches`;
@@ -57,6 +59,16 @@ const announcingOver = (fake: ReturnType<typeof makeFake>) =>
 const repoProgressOver = (fake: ReturnType<typeof makeFake>, announce: boolean) =>
   makeRepoProgress({ slug: SLUG, persona: Option.some("data-quail"), announce }).pipe(
     Effect.provide(githubTestLayer(fake.handler)),
+  );
+
+// The Progress a repo's runs get, from its settings.
+const liveOver = (fake: ReturnType<typeof makeFake>, announce: boolean) =>
+  Progress.use(Effect.succeed).pipe(
+    Effect.provide(
+      ProgressLive({ ...settings, slug: SLUG }, Option.some("data-quail"), announce).pipe(
+        Layer.provide(githubTestLayer(fake.handler)),
+      ),
+    ),
   );
 
 // A run's log, keeping its lines.
@@ -209,5 +221,28 @@ describe("an announced advance", () => {
 
       expect(fake.sent).toHaveLength(1);
     }),
+  );
+
+  effect(
+    "the repo's Progress records in its repo and announces there, unless it turns that off",
+    () =>
+      Effect.gen(function* () {
+        const announced = makeFake();
+        const on = yield* liveOver(announced, true);
+
+        yield* on.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+        expect(Option.map(yield* on.read("pr-73"), (record) => record.phase)).toEqual(
+          Option.some(ASKED),
+        );
+        expect(announced.sent).toHaveLength(1);
+
+        const quiet = makeFake();
+        const off = yield* liveOver(quiet, false);
+
+        yield* off.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+        expect(quiet.sent).toEqual([]);
+      }),
   );
 });

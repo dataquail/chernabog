@@ -374,6 +374,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
   Effect.gen(function* () {
     const api = yield* GitHubApi;
     const prefix = options.prefix ?? THREADS;
+    // Stryker disable next-line StringLiteral: a slug is owner/name; one without a slash names no repo with either default, so every read fails alike
     const [owner = "", name = ""] = options.slug.split("/");
     const repoPath = `/repos/${options.slug}`;
 
@@ -396,6 +397,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           // A tip that isn't a record, such as a commit a person pushed,
           // reads as one that says why: the ledger's check holds this item
           // alone, where failing would fail every read of every item.
+          // Stryker disable next-line StringLiteral: a tip with no message and one whose message has no trailers read as the same unreadable record, with no Phase trailer
           const record = Result.getOrElse(readRecord(tip.oid, tip.message ?? "", at), (why) =>
             unreadableRecord(tip.oid, at, why),
           );
@@ -658,6 +660,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           };
         }
 
+        // Stryker disable next-line ArrayDeclaration: with neither a commit nor errors, the decision reads the list only for a FORBIDDEN error, which a string isn't either; what else differs is the text for a person
         return { written: Option.none<PhaseRecord>(), errors: response.errors ?? [] };
       });
 
@@ -814,6 +817,6 @@ export const makeRepoProgress = (options: ThreadsOptions & { readonly announce: 
 export const ProgressLive = (
   settings: RepoSettings,
   persona: Persona,
-  announce = true,
+  announce: boolean,
 ): Layer.Layer<Progress, never, GitHubApi> =>
   Layer.effect(Progress, makeRepoProgress({ slug: settings.slug, persona, announce }));
