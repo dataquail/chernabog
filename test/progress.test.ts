@@ -2,7 +2,14 @@
 // the fake that tests use, held to the contract every adapter must meet, and
 // its advance, a write the engine fences and reports by its declaration alone.
 
-import { CAPABILITIES, Phase, PhaseWriter, Progress, ProgressCapability } from "@chernabog/core";
+import {
+  CAPABILITIES,
+  Phase,
+  PhaseData,
+  PhaseWriter,
+  Progress,
+  ProgressCapability,
+} from "@chernabog/core";
 import { describe, expect, test } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -64,6 +71,30 @@ describe("PhaseWriter", () => {
         decodes(PhaseWriter, writer),
       ),
     ).toEqual([false, false, false, false, false]);
+  });
+});
+
+// A note whose record is `{"note":"…"}`: 11 bytes around the note, and each
+// "é" two bytes in UTF-8, so the record's size isn't its length in characters.
+const noteOfBytes = (bytes: number) => ({
+  note: "é".repeat(Math.floor((bytes - 11) / 2)) + "a".repeat((bytes - 11) % 2),
+});
+
+describe("PhaseData", () => {
+  test("takes a record of up to 4 KB as JSON in UTF-8, and refuses one byte more", () => {
+    expect(
+      [noteOfBytes(4096), noteOfBytes(4097)].map((data) =>
+        Option.isSome(Schema.decodeOption(PhaseData)(data)),
+      ),
+    ).toEqual([true, false]);
+  });
+
+  test("says how big a refused record is and what it may take", () => {
+    const refused = Schema.decodeExit(PhaseData)(noteOfBytes(4097));
+
+    expect(String(refused)).toContain(
+      "a record's data is 4097 bytes as JSON, over the 4096 it may take",
+    );
   });
 });
 
