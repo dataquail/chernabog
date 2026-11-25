@@ -61,6 +61,12 @@ test("a spoke's bounds are the defaults unless machine config's spokes: sets the
   expect(set.memory).toBe(DEFAULT_SPOKE_BOUNDS.memory);
 });
 
+test("a spoke's silent exits in a row are 3 unless machine config's spokes: sets them", () => {
+  expect(machineFrom({}).silentExits).toBe(3);
+  expect(machineFrom({ spokes: { silentExits: 5 } }).silentExits).toBe(5);
+  expect(() => machineFrom({ spokes: { silentExits: 0 } })).toThrow();
+});
+
 test("a spoke bound machine config can't read is refused, naming what it wants", () => {
   expect(() => machineFrom({ spokes: { memory: "a lot" } })).toThrow(
     '"a lot" is not a size, such as "256 MB"',

@@ -62,7 +62,13 @@ const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
     return RunRootOps.finish(found, "needs-human", endAs.reason, at);
   }
 
-  return RunRootOps.supersede(found, endAs.reason, at, endAs.ending);
+  return RunRootOps.supersede(
+    found,
+    endAs.reason,
+    at,
+    endAs.ending,
+    Option.fromUndefinedOr(endAs.silentExits),
+  );
 };
 
 // What the run's log says of its ending.

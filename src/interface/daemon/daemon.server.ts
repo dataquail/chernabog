@@ -36,6 +36,7 @@ import { RunId, runLabel, shortRunId } from "../../kernel/run-id.id.ts";
 import {
   breachSummary,
   formatDuration,
+  silentExitEnding,
   type SpokeBreach,
 } from "../../kernel/spoke-bounds.value-object.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
@@ -714,10 +715,57 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
+      // Ends the run of a spoke that exited before it said how the run ended
+      // (a crash, a SIGKILL from outside), as a hub's restart ends one
+      // (ADR 23, decisions 2 and 7): interrupted, keeping its markers and
+      // worktree, putting its issue back on its queue and letting go of its
+      // claim ref, so a new run repeats its phase, with its agent's sessions
+      // closed but a person's left open. Once its item's runs have ended so
+      // `machine.silentExits` times in a row, it ends failed instead, so a
+      // phase that crashes every time stops being offered and a person sees
+      // why. The count is recorded with the ending, in state.db, so a
+      // restart doesn't reset it, and a run of the item that ends any other
+      // way does.
+      const endSilentSpokeRun = (runId: RunId, exit: GroupExit) =>
+        Effect.gen(function* () {
+          const running = Option.filter(
+            (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId }))).run,
+            (run) => run.status === "running",
+          );
+
+          if (Option.isNone(running)) {
+            return;
+          }
+
+          const before = (yield* RunsQueries.use((runs) => runs.ReadSilentExitsQuery({ runId })))
+            .silentExits;
+
+          const { ending, silentExits } = silentExitEnding(before, machine.silentExits);
+          const silent = `its spoke ${describeExit(exit)} before it said how the run ended`;
+
+          const reasons = {
+            failed: `${silent}, ${silentExits} runs in a row of this item; it isn't repeated again until a person looks`,
+            interrupted: `${silent} (${silentExits} of ${machine.silentExits} in a row); its phase is left for a new run to repeat`,
+          };
+
+          const reason = reasons[ending];
+
+          yield* RunFlowsCommands.use((runs) =>
+            runs.CancelRunCommand({
+              target: CancelTarget.cases.ById.make({ asked: runId }),
+              by: "chernabog",
+              closeSessions: true,
+              sparePersonSessions: true,
+              endAs: Option.some({ ending, reason, silentExits }),
+            }),
+          );
+        });
+
       // Ends a spoke's run once the spoke has exited, with the ending it
       // reported in its journal (ADR 23, decision 2), and lets the run's
       // ending delete the journal (discard-run-journal). A spoke that exited
-      // before it said ends its run failed, with how it exited; one whose run
+      // before it said ends its run through endSilentSpokeRun (interrupted,
+      // or failed once its item has done so too often in a row); one whose run
       // the hub already ended leaves it as it is, and one the hub ended for
       // an ending of its own (a cancel, a lost lease) leaves the run to
       // whoever asked, who ends it once the spoke is gone (decision 5).
@@ -738,10 +786,13 @@ export const runDaemon = Effect.gen(function* () {
           const said = (yield* RunFlowsQueries.use((runs) => runs.ReadSpokeEndingQuery({ runId })))
             .ending;
 
-          yield* endAsSaid(runId, said, () => ({
-            status: "failed" as const,
-            summary: `its spoke ${describeExit(exit)} before it said how the run ended; its phase is left for a new run to repeat`,
-          }));
+          if (Option.isNone(said)) {
+            yield* endSilentSpokeRun(runId, exit);
+
+            return;
+          }
+
+          yield* endAsSaid(runId, said, () => said.value);
         }).pipe(
           Effect.catchCause((cause) =>
             log(`could not end ${shortRunId(runId)} after its spoke exited: ${String(cause)}`),

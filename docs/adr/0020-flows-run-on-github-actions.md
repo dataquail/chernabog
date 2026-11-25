@@ -72,11 +72,19 @@ what that test found.
    kept 5 days, for diagnosis only.
 
    **Amended by [ADR 23](0023-runs-execute-in-spokes.md):** a machine
-   doesn't resume a stopped run either. The daemon runs each run as a
-   spoke, through `ci run`, against a journal of its own that it deletes
-   when the run ends, and a spoke that stops before its phase boundary
-   repeats the phase. On a machine, a run that a hub restart interrupted
-   keeps its worktree for the spoke that repeats the phase.
+   doesn't resume a stopped run either. The daemon is a hub that runs each
+   run as a spoke, `ci run --run <run>` with the run it recorded handed
+   over in a file, against a journal of its own that the hub folds into
+   `state.db` and deletes when the run ends. The spoke form writes no
+   machine config, takes no lock, doesn't ask the trigger again, renews no
+   lease (the hub does) and ends nothing in `state.db`: it reports its
+   ending in its journal and exits. A spoke that stops before its phase
+   boundary repeats the phase. On a machine, a run that a hub restart
+   interrupted keeps its worktree for the spoke that repeats the phase,
+   puts the issue's queue label back (`Markers.requeue`), and has its
+   agent's sessions closed, never a person's. Under Actions, `ci run` is
+   its own hub: it folds its own journal into the job's throwaway
+   `state.db`, as the foreground `run` and `rehearse` do on a machine.
 
    **Waiting for CI (#513).** A wait for a pull request's CI was a durable
    sleep between readings, not a park, so a run job followed it to the end

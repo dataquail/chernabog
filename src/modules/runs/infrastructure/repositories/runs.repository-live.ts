@@ -68,6 +68,12 @@ export const RunsRepositoryLive = Layer.effect(
       yield* sql`ALTER TABLE om_runs ADD COLUMN config_tree TEXT`;
     }
 
+    // One from before the hub counted spokes that exited without saying how
+    // their run ended gains the count; its rows have none.
+    if (!columns.some((column) => column.name === "silent_exits")) {
+      yield* sql`ALTER TABLE om_runs ADD COLUMN silent_exits INTEGER`;
+    }
+
     // What each run named as its subjects, in the order it named them.
     yield* sql`CREATE TABLE IF NOT EXISTS om_run_subjects (
       run_id TEXT NOT NULL,
@@ -134,18 +140,20 @@ export const RunsRepositoryLive = Layer.effect(
         summary,
         coreVersion,
         configTree,
+        silentExits,
         startedAt,
         finishedAt,
       ] = toParameters(run);
 
-      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, core_version, config_tree, started_at, finished_at)
-        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${coreVersion}, ${configTree}, ${startedAt}, ${finishedAt})
+      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, core_version, config_tree, silent_exits, started_at, finished_at)
+        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${coreVersion}, ${configTree}, ${silentExits}, ${startedAt}, ${finishedAt})
         ON CONFLICT (id) DO UPDATE SET
           persona = excluded.persona,
           execution_id = excluded.execution_id,
           status = excluded.status,
           current_step = excluded.current_step,
           summary = excluded.summary,
+          silent_exits = excluded.silent_exits,
           finished_at = excluded.finished_at
         WHERE om_runs.finished_at IS NULL OR om_runs.finished_at = excluded.finished_at`.pipe(
         // Subjects only grow, so a stale copy that names fewer drops none.

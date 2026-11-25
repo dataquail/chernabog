@@ -1072,7 +1072,11 @@ How a CI run differs from a daemon run:
   When the spoke exits, the hub folds what's left, then
   reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
   (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
-  said nothing ends `failed`, with how it exited. The run's ending releases
+  said nothing (a crash, a SIGKILL from outside) ends `interrupted`, with how
+  it exited, as the reap ends one, so its phase repeats, until `spokes:
+silentExits` (3) runs of its item in a row have ended so: that one ends
+  `failed` (`silentExitEnding`, the count in `om_runs.silent_exits`, read by
+  `ReadSilentExitsQuery`). The run's ending releases
   its markers and deletes its journal, in the hub. A run the hub ends while
   its spoke lives (cancelled, lost, superseded) ends the spoke first (ADR 23
   d5, #662): `CancelRunCommand` asks `RunSpokesClient.end`, which the hub
@@ -1095,8 +1099,10 @@ How a CI run differs from a daemon run:
   too) and start time as `ps` says it, the hub's, the fold position and the
   intended ending; a run's ending forgets it (`ForgetSpokeCommand`, from the
   hub's `daemon/spoke-endings` subscription). A spoke whose stdin closes
-  SIGTERMs its own group and SIGKILLs what's left of it on its way out
-  (`stopWhenStdinCloses`), so what it started doesn't outlive its hub. A
+  SIGTERMs its own group (`stopWhenStdinCloses`), and a spoke stopped by
+  any SIGTERM or SIGINT (its stdin, a hub's stop, a cancel, a bound)
+  SIGKILLs what's left of its group on its way out (`killGroupOnStop`), so
+  what it started, even what ignores SIGTERM, doesn't outlive it. A
   hub that stops SIGTERMs every spoke and waits for none. Before its first
   tick, a hub reaps every record (`ListSpokesQuery`, `Spokes.reap`): it
   signals a group only once its leader's start time and command line

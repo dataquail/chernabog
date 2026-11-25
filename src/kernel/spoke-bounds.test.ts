@@ -5,8 +5,10 @@ import * as Option from "effect/Option";
 import {
   breachOf,
   breachSummary,
+  DEFAULT_SILENT_EXITS,
   DEFAULT_SPOKE_BOUNDS,
   parseByteSize,
+  silentExitEnding,
   type SpokeMeasure,
 } from "./spoke-bounds.value-object.ts";
 
@@ -72,5 +74,21 @@ describe("spoke bounds", () => {
     expect(parseByteSize("512 KiB")).toEqual(Option.some(524_288));
     expect(parseByteSize("lots")).toEqual(Option.none());
     expect(parseByteSize("-3 MB")).toEqual(Option.none());
+  });
+});
+
+describe("a run whose spoke exited before saying how it ended", () => {
+  test("is interrupted, so its phase repeats, until the limit in a row, then failed", () => {
+    expect(DEFAULT_SILENT_EXITS).toBe(3);
+    expect([0, 1, 2, 5].map((before) => silentExitEnding(before, 3))).toEqual([
+      { ending: "interrupted", silentExits: 1 },
+      { ending: "interrupted", silentExits: 2 },
+      { ending: "failed", silentExits: 3 },
+      { ending: "failed", silentExits: 6 },
+    ]);
+  });
+
+  test("with a limit of 1, fails the first time", () => {
+    expect(silentExitEnding(0, 1)).toEqual({ ending: "failed", silentExits: 1 });
   });
 });

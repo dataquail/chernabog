@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import { effect } from "../../test/effect-test.ts";
 import {
   armShutdownDeadline,
+  type GroupStopHost,
+  killGroupOnStop,
   type ShutdownHost,
   type StdinHost,
   stopWhenStdinCloses,
@@ -143,4 +145,81 @@ describe("stopWhenStdinCloses", () => {
       expect(stdin.stops).toEqual([]);
     });
   });
+});
+
+describe("killGroupOnStop", () => {
+  // A process a test signals and exits by hand, and the sweeps of its group
+  // it ran.
+  const fakeGroup = () => {
+    const listeners = new Map<string, Array<() => void>>();
+    const atExit: Array<() => void> = [];
+    let sweeps = 0;
+
+    const host: GroupStopHost = {
+      on: (signal, listener) => {
+        listeners.set(signal, [...(listeners.get(signal) ?? []), listener]);
+      },
+      off: (signal, listener) => {
+        listeners.set(
+          signal,
+          (listeners.get(signal) ?? []).filter((one) => one !== listener),
+        );
+      },
+      atExit: (sweep) => {
+        atExit.push(sweep);
+      },
+      sweep: () => {
+        sweeps += 1;
+      },
+    };
+
+    const signal = (name: string) => {
+      for (const listener of listeners.get(name) ?? []) {
+        listener();
+      }
+    };
+
+    const exit = () => {
+      for (const sweep of atExit) {
+        sweep();
+      }
+    };
+
+    return { host, signal, exit, sweeps: () => sweeps };
+  };
+
+  effect("sweeps its group once as it exits, after however many SIGTERMs or SIGINTs", () => {
+    const group = fakeGroup();
+
+    return Effect.gen(function* () {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* killGroupOnStop(group.host);
+          group.signal("SIGTERM");
+          group.signal("SIGINT");
+          group.signal("SIGTERM");
+        }),
+      );
+
+      // Not before it exits: the spoke's own stop runs first.
+      expect(group.sweeps()).toBe(0);
+      group.exit();
+      expect(group.sweeps()).toBe(1);
+    });
+  });
+
+  effect(
+    "sweeps nothing for a process that exits unstopped, or is signalled after the scope",
+    () => {
+      const group = fakeGroup();
+
+      return Effect.gen(function* () {
+        yield* Effect.scoped(killGroupOnStop(group.host));
+        group.signal("SIGTERM");
+        group.exit();
+
+        expect(group.sweeps()).toBe(0);
+      });
+    },
+  );
 });

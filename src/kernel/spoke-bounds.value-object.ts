@@ -84,6 +84,26 @@ export const breachOf = (measure: SpokeMeasure, bounds: SpokeBounds): Option.Opt
     Option.flatMap(measure.memory, (memory) => overBytes("memory", memory, bounds.memory)),
   ]);
 
+// How many spokes of one item in a row may exit before saying how their run
+// ended (a crash, a SIGKILL from outside) before the hub stops repeating its
+// phase (ADR 23, decision 2): machine config's `spokes: silentExits`.
+export const DEFAULT_SILENT_EXITS = 3;
+
+// How the hub ends a run whose spoke exited before saying how it ended, given
+// how many runs of its item in a row ended so before it: interrupted, so the
+// phase repeats in a new run, as after its hub's restart; or, once that makes
+// `limit` in a row, failed, so the item isn't offered again and a person sees
+// why. With the count it records, this run included.
+export const silentExitEnding = (before: number, limit: number) => {
+  const silentExits = before + 1;
+
+  if (silentExits >= limit) {
+    return { ending: "failed" as const, silentExits };
+  }
+
+  return { ending: "interrupted" as const, silentExits };
+};
+
 // The bounds' names as a person reads them, in a run's summary.
 const NAMES: Readonly<Record<SpokeBound, string>> = {
   telemetry: "telemetry",

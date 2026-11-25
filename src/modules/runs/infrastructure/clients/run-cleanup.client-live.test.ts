@@ -456,9 +456,11 @@ describe("RunCleanupClientLive", () => {
         const { client, fs } = yield* opened(freshState());
         const home = (yield* Home).root;
 
+        // A launcher whose check can't run can't say the session is gone.
         for (const [sessionId, alive] of [
           ["open", "true"],
           ["gone", "false"],
+          ["unknown", "/nonexistent/alive-check"],
         ] as const) {
           const files = sessionFiles(home, sessionId);
           yield* fs.makeDirectory(files.dir, { recursive: true });
@@ -495,9 +497,11 @@ describe("RunCleanupClientLive", () => {
             reported("gone"),
             reported("headless"),
             reported("open"),
+            reported("unknown"),
           ]),
         ).toEqual([
           { sessionId: "open", launcher: "mine", handle: "handle-open", withPerson: false },
+          { sessionId: "unknown", launcher: "mine", handle: "handle-unknown", withPerson: false },
         ]);
       }),
   );

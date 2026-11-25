@@ -655,6 +655,15 @@ change.
   ends at the park and throws its journal away, and `ci plan` starts no
   wake-only item, so nothing resumes the item. These are the audit's first
   fixes.
+
+  **Amended by [ADR 23](0023-runs-execute-in-spokes.md):** a daemon
+  delivers no signal either. Every park ends its run, the hub's signal
+  delivery is gone, and the SDK's wake-only sources (`Plan.answers`,
+  `PullRequest.baseTurnedGreen`) wake nothing on a machine or in CI. A
+  wait is taken up only by a source that reads its parked phase. Removing
+  the wake-only sources breaks `@chernabog/sdk`'s exports, which #694
+  leaves to the owner.
+
 - Once every wait parks, the daemon's durable workflows only cover one
   phase. A daemon restarted mid-phase still resumes from its journal. CI
   can't, and repeats the phase.

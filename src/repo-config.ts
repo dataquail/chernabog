@@ -37,6 +37,7 @@ import YAML from "yaml";
 import { howToStart } from "./kernel/manual-flow.value-object.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import {
+  DEFAULT_SILENT_EXITS,
   DEFAULT_SPOKE_BOUNDS,
   parseByteSize,
   type SpokeBounds,
@@ -389,6 +390,9 @@ const SpokesFile = Schema.Struct({
   phaseTime: Schema.optionalKey(DurationText),
   idle: Schema.optionalKey(DurationText),
   memory: Schema.optionalKey(ByteSizeText),
+  // How many spokes of one item in a row may exit without saying how their
+  // run ended before its run ends failed rather than repeating (decision 2).
+  silentExits: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
 });
 
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
@@ -464,6 +468,9 @@ export type MachineConfig = {
   readonly repos: ReadonlyArray<EnrolledRepo>;
   // What the daemon ends a run's spoke past.
   readonly spokes: SpokeBounds;
+  // How many spokes of one item in a row may exit without saying how their
+  // run ended before the next such ending is failed (ADR 23, decision 2).
+  readonly silentExits: number;
 };
 
 // Which events tick a persona's flows.
@@ -708,7 +715,7 @@ const boundOf = <A>(
 ) => Option.getOrElse(Option.flatMap(text, parse), () => fallback);
 
 const spokeBoundsOf = (file: MachineConfigFile["spokes"]): SpokeBounds => {
-  const given = (key: keyof typeof SpokesFile.Type) =>
+  const given = (key: Exclude<keyof typeof SpokesFile.Type, "silentExits">) =>
     Option.flatMap(Option.fromUndefinedOr(file), (spokes) => Option.fromUndefinedOr(spokes[key]));
 
   return {
@@ -733,6 +740,7 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   events: eventsOf(file),
   repos: (file.repos ?? []).map((repo) => ({ ...repo, path: expandHome(repo.path, home) })),
   spokes: spokeBoundsOf(file.spokes),
+  silentExits: file.spokes?.silentExits ?? DEFAULT_SILENT_EXITS,
 });
 
 // A persona's token source as machine config's github: entry gives it: gh's

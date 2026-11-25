@@ -450,6 +450,73 @@ describe("ending a live spoke", () => {
         expect(recorded).toEqual([`spoke ${runId} true true true`, `meant ${runId} lost`]);
       }),
   );
+
+  effect("an ending asked before the spoke's record is written is on the record once it is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-spokes-" });
+      // Told when the hub starts recording the spoke, which then waits for
+      // `written`: the window between the spoke going live and its record.
+      const recording = yield* Deferred.make<boolean>();
+      const written = yield* Deferred.make<boolean>();
+      // Told when an ending is first meant for the run.
+      const meant = yield* Deferred.make<boolean>();
+      // The spoke records, as om_spokes keeps them: an ending meant for a
+      // run with no record yet is kept nowhere, and the first one kept wins.
+      const store = new Map<RunId, Option.Option<string>>();
+
+      const spokes = yield* hubSpokes({
+        home,
+        command: ["sh", "-c", "exec sleep 30"],
+        variables: {},
+        log: () => Effect.void,
+        reports: () => Effect.succeed([]),
+        apply: () => Effect.void,
+        record: (spoke) =>
+          Deferred.succeed(recording, true).pipe(
+            Effect.andThen(Deferred.await(written)),
+            Effect.andThen(
+              Effect.sync(() => {
+                store.set(spoke.runId, Option.none());
+              }),
+            ),
+          ),
+        intend: (meantFor, request) =>
+          Effect.sync(() => {
+            if (Option.exists(Option.fromUndefinedOr(store.get(meantFor)), Option.isNone)) {
+              store.set(meantFor, Option.some(endingOf(request)));
+            }
+          }).pipe(Effect.andThen(Deferred.succeed(meant, true))),
+        onExit: () => Effect.void,
+        bounds: DEFAULT_SPOKE_BOUNDS,
+        onBound: () => Effect.succeed(true),
+      });
+
+      const starting = yield* Effect.forkChild(spokes.start(handOver({ checkout: home })));
+      yield* Deferred.await(recording);
+      expect(spokes.has(runId)).toBe(true);
+
+      const cancelled = yield* Effect.forkChild(
+        spokes.end(runId, {
+          by: "alice",
+          closeSessions: false,
+          endAs: Option.none(),
+        }),
+      );
+
+      // The cancel meant its ending while the spoke had no record to keep it.
+      yield* Deferred.await(meant);
+      expect(store.has(runId)).toBe(false);
+
+      yield* Deferred.succeed(written, true);
+      yield* Fiber.join(starting);
+
+      expect(Option.map(yield* Fiber.join(cancelled), (ended) => ended.endedFor)).toEqual(
+        Option.some("cancelled"),
+      );
+      expect(store.get(runId)).toEqual(Option.some("cancelled"));
+    }),
+  );
 });
 
 describe("a spoke measured against its bounds", () => {

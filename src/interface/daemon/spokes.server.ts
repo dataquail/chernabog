@@ -521,7 +521,11 @@ export const hubSpokes = <R>(options: {
     // waits on the same answer.
     const ended = new Map<
       RunId,
-      { readonly endedFor: RunStatus; readonly result: Deferred.Deferred<EndedSpoke> }
+      {
+        readonly request: SpokeEndRequest;
+        readonly endedFor: RunStatus;
+        readonly result: Deferred.Deferred<EndedSpoke>;
+      }
     >();
 
     // Each spoke `reap` reaped: the ending meant for it first, how its
@@ -638,9 +642,12 @@ export const hubSpokes = <R>(options: {
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
 
-        // Recorded before anything can end its run, so the next hub can end
-        // it if this one dies first, and tell it from a later process with
-        // its PID. One that never started has no process to record.
+        // Recorded so the next hub can end its run if this one dies first,
+        // and tell it from a later process with its PID. One that never
+        // started has no process to record. The spoke is live already, so an
+        // `end` asked meanwhile meant its ending for no record yet: that
+        // ending is written to the record once it exists (the first recorded
+        // wins, so one `end` wrote itself is written once).
         if (group.pid > 0) {
           yield* options
             .record({
@@ -650,7 +657,17 @@ export const hubSpokes = <R>(options: {
               hubPid: hub.pid,
               hubStartedAt: Option.map(hub.startedAt, (found) => found.startedAt),
             })
-            .pipe(Effect.provideContext(context));
+            .pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  Option.match(Option.fromUndefinedOr(ended.get(handOver.runId)), {
+                    onNone: () => Effect.void,
+                    onSome: (meant) => options.intend(handOver.runId, meant.request),
+                  }),
+                ),
+              ),
+              Effect.provideContext(context),
+            );
         }
 
         yield* Effect.forkIn(
@@ -846,7 +863,7 @@ export const hubSpokes = <R>(options: {
                 onSome: (spoke) => {
                   const ending = endingOf(request);
                   const result = Deferred.makeUnsafe<EndedSpoke>();
-                  ended.set(runId, { endedFor: ending, result });
+                  ended.set(runId, { request, endedFor: ending, result });
 
                   return Effect.gen(function* () {
                     // Recorded on the spoke's record before it is signalled,

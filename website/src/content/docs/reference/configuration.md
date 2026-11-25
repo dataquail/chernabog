@@ -192,7 +192,7 @@ limits: { reviewRounds: 2 }
 | `launcher`              | —            | your launcher for every repo                                      |
 | `launchers.<name>`      | —            | `start`, `close`, `alive`, `attach`: [your own](/chernabog/agents/launchers/#your-own-launcher) |
 | `repos[]`               | —            | the enrolled repos, written by `enroll`; see [Enrolled repos](#enrolled-repos) |
-| `spokes`                | see [Spoke bounds](/chernabog/operate/daemon/#spoke-bounds) | `telemetry` (`256 MB`), `runLog` (`32 MB`), `phaseTime` (`4 hours`), `idle` (`30 minutes`), `memory` (`2 GB`): what the daemon ends a run's spoke past |
+| `spokes`                | see [Spoke bounds](/chernabog/operate/daemon/#spoke-bounds) | `telemetry` (`256 MB`), `runLog` (`32 MB`), `phaseTime` (`4 hours`), `idle` (`30 minutes`), `memory` (`2 GB`): what the daemon ends a run's spoke past; `silentExits` (`3`): how many spokes of one item in a row may exit without saying how their run ended before the next such run ends `failed` |
 
 ```yaml
 # ~/.config/chernabog/config.yaml
@@ -211,6 +211,7 @@ spokes:
   phaseTime: 4 hours
   idle: 30 minutes
   memory: 2 GB
+  silentExits: 3
 repos:
   - repo: you/my-app
     path: ~/code/my-app

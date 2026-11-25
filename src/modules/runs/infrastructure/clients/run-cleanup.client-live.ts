@@ -196,11 +196,15 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
           launchAt(sessionFiles(home.root, sessionId).launch),
         );
 
-      // The session, under its launcher, while the launcher says it's open.
+      // The session, under its launcher, while the launcher says it's open,
+      // or can't say: a check that fails (a launcher that didn't start under
+      // load, say) is no sign the session is gone, and closing one that is
+      // costs a failed close, where skipping one that isn't leaves an agent
+      // running for a run that has ended.
       const stillOpen = (sessionId: string, launch: Effect.Effect<LaunchOf, never, Platform>) =>
         Effect.gen(function* () {
           for (const { handle, launcher, withPerson } of Option.toArray(yield* launch)) {
-            if (yield* launcher.alive(handle).pipe(Effect.orElseSucceed(() => false))) {
+            if (yield* launcher.alive(handle).pipe(Effect.orElseSucceed(() => true))) {
               return Option.some<OpenSession>({
                 sessionId,
                 launcher: launcher.name,
