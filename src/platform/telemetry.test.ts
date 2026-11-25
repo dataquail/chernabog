@@ -286,6 +286,10 @@ describe("FileTelemetry", () => {
       // Everything before the stop line fits within the bound.
       expect(Buffer.byteLength(lines.slice(0, -1).join("\n")) + 1).toBeLessThanOrEqual(10_000);
       expect(lines.length).toBeLessThan(200);
+      // The stop line takes the file past the bound, so the hub sees it there,
+      // and by no more than itself.
+      expect(Buffer.byteLength(String(files[0]?.text))).toBeGreaterThan(10_000);
+      expect(Buffer.byteLength(String(files[0]?.text))).toBeLessThan(10_000 + 400);
       expect(warnings).toHaveLength(1);
     }),
   );

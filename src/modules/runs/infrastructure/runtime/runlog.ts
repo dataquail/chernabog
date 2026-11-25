@@ -113,14 +113,17 @@ export const runLogWriting = (path: string, hooks: StepHooks = noHooks) =>
           return;
         }
 
-        yield* append(
+        // Filled to just past the bound, which is how the hub, measuring the
+        // log's size, knows the spoke reached it (ADR 23, decision 4).
+        const stop = (filler: number) =>
           RunLogLines.entry(
             at,
             Option.none(),
-            `${STOPPED} ${formatBytes(bytes)}; what the run writes after is dropped`,
+            `${STOPPED} ${formatBytes(bytes)}; what the run writes after is dropped${" ".repeat(filler)}`,
             Option.none(),
-          ),
-        );
+          );
+
+        yield* append(stop(Math.max(0, bytes + 1 - size - Buffer.byteLength(stop(0)) - 1)));
       });
 
     const write = (step: Option.Option<string>, line: string) =>

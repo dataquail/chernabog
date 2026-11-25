@@ -56,6 +56,9 @@ describe("a run's log", () => {
       // What came before the stop line fits within the bound.
       const before = Buffer.byteLength(`${lines.slice(0, -1).join("\n")}\n`);
       expect(before).toBeLessThanOrEqual(2_000);
+      // The stop line takes the log past the bound, so the hub sees it there,
+      // and by no more than itself.
+      expect(Number((yield* fs.stat(path)).size)).toBeGreaterThan(2_000);
       expect(Number((yield* fs.stat(path)).size)).toBeLessThan(2_000 + 200);
     }),
   );

@@ -237,15 +237,18 @@ const make = (options: FileTelemetryOptions) =>
       return total;
     }).pipe(Effect.orElseSucceed(() => 0));
 
-    // The line a limited process writes last, when the next would take it
-    // past its limit.
-    const stopLine = (bytes: number, at: Date) =>
+    // The line a limited process writes last, in place of the first that
+    // would take it past its limit, `filler` long. It fills the files to just
+    // past the bound, which is how the hub, measuring their size, knows the
+    // spoke reached it (ADR 23, decision 4), whatever size the dropped line was.
+    const stopLine = (bytes: number, at: Date, filler: number) =>
       Formatter.formatJson({
         type: "log",
         time: at.toISOString(),
         level: "WARN",
         message: `chernabog: ${options.process}'s telemetry stopped at its bound of ${formatBytes(bytes)}; what it records after is dropped`,
         annotations: {},
+        filler: " ".repeat(filler),
       });
 
     // The lines that fit within the limit, and the stop line in place of the
@@ -270,7 +273,9 @@ const make = (options: FileTelemetryOptions) =>
         for (const line of lines) {
           if (total + bytesOf(line) > limit.value) {
             stopped = true;
-            const last = stopLine(limit.value, new Date(yield* Clock.currentTimeMillis));
+            const at = new Date(yield* Clock.currentTimeMillis);
+            const bare = bytesOf(stopLine(limit.value, at, 0));
+            const last = stopLine(limit.value, at, Math.max(0, limit.value + 1 - total - bare));
             kept.push(last);
             total += bytesOf(last);
             warn(

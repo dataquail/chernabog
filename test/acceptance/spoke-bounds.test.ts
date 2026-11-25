@@ -68,7 +68,11 @@ export default defineFlow({
         yield* activity(
           "flood-telemetry",
           Effect.gen(function* () {
+            const log = yield* RunLog;
+
+            // A line a round, so it is never idle however slowly it floods.
             for (let round = 0; ; round++) {
+              yield* log.log(\`flooding round \${round}\`);
               yield* Effect.forEach(
                 Array.from({ length: 2000 }, (_, at) => at),
                 (at) => Effect.void.pipe(Effect.withSpan(\`flood-\${round}-\${at}\`)),
