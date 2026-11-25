@@ -167,16 +167,22 @@ describe("chernabog ci run as a spoke on a machine", () => {
     return rows.map((row) => row.tag);
   };
 
-  // state.db's files as they are on disk, to tell whether anything wrote them.
+  // What state.db's files hold, to tell whether anything wrote them. An empty
+  // write-ahead log is none: SQLite leaves one behind a read-only connection
+  // to a database in WAL mode, which writes nothing to it.
   const stateFiles = () =>
-    ["state.db", "state.db-wal"].map((name) => {
-      const path = join(sandbox.home, name);
-
-      return Option.match(Option.liftPredicate(path, existsSync), {
-        onNone: () => "none",
-        onSome: (found) => Bun.hash(readFileSync(found)).toString(),
-      });
-    });
+    ["state.db", "state.db-wal"].map((name) =>
+      Option.match(
+        Option.filter(
+          Option.liftPredicate(join(sandbox.home, name), existsSync),
+          (found) => readFileSync(found).length > 0,
+        ),
+        {
+          onNone: () => "none",
+          onSome: (found) => Bun.hash(readFileSync(found)).toString(),
+        },
+      ),
+    );
 
   // The last ending the spoke reported in its run's journal.
   const reportedOf = (runId: string) => {

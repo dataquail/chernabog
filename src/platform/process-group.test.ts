@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { effect } from "../../test/effect-test.ts";
@@ -15,6 +16,15 @@ const alive = (pid: number) =>
   Effect.try({ try: () => process.kill(pid, 0), catch: () => false }).pipe(
     Effect.as(true),
     Effect.orElseSucceed(() => false),
+  );
+
+// Whether a process is gone within a few seconds: one killed with its group
+// is reaped by init once its parent has gone, which signal 0 still reaches
+// until then.
+const gone = (pid: number) =>
+  alive(pid).pipe(
+    Effect.repeat({ while: (found) => found, schedule: Schedule.spaced("50 millis"), times: 100 }),
+    Effect.map((found) => !found),
   );
 
 describe("spawnGroup", () => {
@@ -61,7 +71,7 @@ describe("spawnGroup", () => {
 
       expect(exit.signal).toEqual(Option.some("SIGKILL"));
       expect(describeExit(exit)).toBe("killed by SIGKILL");
-      expect(yield* alive(child)).toBe(false);
+      expect(yield* gone(child)).toBe(true);
     }),
   );
 
