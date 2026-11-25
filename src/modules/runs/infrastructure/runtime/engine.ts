@@ -104,9 +104,14 @@ export class RunFailed extends Schema.TaggedError<RunFailed, { readonly brand: "
   },
 ) {}
 
+// How often the engine reads its journal for messages that came due, such
+// as a durable clock's: the cluster's own default unless a test, which can't
+// wait that long for a clock, says otherwise.
+export type EngineOptions = { readonly messagePoll?: Duration.Input };
+
 // The workflow engine and its SQLite journal, in `database`, which a newer
 // chernabog's stamp refuses, and an older one's is copied before it moves up.
-export const EngineAt = (database: string) =>
+export const EngineAt = (database: string, options: EngineOptions = {}) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const prepared = yield* prepareState((yield* Home).root, database);
@@ -118,7 +123,15 @@ export const EngineAt = (database: string) =>
       }
 
       return ClusterWorkflowEngine.layer.pipe(
-        Layer.provideMerge(SingleRunner.layer({ runnerStorage: "memory" })),
+        Layer.provideMerge(
+          SingleRunner.layer({
+            runnerStorage: "memory",
+            ...Option.match(Option.fromUndefinedOr(options.messagePoll), {
+              onNone: () => ({}),
+              onSome: (every) => ({ shardingConfig: { entityMessagePollInterval: every } }),
+            }),
+          }),
+        ),
         Layer.provideMerge(SqliteClient.layer({ filename: database })),
       );
     }).pipe(Effect.catchTag("PlatformError", Effect.die)),

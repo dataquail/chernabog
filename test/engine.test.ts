@@ -26,6 +26,7 @@ import {
   Settings,
   type SetupError,
   Skip,
+  sleep,
   StepFailed,
   StepRunner,
   Subjects,
@@ -36,13 +37,16 @@ import {
 import type { BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "bun:test";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
@@ -51,7 +55,11 @@ import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handle
 import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
 import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
-import { flowHandle, forEveryPersona } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import {
+  type EngineOptions,
+  flowHandle,
+  forEveryPersona,
+} from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
@@ -109,6 +117,13 @@ const item = (key: string, signals: ReadonlyArray<string> = []): WorkItem => ({
 });
 
 const executed: Array<string> = [];
+
+// How many times the lane-poll flow's slow step was entered, and what it
+// waits on to end, which the test opens.
+const gate = { entries: 0, release: Deferred.makeUnsafe<void>() };
+
+// Whether the long-step flow's step started, and whether it was interrupted.
+const longStep = { started: false, interrupted: false };
 
 const ItemData = Schema.Struct({ key: Schema.String });
 
@@ -192,6 +207,45 @@ const flow = defineFlow({
           Effect.fail(new StepFailed({ step: "fails", message: "no" })),
         ).pipe(Effect.catchTag("StepFailed", () => Effect.void));
         yield* Lanes.declare("b", ["a"]);
+      }
+
+      // One lane runs a slow step while the other polls on a durable clock,
+      // as an epic's lane in a local gate runs beside one waiting for CI
+      // (#615).
+      if (key === "lane-poll") {
+        yield* Effect.all(
+          [
+            activity(
+              "gate#slow",
+              Effect.sync(() => {
+                gate.entries += 1;
+              }).pipe(Effect.andThen(Deferred.await(gate.release))),
+            ),
+            Effect.gen(function* () {
+              yield* sleep("poll-1#fast", "200 millis");
+              yield* activity("poll#fast", Effect.void);
+              yield* sleep("poll-2#fast", "200 millis");
+            }),
+          ],
+          { concurrency: 2 },
+        );
+      }
+
+      // A step that never ends on its own, which a cancel must stop.
+      if (key === "long-step") {
+        yield* activity(
+          "long",
+          Effect.sync(() => {
+            longStep.started = true;
+          }).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                longStep.interrupted = true;
+              }),
+            ),
+          ),
+        );
       }
 
       // Files two issues, as a plan does its sub-issues.
@@ -305,6 +359,7 @@ const withEngine = <A, E, R>(
   program: Effect.Effect<A, E, R>,
   personas = Effect.map(Layer.build(repoServices), forEveryPersona),
   flowsOf = handle,
+  options: EngineOptions = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -313,7 +368,13 @@ const withEngine = <A, E, R>(
 
     // These tests start and poll runs themselves, so the runtime runs no trigger or gate.
     const engine = yield* Layer.build(
-      engineOver(flowsOf, { handles: [flowsOf], services: () => Option.none() }, servicesFor, home),
+      engineOver(
+        flowsOf,
+        { handles: [flowsOf], services: () => Option.none() },
+        servicesFor,
+        home,
+        options,
+      ),
     );
 
     const platform = yield* Effect.context<BunServices.BunServices>();
@@ -365,6 +426,51 @@ describe("the engine", () => {
       const log = yield* fs.readFileString(homePaths(home).runLog(finished.id));
       expect(log).toContain("hello from one");
       expect(log).toContain("step: who-am-i");
+    }),
+  );
+
+  effect("lets a lane's step run to its end while another lane polls on a clock (#615)", () =>
+    Effect.gen(function* () {
+      gate.entries = 0;
+      gate.release = Deferred.makeUnsafe<void>();
+
+      const { value: finished } = yield* withEngine(
+        Effect.gen(function* () {
+          const run = yield* started(item("lane-poll"));
+
+          // The poll's clock fires while the gate runs: the engine keeps the
+          // wake it sends the run, then interrupts the run to replay it.
+          yield* SqlClient.SqlClient.use(
+            (sql) =>
+              sql<{ readonly wakes: number }>`
+                SELECT count(*) AS wakes FROM cluster_messages WHERE tag = 'deferred'`,
+          ).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (rows) => rows.some((row) => row.wakes > 0),
+              times: POLLS,
+            }),
+          );
+          yield* Deferred.done(gate.release, Exit.void);
+
+          const ended = yield* toEnd(run);
+
+          return { run: ended, history: yield* readRunHistoryHandler({ runId: run.id }) };
+        }),
+        Effect.map(Layer.build(repoServices), forEveryPersona),
+        handle,
+        // The engine delivers a clock that came due when it next reads its
+        // journal, every 10 seconds by default: sooner here.
+        { messagePoll: "50 millis" },
+      );
+
+      expect(finished.run.status).toBe("done");
+      expect(gate.entries).toBe(1);
+      expect(
+        finished.history.steps
+          .filter((step) => step.step === "gate#slow")
+          .map((step) => step.outcome),
+      ).toEqual(["ok"]);
     }),
   );
 
@@ -553,6 +659,39 @@ describe("the engine", () => {
       expect([value.cancelled.stopped, value.cancelled.wakesCleared]).toEqual([true, 1]);
       expect([value.delivered, value.polled.status]).toEqual([0, "cancelled"]);
       expect(Option.map(value.execution, (result) => result._tag)).toEqual(Option.some("Complete"));
+    }),
+  );
+
+  effect("a cancel still stops the step its run is in", () =>
+    Effect.gen(function* () {
+      longStep.started = false;
+      longStep.interrupted = false;
+
+      const { value } = yield* withEngine(
+        Effect.gen(function* () {
+          const run = yield* started(item("long-step"));
+
+          yield* Effect.sync(() => longStep.started).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("25 millis"),
+              until: (begun) => begun,
+              times: POLLS,
+            }),
+          );
+
+          const cancelled = yield* cancelRunHandler({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "alice",
+            closeSessions: false,
+            endAs: Option.none(),
+          });
+
+          return { cancelled, polled: yield* pollRun(run) };
+        }),
+      );
+
+      expect([value.cancelled.stopped, value.polled.status]).toEqual([true, "cancelled"]);
+      expect(longStep.interrupted).toBe(true);
     }),
   );
 
