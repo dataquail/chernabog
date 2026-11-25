@@ -155,11 +155,13 @@ const supersede = (
   reason: string,
   at: string,
   ending: "superseded" | "lost" | "ended-at-park" | "interrupted" | "failed" = "superseded",
+  silentExits: Option.Option<number> = Option.none(),
 ) =>
   whileRunning(run, () =>
     RunRoot.make({
       ...run,
       status: ending,
+      silentExits,
       summary: Option.some(
         Option.match(run.currentStep, {
           onNone: () => reason,

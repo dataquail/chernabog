@@ -118,11 +118,29 @@ takes up its phase again from the ledger, and every other run carries on.
       free.
 
    The hub reads a run's ending from its journal, never from the exit code
-   or a signal. A spoke that exits with no ending in its journal (a crash, an
-   unhandled defect, a `SIGKILL` from outside) ends `failed`, with the exit
-   code or signal as its reason. Its phase is left as the ledger has it, so
-   the next tick's trigger reports the item again and a new spoke repeats
-   the phase from its start, as the next CI job does.
+   or a signal. A spoke that exits with no ending in its journal (a crash, a
+   `SIGKILL` from outside) ends `interrupted`, as a hub's restart ends one
+   (decision 7), with the exit code or signal in its reason, through
+   `CancelRunCommand` with `closeSessions: true, sparePersonSessions: true`.
+   Its phase is left as the ledger has it and its issue goes back on its
+   queue, so the next tick's trigger reports the item again and a new spoke
+   repeats the phase from its start, as the next CI job does. (As accepted,
+   this ended `failed`, which keeps an issue off its queue, so nothing
+   repeated the phase; #667 changed it.)
+
+   **A phase that crashes every time stops being repeated.** The run records
+   how many runs of its item in a row (same repo, persona, flow and item
+   key) have ended this way, itself included (`om_runs.silent_exits`, read
+   back by `ReadSilentExitsQuery`, so a hub's restart doesn't reset it; a
+   run its hub's restart interrupted is passed over). The run that makes it
+   machine config's `spokes: silentExits` (3 by default) ends `failed`
+   instead, saying how many in a row, so the item isn't offered again and a
+   person sees why (`silentExitEnding`). A run of the item that ends any
+   other way, at a phase boundary or otherwise, starts the count again. The
+   item is its key, so for a flow whose key carries its phase (a review
+   loop's `pr-7-changes-asked-1a2b3c4`) the count is per phase, and for one
+   whose key doesn't (implement's `issue-7`) per item. The limit and the
+   policy are the owner's to change.
 
    No run sleeps inside a process. When a park's signal arrives (an event, a
    notification, the parked-records watch of ADR 21, decision 4), the source
@@ -612,7 +630,10 @@ cancel (#662), bounds (#663), reaping (#664), deleting the in-process path
 Where the code departed from the decisions as accepted, each layer said so,
 and this ADR now describes the code. In brief, by decision:
 
-- **1, 2.** The spoke is `ci run --run` with a hand-over file (#685, #687).
+- **1, 2.** A spoke that exits without saying how its run ended ends
+  `interrupted`, not `failed`, so its phase repeats, until `spokes:
+silentExits` (3) of its item in a row have, and that one ends `failed`
+  (#667). The spoke is `ci run --run` with a hand-over file (#685, #687).
   The hub records the run and attaches its execution in one unit of work
   (`StartSpokeRunCommand`, #685). Signal delivery is gone, and the SDK's
   wake-only sources wake nothing (#696, #694).

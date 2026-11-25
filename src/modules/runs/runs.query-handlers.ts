@@ -42,6 +42,8 @@ import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
 import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
 import { readRunUsageHandler } from "./queries/read-run-usage.handler.ts";
 import { ReadRunUsageQuery } from "./queries/read-run-usage.query.ts";
+import { readSilentExitsHandler } from "./queries/read-silent-exits.handler.ts";
+import { ReadSilentExitsQuery } from "./queries/read-silent-exits.query.ts";
 import { readSpokeEndingHandler } from "./queries/read-spoke-ending.handler.ts";
 import { ReadSpokeEndingQuery } from "./queries/read-spoke-ending.query.ts";
 import { readSpokeReportsHandler } from "./queries/read-spoke-reports.handler.ts";
@@ -78,6 +80,7 @@ export const runsQueryGroup = Query.group(
   ReadRunHistoryQuery,
   ReadRunMadeQuery,
   ReadRunUsageQuery,
+  ReadSilentExitsQuery,
   ReadStateVersionQuery,
   ReadTokenUsageCursorQuery,
 );
@@ -98,6 +101,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
   ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
   ReadRunUsageQuery: (payload) => readRunUsageHandler(payload),
+  ReadSilentExitsQuery: (payload) => readSilentExitsHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),
   ReadTokenUsageCursorQuery: (payload) => readTokenUsageCursorHandler(payload),
 });

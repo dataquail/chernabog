@@ -27,6 +27,7 @@
     "test/acceptance/cancel.test.ts": 29069,
     "test/acceptance/imports.test.ts": 27620,
     "test/acceptance/still-valid.test.ts": 23732,
+    "test/acceptance/silent-exits.test.ts": 23130,
     "test/acceptance/leases.test.ts": 21011,
     "test/acceptance/ci-plan-phase.test.ts": 20723,
     "test/acceptance/ci-run-spoke.test.ts": 19854,

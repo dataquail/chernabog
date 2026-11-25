@@ -1072,7 +1072,11 @@ How a CI run differs from a daemon run:
   When the spoke exits, the hub folds what's left, then
   reads its ending (`ReadSpokeEndingQuery`) and ends the run with it
   (`FinishRunCommand`, or `CancelRunCommand` `endAs ended-at-park`); one that
-  said nothing ends `failed`, with how it exited. The run's ending releases
+  said nothing (a crash, a SIGKILL from outside) ends `interrupted`, with how
+  it exited, as the reap ends one, so its phase repeats, until `spokes:
+silentExits` (3) runs of its item in a row have ended so: that one ends
+  `failed` (`silentExitEnding`, the count in `om_runs.silent_exits`, read by
+  `ReadSilentExitsQuery`). The run's ending releases
   its markers and deletes its journal, in the hub. A run the hub ends while
   its spoke lives (cancelled, lost, superseded) ends the spoke first (ADR 23
   d5, #662): `CancelRunCommand` asks `RunSpokesClient.end`, which the hub

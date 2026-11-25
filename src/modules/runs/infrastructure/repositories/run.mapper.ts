@@ -33,6 +33,7 @@ export const RunColumns = Schema.Struct({
   summary: Maybe,
   core_version: Schema.String,
   config_tree: Maybe,
+  silent_exits: Schema.OptionFromNullOr(Schema.Int),
   started_at: Schema.String,
   finished_at: Maybe,
 });
@@ -56,6 +57,7 @@ export const toRoot = (row: RunColumns) =>
     summary: row.summary,
     coreVersion: row.core_version,
     configTree: row.config_tree,
+    silentExits: row.silent_exits,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
   });
@@ -79,6 +81,7 @@ export const toParameters = (run: RunRoot) =>
     Option.getOrNull(run.summary),
     run.coreVersion,
     Option.getOrNull(run.configTree),
+    Option.getOrNull(run.silentExits),
     run.startedAt,
     Option.getOrNull(run.finishedAt),
   ] as const;
@@ -98,6 +101,7 @@ export const runColumns: ColumnMap = {
   summary: "om_runs.summary",
   coreVersion: "om_runs.core_version",
   configTree: "om_runs.config_tree",
+  silentExits: "om_runs.silent_exits",
   startedAt: "om_runs.started_at",
   finishedAt: "om_runs.finished_at",
 };

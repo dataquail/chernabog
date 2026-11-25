@@ -226,6 +226,18 @@ describe("RunRootOps.supersede", () => {
     ).toEqual(Option.some("#7 was closed"));
   });
 
+  test("a run whose spoke exited silently records how many in a row, and any other ending none", () => {
+    const silent = Result.getOrThrow(
+      RunRootOps.supersede(running, "its spoke was killed", later, "interrupted", Option.some(2)),
+    );
+
+    expect([silent.status, silent.silentExits]).toEqual(["interrupted", Option.some(2)]);
+    expect(
+      Result.getOrThrow(RunRootOps.supersede(running, "its hub stopped", later, "interrupted"))
+        .silentExits,
+    ).toEqual(Option.none());
+  });
+
   test("a run that ended can't be superseded", () => {
     const refused = RunRootOps.supersede(finished, "#7 was closed", later);
 

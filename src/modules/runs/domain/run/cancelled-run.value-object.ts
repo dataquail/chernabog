@@ -33,6 +33,10 @@ export const EndAs = Schema.Struct({
     "failed",
   ]),
   reason: Schema.String,
+  // For a run whose spoke exited before saying how it ended, how many runs
+  // of its item in a row have now ended so, this one included (ADR 23,
+  // decision 2).
+  silentExits: Schema.optionalKey(Schema.Int),
 });
 
 export type EndAs = typeof EndAs.Type;
