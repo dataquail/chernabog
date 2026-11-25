@@ -27,6 +27,7 @@
     "test/acceptance/ci-park.test.ts": 21000,
     "test/acceptance/recipes.test.ts": 19947,
     "test/acceptance/ci-plan-phase.test.ts": 19835,
+    "test/acceptance/review-loop.ci.feature.test.ts": 19440,
     "test/acceptance/marker-leases.test.ts": 17945,
     "test/acceptance/review-coverage.test.ts": 17092,
     "test/acceptance/machine-config.test.ts": 10796,
