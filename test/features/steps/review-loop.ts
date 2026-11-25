@@ -83,6 +83,52 @@ const carriedOn = (
   });
 };
 
+// The author's fix: their push after the review that asked for it, which
+// moves the pull request off the commit the review was of. Answers that
+// review, for a step that also checks the session.
+const fixed = (domain: Step["domain"], state: ReviewLoop, author: Login) =>
+  Effect.gen(function* () {
+    const pullRequest = yield* thePullRequest(state);
+    const changes = yield* known(state.changes, "the review asking for changes");
+
+    const fix = yield* domain.waitUntil(`${author} to push a fix to #${pullRequest}`, (world) =>
+      Arr.findFirst(
+        world.pushes,
+        (push) =>
+          push.pullRequest === pullRequest &&
+          push.by === author &&
+          push.sequence > changes.sequence,
+      ),
+    );
+
+    state.fix = Option.some(fix);
+    expect(fix.head).not.toBe(changes.head);
+
+    return changes;
+  });
+
+// The reviewer's review of the fix, after it. Answers the review that asked
+// for changes, for a step that also checks the session.
+const reReviewed = (domain: Step["domain"], state: ReviewLoop, reviewer: Login) =>
+  Effect.gen(function* () {
+    const pullRequest = yield* thePullRequest(state);
+    const changes = yield* known(state.changes, "the review asking for changes");
+    const fix = yield* known(state.fix, "the fix");
+
+    yield* domain.waitUntil(`${reviewer} to review the fix on #${pullRequest}`, (world) =>
+      Arr.findFirst(
+        world.reviews,
+        (found) =>
+          found.pullRequest === pullRequest &&
+          found.reviewer === reviewer &&
+          found.head === fix.head &&
+          found.sequence > fix.sequence,
+      ),
+    );
+
+    return changes;
+  });
+
 export const reviewLoopSteps = defineSteps(
   (): ReviewLoop => ({
     personas: [],
@@ -158,51 +204,29 @@ export const reviewLoopSteps = defineSteps(
       }),
     ),
 
+    Then("{word} fixes it", ({ domain, state }, author) =>
+      fixed(domain, state, author).pipe(Effect.asVoid),
+    ),
+
     Then(
       /^(\S+) fixes it in the same session (?:she|he|they) wrote it in$/,
       ({ domain, state }, author) =>
         Effect.gen(function* () {
-          const pullRequest = yield* thePullRequest(state);
-          const changes = yield* known(state.changes, "the review asking for changes");
+          const changes = yield* fixed(domain, state, author);
 
-          // The fix: the author's push after the review that asked for it.
-          const fix = yield* domain.waitUntil(
-            `${author} to push a fix to #${pullRequest}`,
-            (world) =>
-              Arr.findFirst(
-                world.pushes,
-                (push) =>
-                  push.pullRequest === pullRequest &&
-                  push.by === author &&
-                  push.sequence > changes.sequence,
-              ),
-          );
-
-          state.fix = Option.some(fix);
-          // It moves the pull request off the commit the review was of.
-          expect(fix.head).not.toBe(changes.head);
           yield* carriedOn(yield* domain.world, changes, author, "before the review");
         }),
+    ),
+
+    Then("{word} re-reviews the fix", ({ domain, state }, reviewer) =>
+      reReviewed(domain, state, reviewer).pipe(Effect.asVoid),
     ),
 
     Then(
       /^(\S+) re-reviews the fix in the same session (?:she|he|they) reviewed it in$/,
       ({ domain, state }, reviewer) =>
         Effect.gen(function* () {
-          const pullRequest = yield* thePullRequest(state);
-          const changes = yield* known(state.changes, "the review asking for changes");
-          const fix = yield* known(state.fix, "the fix");
-
-          yield* domain.waitUntil(`${reviewer} to review the fix on #${pullRequest}`, (world) =>
-            Arr.findFirst(
-              world.reviews,
-              (found) =>
-                found.pullRequest === pullRequest &&
-                found.reviewer === reviewer &&
-                found.head === fix.head &&
-                found.sequence > fix.sequence,
-            ),
-          );
+          const changes = yield* reReviewed(domain, state, reviewer);
 
           yield* carriedOn(yield* domain.world, changes, reviewer, "before the review");
         }),
