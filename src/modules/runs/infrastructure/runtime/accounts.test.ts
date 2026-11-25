@@ -1,4 +1,4 @@
-import { type Account, HEADLESS } from "@chernabog/core";
+import { type Account, HEADLESS, NO_SANDBOX } from "@chernabog/core";
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -84,6 +84,7 @@ const sessionEnv = (account: Account, host: Record<string, string>) =>
     host,
     env: { CLAUDE_CODE_OAUTH_TOKEN: "committed-token" },
     launcher: { ...HEADLESS, name: "headless", from: "machine config" },
+    sandbox: NO_SANDBOX,
     log: () => Effect.void,
   });
 

@@ -137,6 +137,23 @@ export const HEADLESS: ResolvedLauncher = {
   custom: Option.none(),
 };
 
+// Where a repo's agent sessions run: on the host (none), or in a Docker or
+// Podman container (ADR 24), and which config layer chose it.
+export const SANDBOXES = ["none", "docker", "podman"] as const;
+
+export const SandboxName = Schema.Literals(SANDBOXES);
+
+export type SandboxName = typeof SandboxName.Type;
+
+export const ResolvedSandbox = Schema.Struct({
+  name: SandboxName,
+  from: Schema.String,
+});
+
+export type ResolvedSandbox = typeof ResolvedSandbox.Type;
+
+export const NO_SANDBOX: ResolvedSandbox = { name: "none", from: "default" };
+
 // One of the team's GitHub Apps (#477): its id, its slug, and the login it
 // acts as on GitHub, its bot, `<slug>[bot]`.
 export const AppIdentity = Schema.Struct({
@@ -188,6 +205,8 @@ export const RepoSettings = Schema.Struct({
   agent: Schema.String,
   agentAccounts: Schema.Record(Schema.String, Account),
   launcher: ResolvedLauncher,
+  // Where its agent sessions run (ADR 24): none, docker or podman. Absent is none.
+  sandbox: Schema.optionalKey(ResolvedSandbox),
   // The adapter a flow asked for in config (flows.<name>.agent), such as a Codex reviewer.
   flowAgents: Schema.Record(Schema.String, Schema.String),
   // The adapters a flow gave its roles in config (flows.<name>.agents), such as { reviewer: codex }.
