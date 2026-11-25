@@ -19,8 +19,8 @@ import { type StartFlowRunPayload } from "./start-flow-run.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
-// transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0010-commands-declare-their-unit-of-work.md).
+// transaction holds state.db's one connection, which the runs' steps
+// wait on (docs/adr/0010-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,

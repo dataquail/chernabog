@@ -138,7 +138,8 @@ Some commands always run here: `setup`, `install`, `uninstall`, `start` and `sto
 | Path                                   | Holds                                              |
 | -------------------------------------- | -------------------------------------------------- |
 | `~/.config/chernabog/config.yaml`      | [Machine config](/chernabog/reference/configuration/#machine) |
-| `~/.config/chernabog/state.db`         | The workflow engine's journal                      |
+| `~/.config/chernabog/state.db`         | The machine's records of runs: their steps, waits, markers and usage |
+| `~/.config/chernabog/journals/<run>.db` | One run's workflow journal, deleted when the run ends |
 | `~/.config/chernabog/daemon.log`       | The daemon's log, today's (UTC); earlier days' are `daemon.<YYYY-MM-DD>.log`, kept 30 days |
 | `~/.config/chernabog/daemon.out.log`   | The daemon's stdout and stderr, as the service manager catches them |
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log, kept 30 days after the run finishes |

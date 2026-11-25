@@ -1,8 +1,8 @@
-// Runs flows durably. Each repo's flow is an Effect workflow, journaled in
-// SQLite; each work item gets its own execution, keyed by run, so one item
-// never has two runs at once and a finished item can run again later. The
-// engine must live in exactly one process: a second process on the same
-// database takes over workflows the first is still running.
+// Runs flows durably. Each repo's flow is an Effect workflow; each work item
+// gets its own execution, keyed by run, so one item never has two runs at
+// once and a finished item can run again later. Each run's execution is
+// journaled in SQLite, in a file of its own (journals.ts), which no other
+// process opens.
 
 import {
   Agent,
@@ -34,8 +34,6 @@ import {
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
-import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
-import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -75,6 +73,7 @@ import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
+import { JournalsAt } from "./journals.ts";
 import { ProgressLive } from "./progress.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
@@ -104,11 +103,13 @@ export class RunFailed extends Schema.TaggedError<RunFailed, { readonly brand: "
   },
 ) {}
 
-// The workflow engine and its SQLite journal, in `database`, which a newer
-// chernabog's stamp refuses, and an older one's is copied before it moves up.
-export const EngineAt = (database: string) =>
+// state.db under the chernabog home at `root`, which a newer chernabog's
+// stamp refuses, and an older one's is copied before it moves up: the
+// machine's own records, and no workflow journal (ADR 23, decision 3).
+export const StateDbAt = (root: string) =>
   Layer.unwrap(
     Effect.gen(function* () {
+      const database = homePaths(root).state;
       const prepared = yield* prepareState((yield* Home).root, database);
 
       for (const kept of Option.toArray(prepared.kept)) {
@@ -117,17 +118,16 @@ export const EngineAt = (database: string) =>
         );
       }
 
-      return ClusterWorkflowEngine.layer.pipe(
-        Layer.provideMerge(SingleRunner.layer({ runnerStorage: "memory" })),
-        Layer.provideMerge(SqliteClient.layer({ filename: database })),
-      );
+      return SqliteClient.layer({ filename: database });
     }).pipe(Effect.catchTag("PlatformError", Effect.die)),
   );
 
-// The engine in this machine's state.db.
-export const EngineLive = Layer.unwrap(
-  Home.use((home) => Effect.succeed(EngineAt(homePaths(home.root).state))),
-);
+// The workflow engine, journaling each run in a file of its own under `root`
+// (journals.ts), beside state.db there.
+export const EngineAt = (root: string) => Layer.merge(JournalsAt(root), StateDbAt(root));
+
+// The engine under this machine's chernabog home.
+export const EngineLive = Layer.unwrap(Home.use((home) => Effect.succeed(EngineAt(home.root))));
 
 // The repo's settings as a persona sees them: Repo.persona names it.
 export const personaSettings = (settings: RepoSettings, persona: Persona): RepoSettings =>

@@ -42,6 +42,9 @@ export const homePaths = (root: string) => ({
   machineConfig: `${root}/config.yaml`,
   state: `${root}/state.db`,
   engineLock: `${root}/state.db.lock`,
+  // Each run's workflow journal, a file of its own while the run lasts (ADR 23).
+  journals: `${root}/journals`,
+  journal: (runId: string) => `${root}/journals/${runId}.db`,
   socket: `${root}/daemon.sock`,
   // The daemon's own log, which it turns over each UTC day (daily-log.ts).
   daemonLog: `${root}/daemon.log`,

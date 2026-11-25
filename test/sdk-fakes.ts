@@ -92,7 +92,7 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
 import { RunsModule } from "../src/modules/runs/runs.platform.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
+import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
 
@@ -1471,10 +1471,7 @@ export const StateAt = (home: string) =>
     RunLogsClientLive,
     makeEventBus(),
     RunsModule.unitOfWork,
-  ).pipe(
-    Layer.provideMerge(EngineAt(homePaths(home).state)),
-    Layer.provideMerge(Home.at(home, home)),
-  );
+  ).pipe(Layer.provideMerge(EngineAt(home)), Layer.provideMerge(Home.at(home, home)));
 
 export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 

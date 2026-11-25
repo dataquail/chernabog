@@ -1,6 +1,7 @@
-// Runs' workflows in the Effect workflow engine this process runs, journaled
-// in state.db: started, polled and resumed through the handle of the flow
-// they run, and woken through the durable deferreds they wait on.
+// Runs' workflows in the Effect workflow engine this process runs, each
+// journaled in a file of its own (journals.ts): started, polled and resumed
+// through the handle of the flow they run, woken through the durable
+// deferreds they wait on, and their journals let go of once they end.
 
 import { signalDeferred } from "@chernabog/core";
 import * as Effect from "effect/Effect";
@@ -10,6 +11,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
+import { RunId } from "../../../../kernel/run-id.id.ts";
 import { BUNDLED_CORE } from "../../../../platform/flow-deps.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
@@ -21,6 +23,7 @@ import {
   workflowNamed,
 } from "../runtime/engine.ts";
 import { handleOf } from "../runtime/flow-registry.ts";
+import { RunJournals } from "../runtime/journals.ts";
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
 
@@ -39,6 +42,8 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         | Effect.Services<ReturnType<FlowHandle["workflow"]["execute"]>>
         | Effect.Services<ReturnType<typeof runLogFor>>
       >();
+
+      const journals = yield* RunJournals;
 
       // A flow this process didn't load runs nowhere here.
       const handle = (flow: FlowRef): Effect.Effect<FlowHandle> =>
@@ -71,11 +76,23 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
                 ),
               ),
           }).pipe(Effect.provideContext(engine)),
-        resume: (flow, executionId) =>
+        // Opening the run's journal resumes what it holds; one already open
+        // is resumed in place.
+        resume: (flow, runId, executionId) =>
           handle(flow).pipe(
-            Effect.flatMap((found) => found.workflow.resume(executionId)),
+            Effect.flatMap((found) =>
+              journals
+                .open(found.workflow, runId, executionId)
+                .pipe(
+                  Effect.tap((opened) =>
+                    Effect.when(found.workflow.resume(executionId), Effect.succeed(opened)),
+                  ),
+                ),
+            ),
             Effect.provideContext(engine),
           ),
+        discard: (runId) => journals.discard(runId),
+        journals: Effect.map(journals.list, (runs) => runs.map((runId) => RunId.make(runId))),
         // The engine keeps the interrupt first, so it holds across a restart;
         // then the workflow in this process stops at once, and the agent call
         // it was in after it.

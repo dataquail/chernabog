@@ -77,6 +77,12 @@ Look before you guess. Everything below is under the chernabog home,
   (`src/kernel/run-log-line.value-object.ts`). Kept 30 days from when its run finished
   (a run still running keeps its log; a log state.db has no run for, 30 days
   from its last write), pruned by the daemon's daily sweep.
+- **`journals/<run>.db`**: one run's workflow journal, the engine's tables
+  for that run alone (ADR 23, decision 3; `journals.ts` in the runs
+  module's runtime). Created when the run executes and deleted when it ends
+  (`discard-run-journal`, on `RunFinished`), cancel included; one left by a
+  crash is swept by `RecoverRunsCommand`. `state.db` holds no engine tables
+  for runs.
 - **`telemetry/<day>/<process>-<pid>.jsonl`**: every span and Effect log line
   of one process (`daemon` or `cli`), one JSON object a line, in the folder of
   the UTC day it was written (`FileTelemetry`, `src/platform/telemetry.ts`).
@@ -517,8 +523,8 @@ transitive reach), the coverage floors and the baseline.
   `state.db` transaction (`RunsUnitOfWorkLive`, provided by `StateAt`);
   the file stores' a scope that opens nothing (`FileStoresUnitOfWork`, in
   `AppLive`), and each dispatcher pins its own (`ownUnitOfWork`). A
-  transaction holds `state.db`'s one connection, which the engine's journal
-  waits on: never call GitHub, git, a launcher or the engine inside one. A
+  transaction holds `state.db`'s one connection, which the runs' steps
+  wait on: never call GitHub, git, a launcher or the engine inside one. A
   command that calls out declares the boundary around its `state.db` reads
   and writes only. Events are dispatched inside the unit of work; a
   dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`

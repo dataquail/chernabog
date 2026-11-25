@@ -1,9 +1,10 @@
 // The transaction a runs command's unit of work opens in state.db, over the SQL
-// client the runs' stores and the workflow engine's journal share.
+// client the runs' stores share. The workflow engine journals each run in a
+// file of its own (journals.ts), not here.
 //
 // The client is one SQLite connection behind a one-permit semaphore, and a
 // transaction holds that permit until it ends: every other statement in the
-// process, the engine's journal included, waits for it. So a unit of work over
+// process, the runs' steps included, waits for it. So a unit of work over
 // this driver holds only the runs' own reads and writes, never a call to
 // GitHub, git, a launcher or the engine (docs/adr/0010-commands-declare-their-unit-of-work.md).
 

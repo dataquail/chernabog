@@ -89,4 +89,11 @@ export class RecoveredRuns extends Schema.Class<RecoveredRuns, { readonly brand:
   executed: Schema.Array(RunView),
   abandoned: Schema.Array(RunView),
   left: Schema.Array(RunView),
+  // Transitional, until reaping (#664) ends a restart's runs instead: the runs
+  // whose journal was opened again, resuming them, and those whose journal
+  // was gone, executed again from their item, repeating their phase.
+  resumed: Schema.Array(RunView),
+  repeated: Schema.Array(RunView),
+  // The journals of runs that had ended, deleted.
+  swept: Schema.Array(Schema.String),
 }) {}
