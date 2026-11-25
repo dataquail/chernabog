@@ -38,11 +38,14 @@ import {
   type World,
 } from "../domain.ts";
 import {
+  A_MAINTAINER,
   A_PERSON,
   answersAReview,
+  branchOf,
   flowsOf,
   handsOff,
   issueOfBranch,
+  NEEDS_HUMAN,
   reasonsOf,
   RECIPES,
   verdictOf,
@@ -79,10 +82,12 @@ const flowsFor = (login: Login, pool: ReadonlyArray<Login>, on: Json) =>
 
 // The sandbox for the cast, reviews by Codex as review.test.ts has them: each
 // persona's flows in machine config are `on`, and `repoConfig` goes into the
-// team's config over that.
+// team's config over that. The team's config lists the cast's personas, as a
+// repo chernabog runs as several says who they are.
 const sandboxOf = (cast: Cast, on: Json, repoConfig: Readonly<Record<string, Json>>) =>
   openSandbox(
     {
+      personas: [...cast.personas],
       reviewers: [...cast.pool],
       flows: { review: { agent: "codex" }, "re-review": { agent: "codex" } },
       ...repoConfig,
@@ -283,6 +288,17 @@ export const worldOf = (sandbox: Sandbox): World => {
         ),
       ),
     ),
+    handBacks: sequenced(
+      sequences,
+      github.unlabelled.flatMap((found, index) =>
+        Option.toArray(
+          Option.liftPredicate(
+            { recorded: `unlabel ${index}`, seen: { pullRequest: found.number, by: found.by } },
+            () => numbers.has(found.number) && handsOff(found.label),
+          ),
+        ),
+      ),
+    ),
     sessions: sessionsSeen(sandbox, logged, pulls, pushes),
     merges: sequenced(
       sequences,
@@ -321,6 +337,7 @@ type Machine<R> = {
   personas: ReadonlyArray<Login>;
   pool: ReadonlyArray<Login>;
   disputing: Set<Login>;
+  changingWhenFixing: Set<Login>;
   running: Option.Option<R>;
   // How many pull requests people opened, to name each one's branch.
   opened: number;
@@ -344,6 +361,10 @@ const runningOf = <R extends { readonly sandbox: Sandbox }>(
 
           for (const login of machine.disputing) {
             sandbox.disagreeAs(login);
+          }
+
+          for (const login of machine.changingWhenFixing) {
+            sandbox.changeSpecFixingAs(login);
           }
 
           const running = working.make(sandbox);
@@ -377,6 +398,7 @@ export const openOn = <R extends { readonly sandbox: Sandbox }>(
       personas: [],
       pool: [],
       disputing: new Set(),
+      changingWhenFixing: new Set(),
       running: Option.none(),
       opened: 0,
     };
@@ -411,8 +433,25 @@ export const openOn = <R extends { readonly sandbox: Sandbox }>(
             sandbox.disagreeAs(author);
           }
         }),
-      fileIssue: (labels) =>
-        Effect.map(running, ({ sandbox }) => sandbox.github.addIssue("Filed work", labels)),
+      willChangeSpecWhenFixing: (author) =>
+        Effect.sync(() => {
+          machine.changingWhenFixing.add(author);
+
+          for (const { sandbox } of Option.toArray(machine.running)) {
+            sandbox.changeSpecFixingAs(author);
+          }
+        }),
+      // The fix changes a spec when the agent's change on the issue's branch does.
+      fileIssue: (labels, fix) =>
+        Effect.map(running, ({ sandbox }) => {
+          const number = sandbox.github.addIssue("Filed work", labels);
+
+          if (fix === "a spec") {
+            sandbox.changeSpecOn(branchOf(number));
+          }
+
+          return number;
+        }),
       openPullRequest: (author) =>
         Effect.flatMap(running, ({ sandbox }) =>
           Effect.tryPromise({
@@ -431,6 +470,31 @@ export const openOn = <R extends { readonly sandbox: Sandbox }>(
               sandbox.github.requestReview(pullRequest, reviewers, A_PERSON);
             },
             catch: () => failed(`there is no pull request #${pullRequest} to ask about`),
+          }),
+        ),
+      changeSpec: (pullRequest, by) =>
+        Effect.flatMap(running, ({ sandbox }) =>
+          Effect.try({
+            try: () => {
+              sandbox.pushSpecChangeAs(by, sandbox.github.pull(pullRequest).head);
+            },
+            catch: (error) => failed(`${by} couldn't change a spec: ${String(error)}`),
+          }),
+        ),
+      approve: (pullRequest, by) =>
+        Effect.flatMap(running, ({ sandbox }) =>
+          Effect.try({
+            try: () => {
+              sandbox.github.submitReview(pullRequest, by, "APPROVED", "Approved by hand.");
+            },
+            catch: () => failed(`there is no pull request #${pullRequest} to approve`),
+          }),
+        ),
+      handBack: (pullRequest) =>
+        Effect.flatMap(running, ({ sandbox }) =>
+          Effect.tryPromise({
+            try: () => sandbox.unlabelAs(A_MAINTAINER, pullRequest, NEEDS_HUMAN),
+            catch: (error) => failed(`#${pullRequest} couldn't be handed back: ${String(error)}`),
           }),
         ),
       world: Effect.map(running, ({ sandbox }) => worldOf(sandbox)),

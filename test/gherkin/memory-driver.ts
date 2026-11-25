@@ -18,9 +18,13 @@ const EMPTY: World = {
   pushes: [],
   reviewRequests: [],
   handOffs: [],
+  handBacks: [],
   sessions: [],
   merges: [],
 };
+
+const unsupported = (what: string) =>
+  Effect.fail(new DomainFailed({ message: `the memory driver can't ${what}` }));
 
 const nextNumber = (world: World) => world.issues.length + world.pullRequests.length + 1;
 
@@ -28,6 +32,7 @@ const domainOver = (world: Ref.Ref<World>): Domain => ({
   personas: () => Effect.void,
   reviewForTheTeam: () => Effect.void,
   willDispute: () => Effect.void,
+  willChangeSpecWhenFixing: () => Effect.void,
   fileIssue: (labels) =>
     Ref.modify(world, (now) => {
       const number = nextNumber(now);
@@ -70,6 +75,10 @@ const domainOver = (world: Ref.Ref<World>): Domain => ({
         })),
       ],
     })),
+  // Nothing in memory has a spec, a review or a hand-off to act on.
+  changeSpec: () => unsupported("change a spec"),
+  approve: () => unsupported("approve a pull request"),
+  handBack: () => unsupported("hand a pull request back"),
   world: Ref.get(world),
   waitUntil: (description, find) =>
     Ref.get(world).pipe(

@@ -39,7 +39,7 @@ export const handOffSteps = defineSteps(
       domain.willDispute(login),
     ),
     When("someone files an issue labelled {string}", ({ domain, state }, label) =>
-      domain.fileIssue([label]).pipe(
+      domain.fileIssue([label], "code").pipe(
         Effect.map((number) => {
           state.issue = Option.some(number);
         }),

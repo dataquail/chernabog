@@ -14,7 +14,7 @@ export const toySteps = defineSteps(
   ({ Given, Then, When }) => [
     Given("{word} is a persona on this machine", ({ domain }, login) => domain.personas([login])),
     When("someone files an issue labelled {string}", ({ domain, state }, label) =>
-      domain.fileIssue([label]).pipe(
+      domain.fileIssue([label], "code").pipe(
         Effect.map((number) => {
           state.issues.push(number);
         }),
@@ -22,7 +22,7 @@ export const toySteps = defineSteps(
     ),
     When("someone files {int} issues", ({ domain, state }, count) =>
       Effect.forEach(
-        Array.from({ length: count }, () => domain.fileIssue([])),
+        Array.from({ length: count }, () => domain.fileIssue([], "code")),
         (filing) =>
           filing.pipe(
             Effect.map((number) => {

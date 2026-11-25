@@ -386,6 +386,7 @@ export const openSandbox = (
   const agentTokenLog = join(root, "agent-tokens.log");
   const claudeLog = join(root, "claude.log");
   const disputingFile = join(root, "disputing");
+  const specChangesFile = join(root, "spec-changes");
 
   // Not GitHub Actions' own: on chernabog's CI it's "true", and ci run and
   // ci plan then set up the runner, its git and ~/.claude.json among it. A test
@@ -410,6 +411,7 @@ export const openSandbox = (
     FAKE_AGENT_TOKEN_LOG: agentTokenLog,
     FAKE_AGENT_SESSION_LOG: eventLog,
     FAKE_CLAUDE_DISPUTING: disputingFile,
+    FAKE_CLAUDE_SPEC_CHANGES: specChangesFile,
     FAKE_CODEX_LOG: join(root, "codex.log"),
     FAKE_OPENCODE_LOG: join(root, "opencode.log"),
     FAKE_TMUX_STATE: join(root, "tmux"),
@@ -563,6 +565,51 @@ export const openSandbox = (
   // Every push since the sandbox was set up, oldest first.
   const pushes = () => events().pushes;
 
+  // The change Claude commits from now on, starting a session on `branch`, or
+  // resuming one as `login`, also changes a behavior spec.
+  const changeSpecOn = (branch: string) => {
+    appendFileSync(specChangesFile, `branch ${branch}\n`);
+  };
+
+  const changeSpecFixingAs = (login: string) => {
+    appendFileSync(specChangesFile, `fixing ${login}\n`);
+  };
+
+  // A person, `login`, pushes a commit to `branch` that changes a behavior
+  // spec, from a clone of their own, as their token, so the event log says
+  // whose push it was.
+  const pushSpecChangeAs = (login: string, branch: string) => {
+    const clone = join(root, `clone-${login}`);
+
+    if (!existsSync(clone)) {
+      execFileSync("git", ["clone", "-q", bare, clone]);
+    }
+
+    git(clone, "fetch", "-q", "origin", branch);
+    git(clone, "checkout", "-q", "-B", branch, `origin/${branch}`);
+    mkdirSync(join(clone, "test/features"), { recursive: true });
+    appendFileSync(join(clone, "test/features/filed-work.feature"), `  # changed by ${login}\n`);
+    git(clone, "add", "test/features");
+    git(clone, "commit", "-q", "-m", `test: ${login} changes the spec`);
+    execFileSync("git", ["push", "-q", "origin", branch], {
+      cwd: clone,
+      env: { ...env, GH_TOKEN: `token-${login}` },
+    });
+  };
+
+  // `login` takes `label` off an issue or pull request through the API, so
+  // GitHub's events name who took it off.
+  const unlabelAs = async (login: string, number: number, label: string) => {
+    const response = await fetch(
+      `${github.url}/repos/${SLUG}/issues/${number}/labels/${encodeURIComponent(label)}`,
+      { method: "DELETE", headers: { authorization: `Bearer token-${login}` } },
+    );
+
+    if (!response.ok) {
+      throw new Error(`taking ${label} off #${number} answered ${response.status}`);
+    }
+  };
+
   // `login`'s agent declines what a review asks for from now on, rather than
   // addressing it.
   const disagreeAs = (login: string) => {
@@ -620,6 +667,7 @@ export const openSandbox = (
   };
 
   return {
+    slug: SLUG,
     root,
     bare,
     checkout,
@@ -646,6 +694,10 @@ export const openSandbox = (
     pushes,
     events,
     disagreeAs,
+    changeSpecOn,
+    changeSpecFixingAs,
+    pushSpecChangeAs,
+    unlabelAs,
     daemonReady,
     daemonStatus,
     stopDaemon,

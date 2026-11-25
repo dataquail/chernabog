@@ -4,8 +4,8 @@
 // fakes, sandbox over the real CLI and fake GitHub), and a step names only
 // this, so one scenario runs the same on each. It holds no driver's types.
 //
-// It is as small as the review loop needs (test/features/review-loop.feature)
-// and grows with the features.
+// It is as small as the features need (test/features/review-loop.feature,
+// spec-changes.feature) and grows with them.
 
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
@@ -24,6 +24,10 @@ export class DomainFailed extends Schema.TaggedError<
 >()("DomainFailed", {
   message: Schema.String,
 }) {}
+
+// What the fix an issue asks for changes: only code, or a spec too (a
+// behavior file under test/features).
+export type Fix = "code" | "a spec";
 
 export type IssueSeen = {
   readonly number: number;
@@ -93,6 +97,12 @@ export type SessionSeen = Sequenced & {
   readonly resumed: boolean;
 };
 
+// Someone took a hand-off off a pull request: it is the personas' again.
+export type HandBackSeen = Sequenced & {
+  readonly pullRequest: number;
+  readonly by: Login;
+};
+
 export type MergeSeen = Sequenced & {
   readonly pullRequest: number;
   readonly by: Login;
@@ -109,6 +119,7 @@ export type World = {
   readonly pushes: ReadonlyArray<PushSeen>;
   readonly reviewRequests: ReadonlyArray<ReviewRequestSeen>;
   readonly handOffs: ReadonlyArray<HandOffSeen>;
+  readonly handBacks: ReadonlyArray<HandBackSeen>;
   readonly sessions: ReadonlyArray<SessionSeen>;
   readonly merges: ReadonlyArray<MergeSeen>;
 };
@@ -122,8 +133,15 @@ export type Domain = {
   // This persona's agent, as an author, disagrees with the changes a review
   // asks for, rather than making them.
   readonly willDispute: (author: Login) => Effect.Effect<void, DomainFailed>;
-  // Someone files an issue with these labels; its number.
-  readonly fileIssue: (labels: ReadonlyArray<string>) => Effect.Effect<number, DomainFailed>;
+  // This persona's agent, as an author, changes a spec in each fix it makes
+  // to what a review asks, as well as code.
+  readonly willChangeSpecWhenFixing: (author: Login) => Effect.Effect<void, DomainFailed>;
+  // Someone files an issue with these labels, whose fix changes `fix`; its
+  // number.
+  readonly fileIssue: (
+    labels: ReadonlyArray<string>,
+    fix: Fix,
+  ) => Effect.Effect<number, DomainFailed>;
   // A person, not a persona, opens a pull request; its number.
   readonly openPullRequest: (author: Login) => Effect.Effect<number, DomainFailed>;
   // A person asks these logins to review a pull request.
@@ -131,6 +149,14 @@ export type Domain = {
     pullRequest: number,
     reviewers: ReadonlyArray<Login>,
   ) => Effect.Effect<void, DomainFailed>;
+  // A person pushes a commit to a pull request that changes a spec.
+  readonly changeSpec: (pullRequest: number, by: Login) => Effect.Effect<void, DomainFailed>;
+  // `by` approves a pull request as it stands, by hand: a person, or a
+  // persona's login outside any of its flows.
+  readonly approve: (pullRequest: number, by: Login) => Effect.Effect<void, DomainFailed>;
+  // A person who may write to the repo takes a pull request's hand-off off,
+  // handing it back to the personas.
+  readonly handBack: (pullRequest: number) => Effect.Effect<void, DomainFailed>;
   // What can be seen now.
   readonly world: Effect.Effect<World, DomainFailed>;
   // Lets the machine work until what it sees answers `find`, and gives the
