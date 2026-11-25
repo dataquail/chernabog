@@ -130,6 +130,26 @@ const gate = { entries: 0, release: Deferred.makeUnsafe<void>() };
 // Whether the long-step flow's step started, and whether it was interrupted.
 const longStep = { started: false, interrupted: false };
 
+// Whether the lane-step-sleep flow's step started, and whether it was interrupted.
+const laneStep = { started: false, interrupted: false };
+
+// A step that never ends on its own, which records in `seen` that it started
+// and whether it was interrupted.
+const neverEnding = (name: string, seen: { started: boolean; interrupted: boolean }) =>
+  activity(
+    name,
+    Effect.sync(() => {
+      seen.started = true;
+    }).pipe(
+      Effect.andThen(Effect.never),
+      Effect.onInterrupt(() =>
+        Effect.sync(() => {
+          seen.interrupted = true;
+        }),
+      ),
+    ),
+  );
+
 const ItemData = Schema.Struct({ key: Schema.String });
 
 const flow = defineFlow({
@@ -249,21 +269,32 @@ const flow = defineFlow({
         );
       }
 
+      // One lane in a step that never ends, the other asleep on a durable
+      // clock from its start, so it sleeps before the step has begun (#675).
+      if (key === "lane-step-sleep") {
+        yield* Effect.all([neverEnding("stuck#a", laneStep), sleep("nap#b", "1 minute")], {
+          concurrency: 2,
+        });
+      }
+
+      // One lane's step fails while the other sleeps on a durable clock from
+      // its start (#675).
+      if (key === "lane-fails-sleep") {
+        yield* Effect.all(
+          [
+            activity(
+              "fails#a",
+              Effect.fail(new StepFailed({ step: "fails#a", message: "kaboom" })),
+            ),
+            sleep("nap#b", "1 minute"),
+          ],
+          { concurrency: 2 },
+        );
+      }
+
       // A step that never ends on its own, which a cancel must stop.
       if (key === "long-step") {
-        yield* activity(
-          "long",
-          Effect.sync(() => {
-            longStep.started = true;
-          }).pipe(
-            Effect.andThen(Effect.never),
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                longStep.interrupted = true;
-              }),
-            ),
-          ),
-        );
+        yield* neverEnding("long", longStep);
       }
 
       // Files two issues, as a plan does its sub-issues.
@@ -780,6 +811,65 @@ describe("the engine", () => {
 
       expect([value.cancelled.stopped, value.polled.status]).toEqual([true, "cancelled"]);
       expect(longStep.interrupted).toBe(true);
+    }),
+  );
+
+  // A lane asleep from its start must not mark the run suspended before its
+  // sibling's step has begun: the step would then run on through the
+  // suspension, and an interrupt would wait for it (#675).
+  for (const [ending, endAs, status] of [
+    ["a cancel", Option.none(), "cancelled"],
+    [
+      "a lost claim",
+      Option.some({ ending: "lost" as const, reason: "another run took it over" }),
+      "lost",
+    ],
+  ] as const) {
+    effect(
+      `${ending} stops a lane's step while another lane sleeps on a durable clock (#675)`,
+      () =>
+        Effect.gen(function* () {
+          laneStep.started = false;
+          laneStep.interrupted = false;
+
+          const { value } = yield* withEngine(
+            Effect.gen(function* () {
+              const run = yield* started(item("lane-step-sleep"));
+
+              yield* Effect.sync(() => laneStep.started).pipe(
+                Effect.repeat({
+                  schedule: Schedule.spaced("25 millis"),
+                  until: (begun) => begun,
+                  times: POLLS,
+                }),
+              );
+
+              const cancelled = yield* cancelRunHandler({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "alice",
+                closeSessions: false,
+                endAs,
+              });
+
+              return { cancelled, polled: yield* pollRun(run) };
+            }),
+          );
+
+          expect([value.cancelled.stopped, value.cancelled.run.status]).toEqual([true, status]);
+          expect(value.polled.status).toBe(status);
+          expect(laneStep.interrupted).toBe(true);
+        }),
+    );
+  }
+
+  effect("a lane's failure ends its run while another lane sleeps on a durable clock (#675)", () =>
+    Effect.gen(function* () {
+      // Its sibling sleeps a minute: the run must fail long before that.
+      const { value: failed } = yield* withEngine(runToEnd(item("lane-fails-sleep")));
+
+      expect(failed.status).toBe("failed");
+      expect(summaryOf(failed)).toContain("fails#a");
+      expect(summaryOf(failed)).toContain("kaboom");
     }),
   );
 });
