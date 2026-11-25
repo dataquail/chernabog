@@ -98,6 +98,10 @@ export type Spokes = {
   // exited and its last reports are folded. How it exited, and the agent
   // sessions it reported; none when no spoke of the run is live.
   readonly end: (runId: RunId, ending: RunStatus) => Effect.Effect<Option.Option<EndedSpoke>>;
+  // Forgets a spoke `end` ended, once its run's ending is recorded. Until
+  // then `end` answers for it as it did the first time, so a second ending
+  // asked after the spoke exited is refused too.
+  readonly forget: (runId: RunId) => Effect.Effect<void>;
 };
 
 const encodeHandOver = Schema.encodeSync(SpokeHandOverJson);
@@ -303,6 +307,10 @@ export const hubSpokes = <R>(options: {
       }
     >();
 
+    // Each spoke `end` ended, as it was ended, until its run's ending is
+    // recorded and the hub forgets it.
+    const ended = new Map<RunId, EndedSpoke>();
+
     const [program, ...prefix] = selfCommand();
 
     yield* fs.makeDirectory(paths.journals, { recursive: true }).pipe(Effect.ignore);
@@ -418,23 +426,37 @@ export const hubSpokes = <R>(options: {
         }),
       end: (runId, ending) =>
         Option.match(Option.fromUndefinedOr(live.get(runId)), {
-          onNone: () => Effect.succeedNone,
+          onNone: () => Effect.sync(() => Option.fromUndefinedOr(ended.get(runId))),
           onSome: (spoke) =>
             Effect.gen(function* () {
               // The first ending meant for it holds: a cancel and a lost
-              // lease at once end it as whichever asked first.
-              yield* Ref.update(
-                spoke.intended,
-                Option.orElse(() => Option.some(ending)),
-              );
+              // lease at once end it as whichever asked first, and the other
+              // hears so.
+              const endedFor = yield* Ref.modify(spoke.intended, (meant) => {
+                const first = Option.getOrElse(meant, () => ending);
+
+                return [first, Option.some(first)] as const;
+              });
+
               const exit = yield* stopGroup(spoke.group, STOP_GRACE);
               yield* Deferred.await(spoke.done);
 
-              return Option.some<EndedSpoke>({
+              const result: EndedSpoke = {
+                endedFor,
                 exit: describeExit(exit),
                 sessions: [...spoke.sessions],
-              });
+              };
+
+              if (!ended.has(runId)) {
+                ended.set(runId, result);
+              }
+
+              return Option.some(result);
             }),
+        }),
+      forget: (runId) =>
+        Effect.sync(() => {
+          ended.delete(runId);
         }),
     } satisfies Spokes;
   });

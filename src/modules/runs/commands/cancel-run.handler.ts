@@ -319,6 +319,14 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   // is the run's ending recorded, and cleaning up after it starts.
   const spoke = yield* spokes.end(found.id, cancelled.status);
 
+  // Another ending asked of the spoke first (a lost lease while an item went)
+  // is the run's: whoever asked for it records it.
+  for (const ended of Option.toArray(spoke)) {
+    if (ended.endedFor !== cancelled.status) {
+      return yield* new RunAlreadyFinished({ runId: found.id, status: ended.endedFor });
+    }
+  }
+
   if (Option.isSome(spoke)) {
     yield* workflows.discard(found.id);
   }

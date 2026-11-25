@@ -954,7 +954,12 @@ export const runDaemon = Effect.gen(function* () {
       // A run the hub ends while its spoke still runs (lost, superseded, a
       // person's), ends its spoke too: SIGTERM to its group, then SIGKILL
       // after the grace. A spoke that ended its run itself has exited first.
-      yield* subscribeRunEndings((ended) => spokes.stop(ended.id), "daemon/spoke-endings");
+      // A spoke the hub ended for its run's ending is forgotten once that
+      // ending is recorded.
+      yield* subscribeRunEndings(
+        (ended) => Effect.andThen(spokes.stop(ended.id), spokes.forget(ended.id)),
+        "daemon/spoke-endings",
+      );
 
       // Each run in flight whose stillValid keeps failing: how often in a
       // row, and why. Status shows them; the runs carry on.

@@ -12,8 +12,9 @@ export type RunSpokesClientService = {
   // to take (ADR 23, decision 5): records that ending as the one the hub
   // means for it, so the hub doesn't end the run from the spoke's exit itself;
   // SIGTERM to its process group, then SIGKILL after the grace; and waits for
-  // it to exit and for what it reported to be folded into state.db. None when
-  // no spoke of the run is live here.
+  // it to exit and for what it reported to be folded into state.db. A spoke
+  // asked to end for two endings at once ends for the first, which both hear
+  // (`endedFor`). None when no spoke of the run is live here.
   readonly end: (runId: RunId, ending: RunStatus) => Effect.Effect<Option.Option<EndedSpoke>>;
 };
 

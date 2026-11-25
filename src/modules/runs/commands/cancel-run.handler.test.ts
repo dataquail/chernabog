@@ -11,6 +11,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunSpokesClient } from "../domain/ports/clients/run-spokes.client.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { type EndedSpoke } from "../domain/run/ended-spoke.value-object.ts";
+import { RunAlreadyFinished } from "../domain/run/run.errors.ts";
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunSpecifications } from "../domain/run/run.specification.ts";
@@ -730,8 +731,13 @@ describe("cancelRunHandler", () => {
     }).pipe(Effect.provide(runtime(spoked, fakeHoldings(), { runs: [run("a")] }))),
   );
 
-  // A spoke live here, which saw its run still running when it was ended.
-  const liveSpoke = (seen: Array<string>, spoke: EndedSpoke) =>
+  // A spoke live here, which saw its run still running when it was ended,
+  // for the ending asked of it, unless another was asked first.
+  const liveSpoke = (
+    seen: Array<string>,
+    spoke: Omit<EndedSpoke, "endedFor">,
+    first: Option.Option<EndedSpoke["endedFor"]> = Option.none(),
+  ) =>
     Layer.effect(
       RunSpokesClient,
       Effect.gen(function* () {
@@ -748,7 +754,7 @@ describe("cancelRunHandler", () => {
                 )}`,
               );
 
-              return Option.some(spoke);
+              return Option.some({ ...spoke, endedFor: Option.getOrElse(first, () => ending) });
             }).pipe(Effect.orDie),
         });
       }),
@@ -760,9 +766,14 @@ describe("cancelRunHandler", () => {
     launch: `/l/${sessionId}`,
   });
 
-  const inSpoke = (spokeOf: FakeEngine, held: FakeHoldings, seen: Array<string>) =>
+  const inSpoke = (
+    spokeOf: FakeEngine,
+    held: FakeHoldings,
+    seen: Array<string>,
+    first: Option.Option<EndedSpoke["endedFor"]> = Option.none(),
+  ) =>
     Layer.provideMerge(
-      liveSpoke(seen, { exit: "killed by SIGTERM", sessions: [reported("s1")] }),
+      liveSpoke(seen, { exit: "killed by SIGTERM", sessions: [reported("s1")] }, first),
       runtime(spokeOf, held, { runs: [run("a")] }),
     );
 
@@ -840,6 +851,28 @@ describe("cancelRunHandler", () => {
       expect(cancelled.spokeExited).toBe("killed by SIGTERM");
       expect(lostHoldings.closed).toEqual([]);
     }).pipe(Effect.provide(inSpoke(fakeEngine(), lostHoldings, lostSeen))),
+  );
+
+  const raceEngine = fakeEngine();
+  raceEngine.journals.push(RunId.make("a"));
+
+  effect("a spoke another ending was asked of first is that ending's: this one is refused", () =>
+    Effect.gen(function* () {
+      const refused = yield* Effect.flip(
+        cancelRunHandler({
+          target: byId("a"),
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some({ ending: "superseded", reason: "its item went" }),
+        }),
+      );
+
+      expect(refused).toEqual(new RunAlreadyFinished({ runId: RunId.make("a"), status: "lost" }));
+      // Whoever asked for lost records it, and deletes the journal.
+      expect(yield* statusOf("a")).toEqual(Option.some("running"));
+      expect(raceEngine.discarded).toEqual([]);
+      expect(yield* DispatchedEvents).toEqual([]);
+    }).pipe(Effect.provide(inSpoke(raceEngine, fakeHoldings(), [], Option.some("lost")))),
   );
 
   const unexecuted = fakeEngine();

@@ -33,12 +33,12 @@ describe("RunSpokesClientLive", () => {
           Effect.sync(() => {
             asked.push(`${runId} ${ending}`);
 
-            return Option.some({ exit: "killed by SIGTERM", sessions: [] });
+            return Option.some({ endedFor: ending, exit: "killed by SIGTERM", sessions: [] });
           }),
       });
 
       expect(yield* ended(Option.some(hub))).toEqual(
-        Option.some({ exit: "killed by SIGTERM", sessions: [] }),
+        Option.some({ endedFor: "cancelled", exit: "killed by SIGTERM", sessions: [] }),
       );
       expect(asked).toEqual(["run-1 cancelled"]);
     }),
