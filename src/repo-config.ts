@@ -9,6 +9,8 @@
 
 import {
   type Account,
+  APP_REVIEWER,
+  type AppIdentity,
   DEFAULT_LABELS,
   type Flow,
   GitHubError,
@@ -52,6 +54,8 @@ import {
   EnrolledRepoEntry as EnrolledRepoSchema,
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
+import { AppRoles } from "./modules/machine/domain/domain-services/app-roles.domain-service.ts";
+import { AppRole } from "./modules/machine/domain/machine-setup/app-role.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   DEFAULT_LEASE_LIMITS,
@@ -142,6 +146,37 @@ const RepoFlowSettings = Schema.Struct({
   ...FlowSettings.fields,
   runners: Schema.optionalKey(Runners),
   from: Schema.optionalKey(FlowFrom),
+  as: Schema.optionalKey(
+    AppRole.annotate({
+      description:
+        "Which of the team's GitHub Apps (apps:) the flow acts as in CI: author, which writes the code, or reviewer, which reviews it. The App must be under apps:.",
+    }),
+  ),
+});
+
+// One of the team's GitHub Apps (#477), as config.yaml names it.
+const AppFile = Schema.Struct({
+  id: Schema.Int.annotate({ description: "The App's id, from its settings page on GitHub." }),
+  slug: Schema.String.annotate({
+    description: "The App's slug, as in github.com/apps/<slug>: it acts as <slug>[bot].",
+  }),
+});
+
+const AppsFile = Schema.Struct({
+  author: Schema.optionalKey(
+    AppFile.annotate({
+      description: "The App that writes the code: implement, address-review and the rest.",
+    }),
+  ),
+  reviewer: Schema.optionalKey(
+    AppFile.annotate({
+      description:
+        "The App that reviews it, through its chernabog review check. Never the author's: an App can't approve its own work.",
+    }),
+  ),
+}).annotate({
+  description:
+    "The team's GitHub Apps by role (chernabog ci apps makes them). Flows name the one they act as with flows.<name>.as, and a reviewer pool names the reviewer as app:reviewer.",
 });
 
 // A key a flow's settings hold now, kept until core's next major (ADR 0005).
@@ -284,6 +319,7 @@ export const RepoConfigFile = Schema.Struct({
       description: `The reviewer pool, by GitHub login. ${deprecated("reviewers")}`,
     }),
   ),
+  apps: Schema.optionalKey(AppsFile),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
   ci: Schema.optionalKey(CiFile),
 });
@@ -1187,6 +1223,92 @@ const sharedSetting = <A, I>(repo: RepoConfigFile, key: string, schema: Schema.C
     Result.getSuccess(Schema.decodeUnknownResult(schema)(value)),
   );
 
+// The team's GitHub Apps by role, each with the login it acts as (#477).
+const appsOf = (repo: RepoConfigFile): Record<string, AppIdentity> =>
+  Object.fromEntries(
+    Object.entries(repo.apps ?? {}).flatMap(([role, app]) =>
+      Option.toArray(
+        Option.map(
+          Option.fromUndefinedOr(app),
+          (found) => [role, { ...found, login: AppRoles.loginOf(found.slug) }] as const,
+        ),
+      ),
+    ),
+  );
+
+// The App role each flow acts as, for the flows that name one.
+const flowAppsOf = (repo: RepoConfigFile): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(repo.flows ?? {}).flatMap(([name, flow]) =>
+      Option.toArray(Option.map(Option.fromUndefinedOr(flow.as), (role) => [name, role] as const)),
+    ),
+  );
+
+// The reviewer pools config.yaml sets: the deprecated top-level key, the
+// shared settings', and each flow's own.
+const reviewerPools = (repo: RepoConfigFile) => [
+  ...Option.toArray(
+    Option.map(Option.fromUndefinedOr(repo.reviewers), (pool) => ["reviewers", pool] as const),
+  ),
+  ...Option.toArray(
+    Option.map(
+      sharedSetting(repo, "reviewers", Strings),
+      (pool) => ["settings.reviewers", pool] as const,
+    ),
+  ),
+  ...Object.entries(repo.flows ?? {}).flatMap(([name, flow]) =>
+    Option.toArray(
+      Option.map(
+        Option.flatMap(Option.fromUndefinedOr(flow.settings?.reviewers), (value) =>
+          Result.getSuccess(Schema.decodeUnknownResult(Strings)(value)),
+        ),
+        (pool) => [`flows.${name}.settings.reviewers`, pool] as const,
+      ),
+    ),
+  ),
+];
+
+// Why config.yaml's Apps don't add up, if they don't: an App whose bot
+// personas: doesn't list, which would make every record it writes by hand an
+// anomaly (personas: is the only place that says who the personas are), or a
+// flow acting as, or a reviewer pool naming, a role apps: has no App for.
+export const appsProblems = (repo: RepoConfigFile): ReadonlyArray<string> => {
+  const apps = repo.apps ?? {};
+  const has = (role: string) => Object.hasOwn(apps, role);
+  const personas = repo.personas ?? [];
+
+  const personaProblems = Object.entries(apps).flatMap(([role, app]) => {
+    const login = AppRoles.loginOf(app.slug);
+
+    return Arr.filter(
+      [`apps.${role} acts as ${login}, but personas: doesn't list it; add ${login} to personas:`],
+      () => !personas.some((persona) => persona.toLowerCase() === login.toLowerCase()),
+    );
+  });
+
+  const asProblems = Object.entries(flowAppsOf(repo)).flatMap(([flow, role]) =>
+    Arr.filter([`flows.${flow}.as: ${role}, but apps: has no ${role} App`], () => !has(role)),
+  );
+
+  const poolProblems = reviewerPools(repo).flatMap(([key, pool]) =>
+    pool.flatMap((entry) => {
+      if (!entry.startsWith(APP_REVIEWER)) {
+        return [];
+      }
+
+      const role = entry.slice(APP_REVIEWER.length);
+
+      if (!Schema.is(AppRole)(role)) {
+        return [`${key}: ${entry} names no App role; use app:author or app:reviewer`];
+      }
+
+      return Arr.filter([`${key}: ${entry}, but apps: has no ${role} App`], () => !has(role));
+    }),
+  );
+
+  return [...personaProblems, ...asProblems, ...poolProblems];
+};
+
 // Merges the layers for one persona of a repo. `configDir` is where its
 // .chernabog/ was read from; `env` is the extra environment its commands run
 // with; `defaultBranch` is the repo's default branch, the integration base
@@ -1204,6 +1326,10 @@ const mergePersona = (
     const failed = (message: string) =>
       new ConfigError({ message: `${enrolled.repo}${asSuffix(persona)}: ${message}` });
 
+    for (const problem of Option.toArray(Arr.head(appsProblems(repo)))) {
+      return yield* failed(problem);
+    }
+
     const own = choicesOf(enrolled, persona);
 
     const accountName = Option.getOrElse(
@@ -1219,7 +1345,7 @@ const mergePersona = (
     // for it, so the team's per-flow schedules give way to it.
     const teamFlows = Record.map(
       repo.flows ?? {},
-      ({ runners: _runners, ...settings }): FlowSettings => settings,
+      ({ as: _as, runners: _runners, ...settings }): FlowSettings => settings,
     );
 
     const repoFlows = Option.match(Option.fromUndefinedOr(own.schedule), {
@@ -1263,6 +1389,13 @@ const mergePersona = (
         ),
       ),
       roleAgents: roles.agents,
+      ...Option.match(
+        Option.liftPredicate(appsOf(repo), (apps) => !Record.isEmptyRecord(apps)),
+        {
+          onNone: () => ({}),
+          onSome: (apps) => ({ apps, flowApps: flowAppsOf(repo) }),
+        },
+      ),
       labels: {
         ...DEFAULT_LABELS,
         ...repo.labels,
