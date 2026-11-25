@@ -9,7 +9,7 @@ import { effect } from "../../../../../test/effect-test.ts";
 import { makeThreadsFake } from "../../../../../test/github-threads-fake.ts";
 import { progressContract } from "../../../../../test/progress-contract.ts";
 import { githubTestLayer } from "../../../../platform/github-api.ts";
-import { announcing, PHASE_EVENT } from "./phase-announcer.ts";
+import { announcing } from "./phase-announcer.ts";
 import { makeRepoProgress, makeThreadsProgress } from "./progress.ts";
 
 const SLUG = "acme/app";
@@ -86,9 +86,11 @@ describe("an announced advance", () => {
 
       const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
 
+      // The literal, not the constant: a repo's generated workflow listens for
+      // `repository_dispatch` of this very type.
       expect(fake.sent).toEqual([
         {
-          event_type: PHASE_EVENT,
+          event_type: "chernabog-phase",
           client_payload: { item: "pr-73", from: NULL, to: "review-asked" },
         },
       ]);
@@ -97,7 +99,7 @@ describe("an announced advance", () => {
 
       expect(fake.sent).toHaveLength(2);
       expect(fake.sent[1]).toEqual({
-        event_type: PHASE_EVENT,
+        event_type: "chernabog-phase",
         client_payload: { item: "pr-73", from: "review-asked", to: "changes-asked" },
       });
     }),
