@@ -1095,8 +1095,10 @@ How a CI run differs from a daemon run:
   too) and start time as `ps` says it, the hub's, the fold position and the
   intended ending; a run's ending forgets it (`ForgetSpokeCommand`, from the
   hub's `daemon/spoke-endings` subscription). A spoke whose stdin closes
-  SIGTERMs its own group and SIGKILLs what's left of it on its way out
-  (`stopWhenStdinCloses`), so what it started doesn't outlive its hub. A
+  SIGTERMs its own group (`stopWhenStdinCloses`), and a spoke stopped by
+  any SIGTERM or SIGINT (its stdin, a hub's stop, a cancel, a bound)
+  SIGKILLs what's left of its group on its way out (`killGroupOnStop`), so
+  what it started, even what ignores SIGTERM, doesn't outlive it. A
   hub that stops SIGTERMs every spoke and waits for none. Before its first
   tick, a hub reaps every record (`ListSpokesQuery`, `Spokes.reap`): it
   signals a group only once its leader's start time and command line
