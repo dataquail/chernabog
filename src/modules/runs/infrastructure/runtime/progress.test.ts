@@ -754,11 +754,15 @@ describe("the protected-branch adapter's errors", () => {
       );
     });
 
-  effect("HTTP 403 creating a thread's ref is a setup error", () =>
-    Effect.map(creatingRef(403, { message: "Resource not accessible by integration" }), (exit) => {
-      expect(refused(exit)).toEqual(Option.some(true));
-    }),
-  );
+  // The status decides: a 403 is a refusal even when its message reads like
+  // the 422 a lost race gets.
+  for (const message of ["Resource not accessible by integration", "Reference already exists"]) {
+    effect(`HTTP 403 creating a thread's ref, saying "${message}", is a setup error`, () =>
+      Effect.map(creatingRef(403, { message }), (exit) => {
+        expect(refused(exit)).toEqual(Option.some(true));
+      }),
+    );
+  }
 
   // Only GitHub's refusal is a setup error: a 422 for another reason, or a
   // server's error, whatever it says, is a write that failed.
