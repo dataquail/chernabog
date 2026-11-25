@@ -293,9 +293,19 @@ for (const [form, loading] of forms) {
           const fake = conflicting("review-asked");
           fake.merge.afterPush = Option.some(PENDING);
           fake.merge.stateAfterPush = Option.some("dirty");
-          const run = yield* runToEnd(yield* handle, fake, work);
+          let parked = false;
+
+          const run = yield* runUntil(yield* handle, fake, work, (polled) =>
+            Effect.map(parkedOnCi(polled), (found) => {
+              parked = parked || found;
+
+              return found || polled.status !== "running";
+            }),
+          );
 
           expect(run.status).toBe("done");
+          // Its first reading ends the wait: it never parks on CI that won't come.
+          expect(parked).toBe(false);
           expect(summaryOf(run)).toBe(`#${PULL}: merged main and resolved its conflicts`);
           expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
           expect(Option.map(recordNow(fake), (found) => found.phase)).toEqual(

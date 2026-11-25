@@ -1144,7 +1144,7 @@ export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
     {},
     (recipe) => {
       expect(recipe.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
-      expect(recipe.steps).toContain("ci-1-1");
+      expect(recipe.steps).toContain("ask-again-1");
     },
   );
 
