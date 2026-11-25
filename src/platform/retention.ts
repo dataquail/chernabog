@@ -26,6 +26,9 @@ export type RetentionPolicy = {
 };
 
 // What the daemon keeps of <home>/telemetry: 30 days, and at most 500 MB.
+// Today's folder, which the sweep never touches, is held to the same 500 MB
+// as it is written, by every process without a spoke's bound (FileTelemetry's
+// dayCap, #701).
 export const TELEMETRY_RETENTION: RetentionPolicy = {
   maxAgeDays: 30,
   maxBytes: 500 * 1024 * 1024,
