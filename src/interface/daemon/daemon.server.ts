@@ -1061,6 +1061,12 @@ export const runDaemon = Effect.gen(function* () {
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
+          // What its spoke has reported is folded first, so the claims checked
+          // are the ones it holds: a claim it took since the last fold, and
+          // another run took over, is lost, not missing (the item then reads
+          // as gone, and the run would be superseded instead).
+          yield* spokes.fold(run.id);
+
           const found = yield* (yield* RunFlowsCommands).CheckRunLeasesCommand({
             runId: run.id,
             renew,
