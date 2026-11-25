@@ -137,16 +137,6 @@ export const HEADLESS: ResolvedLauncher = {
   custom: Option.none(),
 };
 
-// Everything a run knows about the repo it works on, merged from the repo's
-// committed config and the persona's settings in machine config. baseBranch
-// is deprecated too: it is no longer the branch .chernabog/ is read from
-// (GitHub's default is), only the integration base a flow's `base` setting
-// falls back to, config.yaml's old baseBranch or else the repo's default
-// branch. The recipes' keys (reviewers, labels, install, localGate, humanOnly,
-// humanOnlyPaths, notes, board, reviewTrigger and limits) are deprecated:
-// a flow's own settings (Settings) hold them now, the binary fills these
-// from config.yaml's old keys for SDKs that still read them, and core's next
-// major drops them (ADR 0005). reviewTrigger is always none.
 // One of the team's GitHub Apps (#477): its id, its slug, and the login it
 // acts as on GitHub, its bot, `<slug>[bot]`.
 export const AppIdentity = Schema.Struct({
@@ -161,6 +151,16 @@ export type AppIdentity = typeof AppIdentity.Type;
 // app:reviewer. The App reviews through its check and is never asked.
 export const APP_REVIEWER = "app:";
 
+// Everything a run knows about the repo it works on, merged from the repo's
+// committed config and the persona's settings in machine config. baseBranch
+// is deprecated too: it is no longer the branch .chernabog/ is read from
+// (GitHub's default is), only the integration base a flow's `base` setting
+// falls back to, config.yaml's old baseBranch or else the repo's default
+// branch. The recipes' keys (reviewers, labels, install, localGate, humanOnly,
+// humanOnlyPaths, notes, board, reviewTrigger and limits) are deprecated:
+// a flow's own settings (Settings) hold them now, the binary fills these
+// from config.yaml's old keys for SDKs that still read them, and core's next
+// major drops them (ADR 0005). reviewTrigger is always none.
 export const RepoSettings = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
