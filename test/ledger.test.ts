@@ -16,6 +16,7 @@ import {
   type PhaseRecord,
   Phases,
   PhaseWriter,
+  Progress,
   reviewMarker,
   UNREADABLE_PHASE,
   UNREADABLE_WRITER,
@@ -342,6 +343,84 @@ describe("a person's fix for an anomaly", () => {
 
       expect(acknowledged.map((one) => one.acknowledged)).toEqual([false]);
       expect(fake.records().get(PR_ITEM)?.by).toBe(asWriter("mallory"));
+    }),
+  );
+
+  effect("a record that holds no data is acknowledged, and still holds none", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+      const anomalies = yield* onFake(fake, Ledger.survey);
+
+      const acknowledged = yield* onFake(fake, Ledger.acknowledge(anomalies));
+
+      expect(acknowledged.map((one) => one.acknowledged)).toEqual([true]);
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: "changes-asked",
+        by: Ledger.ACKNOWLEDGED,
+        data: Option.none(),
+      });
+    }),
+  );
+
+  // Acknowledging the same listing again, as a person running the command
+  // twice would: the record is the acknowledgement now, not the one listed.
+  effect("an anomaly acknowledged already is left the second time, as moved", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+      const anomalies = yield* onFake(fake, Ledger.survey);
+
+      const first = yield* onFake(fake, Ledger.acknowledge(anomalies));
+      const again = yield* onFake(fake, Ledger.acknowledge(anomalies));
+
+      expect(first.map((one) => one.acknowledged)).toEqual([true]);
+      expect(again.map((one) => one.acknowledged)).toEqual([false]);
+    }),
+  );
+
+  // Another writer moves the record after acknowledge reads it and before it
+  // records the phase again: the compare-and-set refuses, and it's left.
+  effect("a record that moves while it's acknowledged is left, not a failure", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+      const anomalies = yield* onFake(fake, Ledger.survey);
+
+      const acknowledged = yield* onFake(
+        fake,
+        Effect.gen(function* () {
+          const progress = yield* Progress;
+
+          const racing: Progress["Service"] = {
+            ...progress,
+            read: (item) =>
+              Effect.tap(progress.read(item), () =>
+                Effect.sync(() => {
+                  fake.recordPhase(item, P.approved, { by: "mallory" });
+                }),
+              ),
+          };
+
+          return yield* Ledger.acknowledge(anomalies).pipe(Effect.provideService(Progress, racing));
+        }),
+      );
+
+      expect(acknowledged.map((one) => one.acknowledged)).toEqual([false]);
+      expect(fake.records().get(PR_ITEM)).toMatchObject({ phase: "approved", by: "mallory" });
+    }),
+  );
+
+  effect("the survey lists anomalies by item, whatever order the store holds them in", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase("pr-9", P.changesAsked, { by: "mallory" });
+      fake.recordPhase("issue-4", Phases.PHASES.issue.handedOff, { by: "mallory" });
+      fake.recordPhase("pr-12", P.approved, { by: "mallory" });
+
+      const anomalies = yield* onFake(fake, Ledger.survey);
+
+      expect(anomalies.map((one) => one.item)).toEqual(["issue-4", "pr-12", "pr-9"]);
     }),
   );
 
@@ -754,6 +833,36 @@ describe("what a checking trigger holds and reports", () => {
             ...work,
             held: heldFor(item, version, phase),
           },
+        ]);
+      }),
+    );
+  }
+
+  // A work item's data names its records by number: one whose pull request
+  // or issue isn't a number names none, so it isn't held, and the anomaly is
+  // reported alone.
+  const misnamed = [
+    ["a pull request", PR_ITEM, P.changesAsked, { pullRequest: `${PULL}` }],
+    ["an issue", "issue-3", Phases.PHASES.issue.withPerson, { issue: "3" }],
+  ] as const;
+
+  for (const [kind, item, phase, data] of misnamed) {
+    effect(`an item whose data names ${kind} by no number isn't held by its anomaly`, () =>
+      Effect.gen(function* () {
+        const { fake } = forged(item, phase);
+        const work = { key: "the-work", title: "the work", data };
+
+        const items = yield* checked(
+          fake,
+          [{ item: Ledger.kindOf(item).pipe(Option.getOrThrow), phases: [phase] }],
+          [work],
+        );
+
+        expect(
+          items.map((one) => [one.data, Option.isSome(Option.fromUndefinedOr(one.held))]),
+        ).toEqual([
+          [data, false],
+          [{ anomaly: item }, true],
         ]);
       }),
     );
