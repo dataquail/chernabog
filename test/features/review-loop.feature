@@ -8,15 +8,23 @@ Feature: The review loop
     Given alice and bob are personas on this machine
     And alice and bob both review for the team
 
+  @driver:ci @driver:live
   Scenario: bob asks for changes, alice fixes them, and bob merges
+    When someone files an auto:ship issue
+    Then alice opens a pull request for it
+    And bob asks for changes on one line
+    And alice fixes it
+    And bob re-reviews the fix
+    And bob approves the fixed pull request and merges it
+    And alice never reviews her own pull request
+    And it is never handed to a person
+
+  Scenario: alice and bob each pick up their own session when they come back to it
     When someone files an auto:ship issue
     Then alice opens a pull request for it
     And bob asks for changes on one line
     And alice fixes it in the same session she wrote it in
     And bob re-reviews the fix in the same session he reviewed it in
-    And bob approves the fixed pull request and merges it
-    And alice never reviews her own pull request
-    And it is never handed to a person
 
   Scenario: alice disputes bob's review
     Given alice will disagree with the changes bob asks for
