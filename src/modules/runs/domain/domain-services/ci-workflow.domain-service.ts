@@ -145,7 +145,8 @@ const PLAN_PERMISSIONS = {
 const APP_TOKEN_STEP = "app-token";
 
 // A token step's input for one permission: the same for every role, or each
-// role's by the matrix entry's role, the last role's when no other matches.
+// role's by the matrix entry's role. A role whose App lacks the permission
+// gets '', which the token step reads as not asked for, so it isn't granted.
 const permissionInput = (
   roles: WorkflowApps["roles"],
   permission: string,
@@ -163,21 +164,25 @@ const permissionInput = (
     return Option.none();
   }
 
-  if (Arr.dedupe(values.map((one) => one.value)).length === 1) {
+  const everyRole = values.length === roles.length;
+
+  if (everyRole && Arr.dedupe(values.map((one) => one.value)).length === 1) {
     return Option.fromUndefinedOr(values[0]?.value);
   }
 
-  const last = values.at(-1);
+  // When every role has it, the last's is the fallback; else '' is, for the
+  // roles that lack it, as '' after && would fall through to the next role's.
+  let named = values;
+  let fallback = "";
 
-  const chosen = values
-    .slice(0, -1)
-    .map((one) => `matrix.role == '${one.role}' && '${one.value}'`)
-    .join(" || ");
+  if (everyRole) {
+    named = values.slice(0, -1);
+    fallback = values.at(-1)?.value ?? "";
+  }
 
-  return Option.map(
-    Option.fromUndefinedOr(last),
-    (fallback) => `\${{ ${chosen} || '${fallback.value}' }}`,
-  );
+  const chosen = named.map((one) => `matrix.role == '${one.role}' && '${one.value}'`).join(" || ");
+
+  return Option.some(`\${{ ${chosen} || '${fallback}' }}`);
 };
 
 // The token step's permission-* inputs: every permission a role's App has,

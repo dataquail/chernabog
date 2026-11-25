@@ -3,7 +3,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { CiWorkflow, type Job } from "./ci-workflow.domain-service.ts";
+import { CiWorkflow, type Job, type WorkflowApps } from "./ci-workflow.domain-service.ts";
 
 const on = {
   issues: { types: ["labeled"] },
@@ -276,6 +276,22 @@ describe("the workflow, when the flows act as the repo's GitHub Apps (#477)", ()
     }).document.jobs.run.steps.find((step) => step.id === "app-token");
 
     expect(one?.with?.["permission-checks"]).toBe("read");
+  });
+
+  test("a permission only one role's App has is granted to that role alone", () => {
+    const token = built({
+      apps: Option.some<WorkflowApps>({
+        roles: [
+          { role: "author", permissions: { checks: "read" } },
+          { role: "reviewer", permissions: { checks: "read", workflows: "write" } },
+        ],
+      }),
+    }).document.jobs.run.steps.find((step) => step.id === "app-token");
+
+    expect(token?.with?.["permission-checks"]).toBe("read");
+    expect(token?.with?.["permission-workflows"]).toBe(
+      "${{ matrix.role == 'reviewer' && 'write' || '' }}",
+    );
   });
 
   test("keeps the workflow's own token to reading the checkout", () => {
