@@ -312,6 +312,12 @@ describe("FileTelemetry", () => {
 
       expect(written).toHaveLength(1);
 
+      // A later process of the run, past the bound already, writes no second stop line.
+      yield* asSpoke(dir, "run-2");
+      expect(
+        (yield* spokeFiles(dir, "run-2")).filter((file) => !file.path.includes("2026-01-01")),
+      ).toEqual(written);
+
       const lines = String(written[0]?.text)
         .split("\n")
         .filter((line) => line.length > 0);

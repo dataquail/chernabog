@@ -270,6 +270,15 @@ const make = (options: FileTelemetryOptions) =>
 
         const kept: Array<string> = [];
 
+        // Only a stop line takes this name's files past the limit: one an
+        // earlier process of the run wrote has stopped it already.
+        if (total > limit.value) {
+          stopped = true;
+          used = Option.some(total);
+
+          return kept;
+        }
+
         for (const line of lines) {
           if (total + bytesOf(line) > limit.value) {
             stopped = true;

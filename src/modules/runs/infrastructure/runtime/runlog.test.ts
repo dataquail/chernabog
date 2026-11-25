@@ -62,4 +62,27 @@ describe("a run's log", () => {
       expect(Number((yield* fs.stat(path)).size)).toBeLessThan(2_000 + 200);
     }),
   );
+
+  effect(
+    "limited, writes one stop line though the entry it drops is many times the room left",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* scratchLog;
+
+        yield* Effect.gen(function* () {
+          const log = yield* runLogWriting(path);
+          yield* log.log("a");
+          yield* log.log("x".repeat(5_000));
+
+          for (const line of ["b", "c", "d"]) {
+            yield* log.log(line);
+          }
+        }).pipe(Effect.provideService(RunLogLimit, Option.some(2_000)));
+
+        const lines = yield* linesOf(path);
+
+        expect(lines.filter((line) => line.includes("this run's log stopped"))).toHaveLength(1);
+        expect(lines.some((line) => line.endsWith("\td"))).toBe(false);
+      }),
+  );
 });

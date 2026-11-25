@@ -53,23 +53,6 @@ export const RunLogLimit = Context.Reference<Option.Option<number>>("chernabog/r
 // What the line a limited log ends with starts with.
 const STOPPED = "chernabog: this run's log stopped at its bound of";
 
-// The tail of a log a stop line is looked for in: more than one line's worth.
-const TAIL_BYTES = 1024;
-
-// Whether the log at `path` already ends with its stop line.
-const endsStopped = (fs: FileSystem.FileSystem, path: string, size: number) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const file = yield* fs.open(path, { flag: "r" });
-      const from = Math.max(0, size - TAIL_BYTES);
-      const buffer = new Uint8Array(size - from);
-      yield* file.seek(BigInt(from), "start");
-      const read = yield* file.read(buffer);
-
-      return new TextDecoder().decode(buffer.subarray(0, read)).includes(STOPPED);
-    }),
-  );
-
 const directoryOf = (path: string) =>
   Option.getOrElse(
     Option.liftPredicate(path.slice(0, path.lastIndexOf("/")), (dir) => dir.length > 0),
@@ -109,7 +92,10 @@ export const runLogWriting = (path: string, hooks: StepHooks = noHooks) =>
           return yield* append(entry);
         }
 
-        if (size > 0 && (yield* endsStopped(fs, path, size))) {
+        // Only the stop line takes a limited log past its bound (and the
+        // hub's notes after it), so a log already past it has stopped,
+        // whichever writer stopped it.
+        if (size > bytes) {
           return;
         }
 

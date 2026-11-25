@@ -960,9 +960,11 @@ export const runDaemon = Effect.gen(function* () {
                   ...done.leftForPerson,
                 ].join("; "),
               onFailure: (error) =>
-                `could not end ${shortRunId(runId)} past its bound (${reason}): ${error.message}`,
+                `could not end ${shortRunId(runId)} past its bound (${reason}): ${error.message}; it is measured again`,
             }),
           );
+
+          return Result.isSuccess(ended);
         });
 
       const spokes = yield* hubSpokes<

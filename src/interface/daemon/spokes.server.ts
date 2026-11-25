@@ -23,7 +23,7 @@
 // measures each live spoke: its telemetry and run-log bytes, how long it has
 // run, how long since any of its files last grew (its journal, its run log,
 // the transcripts of the agent sessions it reported) and its process group's
-// resident memory. A spoke past a bound is handed to `onBound` once, which
+// resident memory. A spoke past a bound is handed to `onBound`, which
 // ends its run failed, naming the bound, through `end`. The spoke caps its
 // own telemetry and run log at their bounds too, which the hub passes it,
 // and stops itself a margin after its phase-time bound, so the hub's bound
@@ -423,7 +423,9 @@ export const hubSpokes = <R>(options: {
   // What the hub holds each spoke to, and what it does with one past a
   // bound: ends its run, through `end` (ADR 23, decision 4).
   readonly bounds: SpokeBounds;
-  readonly onBound: (runId: RunId, breach: SpokeBreach) => Effect.Effect<void, never, R>;
+  // Whether it ended the run: one it couldn't is measured again at the next
+  // sample, and handed over again while it is still past a bound.
+  readonly onBound: (runId: RunId, breach: SpokeBreach) => Effect.Effect<boolean, never, R>;
   // Every process group's resident memory, by its id; `ps`'s, unless a test
   // says otherwise.
   readonly memory?: Effect.Effect<ReadonlyMap<number, number>>;
@@ -582,7 +584,8 @@ export const hubSpokes = <R>(options: {
       }).pipe(Effect.mapError((error) => `could not hand it to a spoke: ${error.message}`));
 
     // Measures every live spoke against its bounds, and hands one past a
-    // bound to `onBound`, once, on a fiber of its own: ending it waits out
+    // bound to `onBound`, on a fiber of its own, and not again unless that
+    // couldn't end its run: ending it waits out
     // its grace, which holds up no other spoke's sample.
     const sample = Effect.gen(function* () {
       if (live.size === 0) {
@@ -616,7 +619,12 @@ export const hubSpokes = <R>(options: {
         for (const breach of Option.toArray(breachOf(measure, options.bounds))) {
           yield* Ref.set(spoke.bounded, true);
           yield* Effect.forkIn(
-            options.onBound(runId, breach).pipe(Effect.provideContext(context)),
+            options.onBound(runId, breach).pipe(
+              Effect.flatMap((endedRun) =>
+                Effect.when(Ref.set(spoke.bounded, false), Effect.succeed(!endedRun)),
+              ),
+              Effect.provideContext(context),
+            ),
             scope,
           );
         }
