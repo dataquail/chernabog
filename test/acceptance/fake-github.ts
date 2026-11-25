@@ -358,13 +358,14 @@ const POLL_INTERVAL = 1;
 
 // What the fake says it recorded, as it records it, for a test that orders
 // it among other things that happen (test/acceptance/sandbox.ts' event log):
-// a review or comment by its id, or a review request, label or merge by where
-// it is in reviewRequests, labelled or merges.
+// a review or comment by its id, or a review request, label, label taken off
+// or merge by where it is in reviewRequests, labelled, unlabelled or merges.
 export type Recorded =
   | `review ${number}`
   | `comment ${number}`
   | `review-request ${number}`
   | `label ${number}`
+  | `unlabel ${number}`
   | `merge ${number}`;
 
 export const startFakeGitHub = (options: {
@@ -425,6 +426,13 @@ export const startFakeGitHub = (options: {
   // Each label added to an issue or pull request, oldest first, by who added it.
   const labelled: Array<{ readonly number: number; readonly label: string; readonly by: string }> =
     [];
+
+  // Each label taken off an issue or pull request, oldest first, by who took it off.
+  const unlabelled: Array<{
+    readonly number: number;
+    readonly label: string;
+    readonly by: string;
+  }> = [];
 
   const requests: Array<string> = [];
   // Each request, as "<login> <method> <path>".
@@ -1072,6 +1080,12 @@ export const startFakeGitHub = (options: {
       actor: { login: args.login },
     });
     labelEvents.set(numberParam(args), listed);
+    recorded(`unlabel ${unlabelled.length}`);
+    unlabelled.push({
+      number: numberParam(args),
+      label: decodeURIComponent(args.params[1] ?? ""),
+      by: args.login,
+    });
 
     return json([]);
   };
@@ -1827,6 +1841,7 @@ export const startFakeGitHub = (options: {
     merges,
     reviewRequests,
     labelled,
+    unlabelled,
     // Someone off this machine asks `reviewers` to review a pull request, as
     // the API's request does.
     requestReview: (number: number, reviewers: ReadonlyArray<string>, by: string) => {

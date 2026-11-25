@@ -1,6 +1,7 @@
 {
   "version": 1,
   "files": {
+    "test/acceptance/spec-changes.feature.test.ts": 104760,
     "test/acceptance/composed-recipes.test.ts": 103461,
     "test/acceptance/launchers.test.ts": 99157,
     "test/acceptance/world-sabotage.test.ts": 70370,

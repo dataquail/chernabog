@@ -815,6 +815,9 @@ const beforeActing = (machine: Machine, what: string, change: () => void) =>
     onSome: () => Effect.fail(failed(`${what} must be set up before anything happens`)),
   });
 
+const unsupported = (what: string) =>
+  Effect.fail(failed(`the live driver can't ${what}: no scenario it runs needs it`));
+
 const noPerson = (what: string) =>
   Effect.fail(
     failed(
@@ -908,6 +911,12 @@ export const openLive = (
 
           return issue.number;
         }),
+      // No scenario the live driver runs changes a spec or hands a pull
+      // request back.
+      willChangeSpecWhenFixing: () => unsupported("change a spec when fixing"),
+      changeSpec: () => noPerson("change a spec as a person"),
+      approve: () => noPerson("approve a pull request by hand"),
+      handBack: () => noPerson("hand a pull request back as a person"),
       openPullRequest: () => noPerson("open a pull request as a person"),
       askToReview: () => noPerson("ask for a review as a person"),
       world: Effect.flatMap(running, lookNow),

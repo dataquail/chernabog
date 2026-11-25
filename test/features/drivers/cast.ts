@@ -7,7 +7,7 @@
 import { DEFAULT_LABELS } from "@chernabog/sdk";
 import * as Option from "effect/Option";
 
-import type { Login, Verdict } from "../domain.ts";
+import type { Fix, Login, Verdict } from "../domain.ts";
 
 // The review loop's recipes, in the order a driver offers a persona work.
 export const RECIPES: ReadonlyArray<string> = [
@@ -56,8 +56,32 @@ export const reasonsOf = (body: string): Option.Option<string> =>
     Option.filter((reasons) => reasons !== ""),
   );
 
+// The label that hands a pull request to a person.
+export const NEEDS_HUMAN = DEFAULT_LABELS.needsHuman;
+
 // Whether a label added to a pull request hands it to a person.
-export const handsOff = (label: string) => label === DEFAULT_LABELS.needsHuman;
+export const handsOff = (label: string) => label === NEEDS_HUMAN;
+
+// Who hands a pull request back when a scenario says "someone" does: a
+// person who may write to the repo, as a hand-back needs.
+export const A_MAINTAINER = "maya";
+
+// The spec a writing persona's change touches, when it touches one: a
+// behavior file, as the spec guard reads them.
+export const SPEC = "test/features/filed-work.feature";
+
+// Whether a run of the writing recipe `flow` changes the spec, as well as
+// code: implement when the issue's fix does, and address-review when its
+// persona changes the spec when fixing.
+export const changesTheSpec = (
+  flow: string,
+  writer: { readonly fix: Fix; readonly changingWhenFixing: boolean },
+) =>
+  (flow === "implement" && writer.fix === "a spec") ||
+  (flow === "address-review" && writer.changingWhenFixing);
+
+// The branch implement works an issue on.
+export const branchOf = (issue: number) => `auto/issue-${issue}`;
 
 // The issue a pull request was opened for, by its head branch: implement's
 // auto/issue-<n>.

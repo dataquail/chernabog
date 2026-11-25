@@ -15,11 +15,18 @@
 // person opened, so a scenario may file one issue or open one pull request.
 // A reviewer's first review asks for changes on one line and later ones
 // approve, as the sandbox's fake agents do.
+//
+// The fake's commits hold no files but what the driver says: a spec, once
+// one changes (cast.ts' SPEC), at a version that each change of it moves on.
+// After each run, the head it pushed holds the spec as the head before it
+// did, or moved on when the run was a writing one that changes it (the
+// issue's fix, or a fix of a persona that changes it when fixing).
 
 import type { Flow, WorkItem } from "@chernabog/sdk";
 import type { BunServices } from "@effect/platform-bun";
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -45,18 +52,24 @@ import {
 import {
   type Domain,
   DomainFailed,
+  type Fix,
+  type HandBackSeen,
   type Login,
   type PullRequestSeen,
   type World,
 } from "../domain.ts";
 import type { Driver } from "../runner.ts";
 import {
+  A_MAINTAINER,
   A_PERSON,
   answersAReview,
+  changesTheSpec,
   flowsOf,
   handsOff,
   issueOfBranch,
+  NEEDS_HUMAN,
   reasonsOf,
+  SPEC,
   verdictOf,
 } from "./cast.ts";
 
@@ -79,8 +92,15 @@ type Machine = {
   personas: ReadonlyArray<Login>;
   pool: ReadonlyArray<Login>;
   disputing: Set<Login>;
+  changingWhenFixing: Set<Login>;
   fake: Option.Option<Fake>;
   filed: boolean;
+  // What the filed issue's fix changes.
+  fix: Fix;
+  // The spec's version: none changed yet at 0.
+  spec: number;
+  // Each hand-back, as the world shows it.
+  handBacks: Array<HandBackSeen>;
   // What each run did, for a failure to say.
   ran: Array<string>;
 };
@@ -167,6 +187,7 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
     .map((found) => ({ pullRequest: PULL, sequence: found.sequence })),
   // The fake agent can't say whether it resumed: a session it ran before
   // under the same id is one the agent's adapter would resume.
+  handBacks: [...machine.handBacks],
   sessions: fake.acts.sessions.map((found, index) => ({
     pullRequest: PULL,
     persona: found.persona,
@@ -226,6 +247,39 @@ const nextTurn = (machine: Machine, fake: Fake, context: Platform) =>
     return Option.none<Turn>();
   });
 
+// A commit's tree, as far as the spec guard reads it: the spec at `version`.
+const holdsSpec = (fake: Fake, sha: string, version: number) => {
+  fake.trees.set(sha, [{ path: SPEC, sha: `spec-${version}` }]);
+  fake.merge.files = [...fake.merge.files.filter((path) => path !== SPEC), SPEC];
+};
+
+// The spec moves on to a new version at `sha`.
+const specChanged = (machine: Machine, fake: Fake, sha: string) => {
+  machine.spec += 1;
+  holdsSpec(fake, sha, machine.spec);
+};
+
+// After `turn` ran: the head it left holds the spec as the head before it,
+// or a new version of it if the turn's writing changed it.
+const treeAfter = (machine: Machine, fake: Fake, turn: Turn) => {
+  const head = fake.git.head;
+
+  if (fake.trees.has(head)) {
+    return;
+  }
+
+  if (
+    changesTheSpec(turn.name, {
+      fix: machine.fix,
+      changingWhenFixing: machine.changingWhenFixing.has(turn.login),
+    })
+  ) {
+    specChanged(machine, fake, head);
+  } else if (machine.spec > 0) {
+    holdsSpec(fake, head, machine.spec);
+  }
+};
+
 const ended = (run: EngineRun) => run.status !== "running" || ("parked" in run && run.parked);
 
 // Runs one turn's work as its persona, to its end or park. A run that fails,
@@ -248,6 +302,7 @@ const play = (machine: Machine, fake: Fake, context: Platform, turn: Turn) =>
     );
 
     machine.ran.push(`${what}: ${run.status} (${summaryOf(run)})`);
+    treeAfter(machine, fake, turn);
 
     if (run.status === "failed" || !ended(run)) {
       return yield* failed(`${what} ${run.status}: ${summaryOf(run)}`);
@@ -292,6 +347,15 @@ const playUntil = <A>(
     });
   });
 
+// The fake's pull request, once it is open.
+const openPull = (machine: Machine, pullRequest: number) =>
+  fakeOf(machine).pipe(
+    Effect.filterOrFail(
+      (fake) => pullRequest === PULL && fake.git.opened,
+      () => failed(`there is no pull request #${pullRequest}`),
+    ),
+  );
+
 const domainOver = (machine: Machine, context: Platform): Domain => ({
   personas: (logins) =>
     beforeActing(machine, "personas", () => {
@@ -308,7 +372,11 @@ const domainOver = (machine: Machine, context: Platform): Domain => ({
     Effect.sync(() => {
       machine.disputing.add(author);
     }),
-  fileIssue: (labels) =>
+  willChangeSpecWhenFixing: (author) =>
+    Effect.sync(() => {
+      machine.changingWhenFixing.add(author);
+    }),
+  fileIssue: (labels, fix) =>
     Effect.gen(function* () {
       const fake = yield* fakeOf(machine);
 
@@ -319,6 +387,7 @@ const domainOver = (machine: Machine, context: Platform): Domain => ({
       }
 
       machine.filed = true;
+      machine.fix = fix;
       fake.setLabels(ISSUE, [...labels]);
 
       return ISSUE;
@@ -343,9 +412,7 @@ const domainOver = (machine: Machine, context: Platform): Domain => ({
     Effect.gen(function* () {
       const fake = yield* fakeOf(machine);
 
-      if (pullRequest !== PULL || !fake.git.opened) {
-        return yield* failed(`there is no pull request #${pullRequest} to ask about`);
-      }
+      yield* openPull(machine, pullRequest);
 
       fake.people.requested = [
         ...fake.people.requested.filter((login) => !reviewers.includes(login)),
@@ -356,6 +423,57 @@ const domainOver = (machine: Machine, context: Platform): Domain => ({
         reviewers: [...reviewers],
         sequence: fake.acts.next(),
       });
+    }),
+  changeSpec: (pullRequest, by) =>
+    Effect.gen(function* () {
+      const fake = yield* openPull(machine, pullRequest);
+
+      fake.git.pushes += 1;
+      fake.git.head = `person${fake.git.pushes}000000`;
+      fake.acts.pushes.push({ by, head: fake.git.head, sequence: fake.acts.next() });
+      specChanged(machine, fake, fake.git.head);
+    }),
+  // As on GitHub, a review drops its author from the requested reviewers. A
+  // persona's login is trusted as a person's is: the guard tells them apart.
+  approve: (pullRequest, by) =>
+    Effect.gen(function* () {
+      const fake = yield* openPull(machine, pullRequest);
+      const commitSha = fake.git.head;
+
+      fake.submitted.push({ author: by, state: "APPROVED", commitSha, trusted: true });
+      fake.acts.reviews.push({
+        author: by,
+        state: "APPROVED",
+        commitSha,
+        lineComments: 0,
+        sequence: fake.acts.next(),
+      });
+      fake.people.requested = fake.people.requested.filter((login) => login !== by);
+    }),
+  // A maintainer takes the label off, which GitHub lists as theirs, now.
+  handBack: (pullRequest) =>
+    Effect.gen(function* () {
+      const fake = yield* openPull(machine, pullRequest);
+
+      if (!fake.labelsOf(PULL).includes(NEEDS_HUMAN)) {
+        return yield* failed(`#${pullRequest} isn't handed to a person`);
+      }
+
+      fake.setLabels(
+        PULL,
+        fake.labelsOf(PULL).filter((label) => label !== NEEDS_HUMAN),
+      );
+      fake.timeline.permissions.set(A_MAINTAINER, "write");
+      fake.timeline.events.set(PULL, [
+        ...Option.getOrElse(Option.fromUndefinedOr(fake.timeline.events.get(PULL)), () => []),
+        {
+          event: "unlabeled",
+          label: { name: NEEDS_HUMAN },
+          actor: { login: A_MAINTAINER },
+          created_at: DateTime.formatIso(yield* DateTime.now),
+        },
+      ]);
+      machine.handBacks.push({ pullRequest, by: A_MAINTAINER, sequence: fake.acts.next() });
     }),
   world: Effect.map(fakeOf(machine), (fake) => worldOf(machine, fake)),
   waitUntil: (description, find) =>
@@ -393,8 +511,12 @@ export const inProcess: Driver = {
       personas: [],
       pool: [],
       disputing: new Set(),
+      changingWhenFixing: new Set(),
       fake: Option.none(),
       filed: false,
+      fix: "code",
+      spec: 0,
+      handBacks: [],
       ran: [],
     };
 

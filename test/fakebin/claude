@@ -12,6 +12,9 @@
 // FAKE_CLAUDE_HOLD: while this file exists, wait before doing the work.
 // FAKE_CLAUDE_DISPUTING: a file of logins, one a line; asked whether to address
 // a review as one of them, it declines.
+// FAKE_CLAUDE_SPEC_CHANGES: a file of lines, "branch <name>" or "fixing <login>";
+// the change it commits starting a session on that branch, or resuming one as
+// that login, also changes a behavior spec, test/features/filed-work.feature.
 // FAKE_AGENT_SESSION_LOG: each call, as a line of "session " and JSON, as it starts: the agent, start or resume,
 // its session, the persona its token is for, the branch and commit it starts on, and when.
 // FAKE_AGENT_PERSONAS: a file of "<sha256 of a token> <login>" lines, for a real token's persona,
@@ -86,6 +89,12 @@ const disputing = !!persona && !!disputingFile && existsSync(disputingFile) && r
 if (!considering) {
   const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
   writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
+  const specChanges = process.env.FAKE_CLAUDE_SPEC_CHANGES;
+  const changing = !!specChanges && existsSync(specChanges) ? readFileSync(specChanges, 'utf8').split('\n') : [];
+  if (changing.includes(resuming ? `fixing ${persona}` : `branch ${revParse('--abbrev-ref')}`)) {
+    mkdirSync(join(cwd, 'test/features'), { recursive: true });
+    writeFileSync(join(cwd, 'test/features/filed-work.feature'), `Feature: filed work\n  # change ${count}\n`);
+  }
   execFileSync('git', ['add', '.'], { cwd });
   execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count}`], { cwd });
 }

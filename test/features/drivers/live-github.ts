@@ -301,6 +301,9 @@ export const worldFrom = (records: LiveRecords, cast: CastLogins): World => {
           sequence: sequenceAt(found.createdAt, "handOff"),
         })),
     ),
+    // No scenario the live driver runs hands a pull request back, so it reads
+    // no label taken off.
+    handBacks: [],
     sessions: sessionsOf(records, cast, pushes),
     merges: inOrder(
       records.pulls.flatMap((pull) =>
