@@ -3,8 +3,9 @@
 // state.db, and hands it over with `--run` and the item. The spoke runs it in
 // the machine's own home, in a journal of the run's own, to its next phase
 // boundary: it takes the item's claim, records the phase, lets the claim go,
-// and its journal is gone once it exits. Its stdin is a pipe the hub holds,
-// and it stops when that closes.
+// and reports how its run ended in its journal, for the hub to end the run
+// with once it has exited (#659). Its stdin is a pipe the hub holds, and it
+// stops when that closes.
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
@@ -58,6 +60,10 @@ export default defineFlow({
     }),
 });
 `;
+
+const decodeEnding = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ status: Schema.String, summary: Schema.String })),
+);
 
 const claimRef = (issue: number) => `refs/chernabog/claims/issue-${issue}`;
 
@@ -141,6 +147,21 @@ describe("chernabog ci run as a spoke on a machine", () => {
 
   const journalOf = (runId: string) => join(sandbox.home, "journals", `${runId}.db`);
 
+  // The last ending the spoke reported in its run's journal.
+  const reportedOf = (runId: string) => {
+    const db = new Database(journalOf(runId), { readonly: true });
+
+    const row = db
+      .query<{ payload: string }, []>(
+        "SELECT payload FROM spoke_reports WHERE tag = 'RunEnded' ORDER BY seq DESC LIMIT 1",
+      )
+      .get();
+
+    db.close();
+
+    return Option.map(Option.fromNullishOr(row), (found) => decodeEnding(found.payload));
+  };
+
   const phasesOf = (issue: number) =>
     sandbox.github.dispatches
       .filter((sent) => sent.item === `issue-${issue}`)
@@ -157,7 +178,7 @@ describe("chernabog ci run as a spoke on a machine", () => {
     await sandbox.github.stop();
   });
 
-  test("runs the hub's run to its end: claim taken and let go, phase recorded, journal gone", async () => {
+  test("runs the hub's run to its end: claim taken, phase recorded, ending reported", async () => {
     const { issue, runId, spoke } = await startSpoke("done in one phase");
     const { code, output } = await spoke.exited;
 
@@ -165,24 +186,28 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(code).toBe(0);
     // The run the hub recorded is the one that held the claim.
     expect(commentsOn(issue)).toContain(`claimed by ${runId}`);
-    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+    // Its claim is a marker the run's ending releases, which the hub does
+    // once it has ended the run from the spoke's report.
+    expect(Option.isSome(sandbox.github.refSha(claimRef(issue)))).toBe(true);
     expect(phasesOf(issue)).toEqual(["handed-off"]);
-    expect(statusOf(runId)).toEqual(Option.some("done"));
-    expect(existsSync(journalOf(runId))).toBe(false);
+    // The spoke ends nothing in state.db: the hub ends the run with what it reported.
+    expect(reportedOf(runId)).toEqual(Option.some({ status: "done", summary: "phase recorded" }));
+    expect(statusOf(runId)).toEqual(Option.some("running"));
     // A spoke takes no engine lock: the hub's is the machine's.
     expect(existsSync(join(sandbox.home, "state.db.lock"))).toBe(false);
   }, 120_000);
 
-  test("a run that parks ends at its park, letting go of its claim and its journal", async () => {
+  test("a run that parks reports its park, letting go of its claim", async () => {
     const { issue, runId, spoke } = await startSpoke("park on go");
     const { code, output } = await spoke.exited;
 
     expect(output).toContain("parked");
     expect(code).toBe(0);
     expect(phasesOf(issue)).toEqual(["handed-off"]);
-    expect(statusOf(runId)).toEqual(Option.some("ended-at-park"));
+    expect(Option.map(reportedOf(runId), (said) => said.status)).toEqual(
+      Option.some("ended-at-park"),
+    );
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
-    expect(existsSync(journalOf(runId))).toBe(false);
   }, 120_000);
 
   test("another process writing state.db meanwhile only makes the spoke wait", async () => {
@@ -220,7 +245,7 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(code).toBe(0);
     expect(writes).toBeGreaterThan(1);
     expect(phasesOf(issue)).toEqual(["handed-off"]);
-    expect(statusOf(runId)).toEqual(Option.some("done"));
+    expect(reportedOf(runId)).toEqual(Option.some({ status: "done", summary: "phase recorded" }));
   }, 120_000);
 
   test("a spoke whose stdin closes stops, letting go of its claim", async () => {

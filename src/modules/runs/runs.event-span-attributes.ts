@@ -69,8 +69,10 @@ export const runFlowsCommandSpanAttributes = {
   GateFlowCommand: ofFlowRef,
   PlanTickCommand: ofFlowRef,
   PollRunCommand: ofRun,
+  ReportRunEndedCommand: ofRun,
   ResumeRunCommand: ofRun,
   StartFlowRunCommand: ofFlowRef,
+  StartSpokeRunCommand: ofFlowRef,
 } as const;
 
 export const runsQuerySpanAttributes = {
@@ -84,7 +86,11 @@ export const runsQuerySpanAttributes = {
   ReadRunUsageQuery: ofRun,
 } as const;
 
-export const runFlowsQuerySpanAttributes = { CheckRunValidityQuery: ofRun } as const;
+export const runFlowsQuerySpanAttributes = {
+  CheckRunValidityQuery: ofRun,
+  PollExecutionQuery: ofRun,
+  ReadSpokeEndingQuery: ofRun,
+} as const;
 
 export const runLogsQuerySpanAttributes = {
   FollowRunLogQuery: ofRun,

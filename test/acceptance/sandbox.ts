@@ -486,10 +486,11 @@ export const openSandbox = (
   const runCli = collecting(cli);
 
   // What a hub does before it starts a spoke (ADR 23, decision 2, step 1),
-  // standing in for #659's: records a run of `flow` on `item` in this
-  // machine's state.db, as the implicit persona, and answers its id. In a
-  // child process of its own, as the CLI is, through the runs module's own
-  // StartRunCommand handler.
+  // standing in for the daemon's: records a run of `flow` on `item` in this
+  // machine's state.db, as the implicit persona, attaches the execution its
+  // run keys, and answers its id. In a child process of its own, as the CLI
+  // is, through the runs module's own StartRunCommand and
+  // AttachExecutionCommand handlers.
   const recordRun = (flow: string, item: Json) =>
     // Evaluated from the repo's root, so its packages resolve from there.
     execFileSync(
@@ -502,7 +503,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { BUNDLED_CORE_VERSION } from "${ROOT}src/kernel/core-support.value-object.ts";
 import { RunId } from "${ROOT}src/kernel/run-id.id.ts";
+import { attachExecutionHandler } from "${ROOT}src/modules/runs/commands/attach-execution.handler.ts";
 import { startRunHandler } from "${ROOT}src/modules/runs/commands/start-run.handler.ts";
+import { workflowNamed } from "${ROOT}src/modules/runs/infrastructure/runtime/engine.ts";
 import { StateAt } from "${ROOT}test/sdk-fakes.ts";
 
 const item = JSON.parse(process.env.RECORD_ITEM);
@@ -521,6 +524,8 @@ await Effect.runPromise(
     itemUrl: Option.fromUndefinedOr(item.url),
     item: Option.some(item),
   }).pipe(
+    Effect.andThen(workflowNamed("demo", process.env.RECORD_FLOW).executionId({ runId: id, item })),
+    Effect.flatMap((executionId) => attachExecutionHandler({ runId: id, executionId })),
     Effect.provide(StateAt(process.env.RECORD_HOME).pipe(Layer.provideMerge(BunServices.layer))),
     Effect.scoped,
   ),

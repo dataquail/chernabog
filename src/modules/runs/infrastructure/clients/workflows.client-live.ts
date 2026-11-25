@@ -56,6 +56,10 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         coreVersion: BUNDLED_CORE,
         treeOf: (flow) => Option.flatMap(handleOf(handles, flow), (found) => found.tree),
         runs: (flow) => Option.isSome(handleOf(handles, flow)),
+        executionIdOf: (flow, runId, item) =>
+          handle(flow).pipe(
+            Effect.flatMap((found) => found.workflow.executionId(payloadOf(flow, runId, item))),
+          ),
         execute: (flow, runId, item) =>
           handle(flow).pipe(
             Effect.flatMap((found) =>
@@ -93,6 +97,9 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
           ),
         discard: (runId) => journals.discard(runId),
         journals: Effect.map(journals.list, (runs) => runs.map((runId) => RunId.make(runId))),
+        executing: (runId) => journals.isOpen(runId),
+        reportEnded: (runId, ending) => journals.reportEnded(runId, ending),
+        reportedEnding: (runId) => journals.reportedEnding(runId),
         // The engine keeps the interrupt first, so it holds across a restart;
         // then the workflow in this process stops at once, and the agent call
         // it was in after it.

@@ -11,8 +11,12 @@ import { RunFinished, RunsQueries, type RunView } from "../../modules/runs/runs.
 
 // Subscribes `react` to every run that ends, after its ending commits, with
 // the run as it then reads. A repeat of an ending (the same eventId) reaches
-// it once; its failure is reported and undoes nothing.
-export const subscribeRunEndings = (react: (ended: RunView) => Effect.Effect<void>) =>
+// it once; its failure is reported and undoes nothing. Each subscriber names
+// itself, so several react apart.
+export const subscribeRunEndings = (
+  react: (ended: RunView) => Effect.Effect<void>,
+  name = "daemon/run-endings",
+) =>
   Effect.gen(function* () {
     const bus = yield* EventBus;
     const runs = yield* RunsQueries;
@@ -27,6 +31,6 @@ export const subscribeRunEndings = (react: (ended: RunView) => Effect.Effect<voi
               Effect.forEach(Option.toArray(found.run), react, { discard: true }),
             ),
           ),
-      { name: "daemon/run-endings" },
+      { name },
     );
   });

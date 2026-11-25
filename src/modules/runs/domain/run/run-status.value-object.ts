@@ -6,7 +6,10 @@ import * as Schema from "effect/Schema";
 // while it was in flight, or lost: another run took its work item over once
 // its claim's lease expired, or ended at a park: it waited on a person or
 // another system, which on a daemon as in a CI job ends the run (ADR 0021,
-// decision 4); its record carries the wait, and a later run takes it up.
+// decision 4); its record carries the wait, and a later run takes it up, or
+// interrupted: the hub it ran under stopped, which a spoke doesn't outlive
+// (ADR 23, decision 7); its phase is left as the ledger has it, for a later
+// run to repeat.
 export const RunStatus = Schema.Literals([
   "running",
   "done",
@@ -17,6 +20,7 @@ export const RunStatus = Schema.Literals([
   "superseded",
   "lost",
   "ended-at-park",
+  "interrupted",
 ]);
 
 export type RunStatus = typeof RunStatus.Type;

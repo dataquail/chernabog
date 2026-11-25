@@ -20,7 +20,7 @@ import { executeRunHandler } from "./execute-run.handler.ts";
 
 const handed: WorkItem = { key: "issue-7", title: "Fix it", data: { issue: 7 } };
 
-// A run the hub recorded, with no execution yet.
+// A run the hub recorded.
 const recorded = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
     id: RunId.make(id),
@@ -32,7 +32,7 @@ const recorded = (id: string, fields: Partial<RunRoot> = {}) =>
     itemTitle: Option.none(),
     itemUrl: Option.none(),
     item: Option.some(handed),
-    executionId: Option.none(),
+    executionId: Option.some(`execution-${id}`),
     status: "running",
     currentStep: Option.none(),
     summary: Option.none(),
@@ -45,8 +45,9 @@ const runtime = (engine: FakeEngine, runs: ReadonlyArray<RunRoot>) =>
   Layer.mergeAll(RunsRepositoryFake(runs), WorkflowsClientFake(engine), PassThroughUnitOfWork);
 
 describe("executeRunHandler", () => {
-  effect("executes a recorded run in its journal and attaches the execution", () => {
+  effect("executes a run the hub recorded and attached, in its journal, writing nothing", () => {
     const engine = fakeEngine();
+    const attached = recorded("a");
 
     return Effect.gen(function* () {
       const run = yield* executeRunHandler({ runId: RunId.make("a"), item: handed });
@@ -56,10 +57,10 @@ describe("executeRunHandler", () => {
       );
 
       expect(run.executionId).toEqual(Option.some("execution-a"));
-      expect(Option.flatMap(stored, (one) => one.executionId)).toEqual(Option.some("execution-a"));
+      expect(stored).toEqual(Option.some(attached));
       expect(engine.executed).toEqual([RunId.make("a")]);
       expect(engine.journals).toEqual([RunId.make("a")]);
-    }).pipe(Effect.provide(runtime(engine, [recorded("a")])));
+    }).pipe(Effect.provide(runtime(engine, [attached])));
   });
 
   effect("refuses a run it can't find, and executes nothing", () => {
@@ -99,6 +100,8 @@ describe("executeRunHandler", () => {
 
   effect("refuses a run another spoke already executes, so it isn't replayed twice", () => {
     const engine = fakeEngine();
+    // The first spoke's journal.
+    engine.journals.push(RunId.make("b"));
 
     return Effect.gen(function* () {
       const refused = yield* Effect.flip(
@@ -107,9 +110,23 @@ describe("executeRunHandler", () => {
 
       expect(refused._tag).toBe("RunAlreadyActive");
       expect(engine.executed).toEqual([]);
-    }).pipe(
-      Effect.provide(runtime(engine, [recorded("b", { executionId: Option.some("execution-b") })])),
-    );
+    }).pipe(Effect.provide(runtime(engine, [recorded("b")])));
+  });
+
+  effect("refuses a run no hub attached an execution to, and executes nothing", () => {
+    const engine = fakeEngine();
+
+    return Effect.gen(function* () {
+      const refused = yield* Effect.flip(
+        executeRunHandler({ runId: RunId.make("d"), item: handed }),
+      );
+
+      expect([refused._tag, refused.message]).toEqual([
+        "FlowFailed",
+        "run d has no execution: a hub records one with the run before it hands it over",
+      ]);
+      expect(engine.executed).toEqual([]);
+    }).pipe(Effect.provide(runtime(engine, [recorded("d", { executionId: Option.none() })])));
   });
 
   effect("refuses a run of a flow this process didn't load", () => {

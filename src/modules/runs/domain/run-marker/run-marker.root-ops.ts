@@ -68,9 +68,13 @@ const holdAgain = (
 // Whether the marker stays on this ending. A run that lost its item keeps
 // every marker: they are the new holder's now. So does one that ended at a
 // park: the run that takes the item up from its record carries on with them,
-// as a CI job's next one does.
+// as a CI job's next one does, and so does one interrupted by its hub's stop:
+// the run that repeats its phase uses them again.
 const keptOn = (marker: RunMarkerRoot, ending: string) =>
-  ending === "lost" || ending === "ended-at-park" || marker.keepOn.includes(ending);
+  ending === "lost" ||
+  ending === "ended-at-park" ||
+  ending === "interrupted" ||
+  marker.keepOn.includes(ending);
 
 // Whether a held marker's release may be tried at `now`.
 const isDue = (marker: RunMarkerRoot, now: DateTime.Utc) =>

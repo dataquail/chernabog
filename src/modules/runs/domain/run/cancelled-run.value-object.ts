@@ -20,9 +20,10 @@ export type CancelTarget = typeof CancelTarget.Type;
 // Ending a run in flight otherwise than as cancelled: needing a person, with
 // that summary (a run this binary can't resume); superseded, because its
 // work item went (closed, merged, claimed by another run); or lost, because
-// another run took its work item over once its claim's lease expired.
+// another run took its work item over once its claim's lease expired; ended
+// at its park; or interrupted, because the hub it ran under stopped.
 export const EndAs = Schema.Struct({
-  ending: Schema.Literals(["needs-human", "superseded", "lost", "ended-at-park"]),
+  ending: Schema.Literals(["needs-human", "superseded", "lost", "ended-at-park", "interrupted"]),
   reason: Schema.String,
 });
 

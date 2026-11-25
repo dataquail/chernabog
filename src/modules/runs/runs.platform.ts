@@ -21,7 +21,8 @@ export {
 } from "./domain/run/run.events.ts";
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
-export { WorkItem } from "./domain/run/work-item.value-object.ts";
+export { SpokeEnding } from "./domain/run/spoke-ending.value-object.ts";
+export { type FlowRef, WorkItem } from "./domain/run/work-item.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { MarkerReleases, RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
 export {

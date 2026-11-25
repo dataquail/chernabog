@@ -81,9 +81,11 @@ import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { dailyLogWriting } from "../../platform/daily-log.ts";
+import { HostEnvironment } from "../../platform/environment.ts";
 import { describeSource, flowPlanOf, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { describeExit, type GroupExit } from "../../platform/process-group.ts";
 import {
   capLog,
   DAEMON_LOG_RETENTION,
@@ -136,6 +138,7 @@ import {
 } from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
+import { hubSpokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -448,6 +451,14 @@ const changedAction = (trusted: boolean) => {
   return "not trusted, starting no new runs until chernabog trust";
 };
 
+// Why a run the hub finds running when it starts ends.
+const INTERRUPTED_REASON =
+  "the hub it ran under stopped, and its spoke with it; its phase repeats in a new run";
+
+// Why a daemon with a reload pending starts nothing.
+const RELOADING =
+  "a trusted .chernabog/ changed; the daemon starts no new runs until its runs end and it restarts on it";
+
 // Why a draining daemon starts nothing.
 const DRAINING =
   "chernabog was upgraded; the daemon is draining, starting no new runs until it restarts on the new version";
@@ -713,7 +724,36 @@ export const runDaemon = Effect.gen(function* () {
         }
       }
 
-      // Starts that a crash interrupted, finished before anything ticks.
+      // Every run this hub finds running was a spoke of the hub before it,
+      // which a spoke doesn't outlive (ADR 23, decision 7): it ends as
+      // interrupted, keeping what it put on its item and letting go of its
+      // claim ref, and its phase repeats in a new run once the trigger reports
+      // its item again. Reaping (#664) adds, around this, ending a spoke the
+      // last hub left behind, the fold of its journal and the ending the last
+      // hub meant for it.
+      const leftRunning = yield* RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun));
+
+      for (const run of leftRunning.runs) {
+        yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "interrupted", reason: INTERRUPTED_REASON }),
+          }),
+        ).pipe(
+          Effect.as(`ended ${run.id} (${runLabel(run)}) as interrupted: ${INTERRUPTED_REASON}`),
+          Effect.catch((error) =>
+            Effect.succeed(
+              `could not end ${run.id} (${runLabel(run)}) as interrupted: ${error.message}`,
+            ),
+          ),
+          Effect.flatMap(log),
+        );
+      }
+
+      // Starts that a crash interrupted, finished before anything ticks, and
+      // the journals of runs that have ended deleted.
       const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
 
       for (const run of recovered.executed) {
@@ -728,15 +768,6 @@ export const runDaemon = Effect.gen(function* () {
 
       for (const run of recovered.left) {
         yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
-      }
-
-      // Transitional, until reaping (#664): a restart's runs go on from their journals.
-      for (const run of recovered.resumed) {
-        yield* log(`resumed ${run.id} (${runLabel(run)}) from its journal`);
-      }
-
-      for (const run of recovered.repeated) {
-        yield* log(`started ${run.id} (${runLabel(run)}) again: its journal was gone`);
       }
 
       for (const runId of recovered.swept) {
@@ -775,6 +806,66 @@ export const runDaemon = Effect.gen(function* () {
       const active = RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun)).pipe(
         Effect.map((found) => found.runs),
       );
+
+      // Ends a spoke's run once the spoke has exited, with the ending it
+      // reported in its journal (ADR 23, decision 2), and lets the run's
+      // ending delete the journal (discard-run-journal). A spoke that exited
+      // before it said ends its run failed, with how it exited; one whose run
+      // the hub already ended (lost, superseded) leaves it as it is.
+      const endSpokeRun = (runId: RunId, exit: GroupExit) =>
+        Effect.gen(function* () {
+          yield* log(`spoke for ${shortRunId(runId)} ${describeExit(exit)}`);
+
+          const found = Option.filter(
+            (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId }))).run,
+            (run) => run.status === "running",
+          );
+
+          if (Option.isNone(found)) {
+            return;
+          }
+
+          const said = (yield* RunFlowsQueries.use((runs) => runs.ReadSpokeEndingQuery({ runId })))
+            .ending;
+
+          const ending = Option.getOrElse(said, () => ({
+            status: "failed" as const,
+            summary: `its spoke ${describeExit(exit)} before it said how the run ended; its phase is left for a new run to repeat`,
+          }));
+
+          const { status, summary } = ending;
+
+          if (status === "ended-at-park") {
+            yield* RunFlowsCommands.use((runs) =>
+              runs.CancelRunCommand({
+                target: CancelTarget.cases.ById.make({ asked: runId }),
+                by: "chernabog",
+                closeSessions: false,
+                endAs: Option.some({ ending: "ended-at-park", reason: summary }),
+              }),
+            );
+
+            return;
+          }
+
+          yield* RunsCommands.use((runs) => runs.FinishRunCommand({ runId, status, summary }));
+        }).pipe(
+          Effect.catchCause((cause) =>
+            log(`could not end ${shortRunId(runId)} after its spoke exited: ${String(cause)}`),
+          ),
+        );
+
+      const spokes = yield* hubSpokes({
+        home: (yield* Home).root,
+        variables: (yield* HostEnvironment).variables,
+        log,
+        onExit: endSpokeRun,
+      });
+
+      // A run the hub ends while its spoke still runs (lost, superseded, a
+      // person's), ends its spoke too: SIGTERM to its group, then SIGKILL
+      // after the grace. A spoke that ended its run itself has exited first.
+      yield* subscribeRunEndings((ended) => spokes.stop(ended.id), "daemon/spoke-endings");
 
       // Each run in flight whose stillValid keeps failing: how often in a
       // row, and why. Status shows them; the runs carry on.
@@ -918,7 +1009,11 @@ export const runDaemon = Effect.gen(function* () {
       // the item stays for that run; its claim ref goes, so that run may be
       // anywhere.
       const endParked = Effect.gen(function* () {
-        for (const run of (yield* active).filter((found) => found.parked)) {
+        // A spoke's park ends its run once the spoke has exited, from what it
+        // reported: only a run with no live spoke is ended here.
+        for (const run of (yield* active).filter(
+          (found) => found.parked && !spokes.has(found.id),
+        )) {
           yield* RunFlowsCommands.use((runs) =>
             runs.CancelRunCommand({
               target: CancelTarget.cases.ById.make({ asked: run.id }),
@@ -1020,7 +1115,13 @@ export const runDaemon = Effect.gen(function* () {
 
           const waking: Array<Item> = [];
 
-          for (const item of items) {
+          // No spoke in flight is woken (ADR 23, decision 2): a signal for an
+          // item whose spoke still runs is left for a tick after it has ended.
+          const spoked = new Set(
+            (yield* active).filter((run) => spokes.has(run.id)).map((run) => run.itemKey),
+          );
+
+          for (const item of items.filter((found) => !spoked.has(found.key))) {
             const waiting = Option.filter(
               Arr.findFirst(parked, (run) => run.itemKey === item.key),
               () => (item.signals ?? []).length > 0,
@@ -1046,6 +1147,12 @@ export const runDaemon = Effect.gen(function* () {
 
           if (yield* Ref.get(draining)) {
             return { started: [], skipped: Option.some(DRAINING) } satisfies TickResult;
+          }
+
+          // A reload restarts the hub once no spoke is live, so it starts no
+          // new one meanwhile (ADR 23, decision 7).
+          if (yield* Ref.get(reloadPending)) {
+            return { started: [], skipped: Option.some(RELOADING) } satisfies TickResult;
           }
 
           // Not knowing whether a repo is paused starts nothing in it.
@@ -1127,12 +1234,40 @@ export const runDaemon = Effect.gen(function* () {
               break;
             }
 
-            const outcome = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+            // Recorded, with its execution attached, before its spoke is
+            // spawned: only the tick that recorded it starts one (ADR 23,
+            // decision 2), and a crash between leaves a run the next hub
+            // ends as interrupted.
+            const outcome = yield* (yield* RunFlowsCommands).StartSpokeRunCommand({
               flow: ref,
               item,
             });
 
             for (const run of Option.toArray(Option.filter(outcome.run, () => outcome.started))) {
+              const handedOver = yield* spokes
+                .start({
+                  runId: run.id,
+                  repo: repo.name,
+                  checkout: repo.enrolled.path,
+                  flow: handle.name,
+                  persona,
+                  item,
+                  tree: repo.tree,
+                })
+                .pipe(Effect.result);
+
+              if (Result.isFailure(handedOver)) {
+                yield* log(`could not start ${run.id} (${runLabel(run)}): ${handedOver.failure}`);
+                yield* RunsCommands.use((runs) =>
+                  runs.FinishRunCommand({
+                    runId: run.id,
+                    status: "failed",
+                    summary: handedOver.failure,
+                  }),
+                ).pipe(Effect.ignore);
+                continue;
+              }
+
               yield* log(`started ${run.id} (${runLabel(run)})`);
               started.push(run);
             }
@@ -1226,7 +1361,7 @@ export const runDaemon = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* wake.close;
             const now = yield* DateTime.now;
-            const ticking = !(yield* Ref.get(draining));
+            const ticking = !(yield* Ref.get(draining)) && !(yield* Ref.get(reloadPending));
 
             for (const repo of repos.filter(() => ticking)) {
               const ready = runnable(repo);
@@ -1704,7 +1839,11 @@ export const runDaemon = Effect.gen(function* () {
               return;
             }
 
-            if ((yield* Ref.get(reloadPending)) && (yield* Ref.get(busy)) === 0) {
+            if (
+              (yield* Ref.get(reloadPending)) &&
+              (yield* Ref.get(busy)) === 0 &&
+              (yield* spokes.live) === 0
+            ) {
               yield* Deferred.succeed(reloaded, true);
             }
           }),
@@ -1821,7 +1960,7 @@ export const runDaemon = Effect.gen(function* () {
         return {
           pid: process.pid,
           startedAt: DateTime.formatIso(startedAt),
-          busy: yield* Ref.get(busy),
+          busy: (yield* Ref.get(busy)) + (yield* spokes.live),
           reloadPending: yield* Ref.get(reloadPending),
           draining: yield* Ref.get(draining),
           repos: repos.map(

@@ -27,9 +27,6 @@ const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const INTERRUPTED = "interrupted before its workflow started";
 
-const JOURNAL_GONE =
-  "its journal was gone after a restart, and it kept no work item to start it from";
-
 export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
   const runs = yield* RunsRepository;
   const workflows = yield* WorkflowsClient;
@@ -84,42 +81,5 @@ export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
     }
   }
 
-  // Transitional, until reaping ends a restart's runs (#664) and the
-  // in-process path goes (#665): delete from here to the return then.
-  const resumed: Array<RunView> = [];
-  const repeated: Array<RunView> = [];
-
-  for (const run of running) {
-    const flow = { repo: run.repo, flow: run.flow, persona: run.persona };
-
-    for (const executionId of Option.toArray(run.executionId)) {
-      if (!workflows.runs(flow)) {
-        continue;
-      }
-
-      if (yield* workflows.resume(flow, run.id, executionId)) {
-        resumed.push(RunView.make({ ...run }));
-        continue;
-      }
-
-      // Its journal is gone: its phase starts again, in a journal of its own.
-      // The execution is keyed by the run, so it keeps its id.
-      if (Option.isSome(run.item)) {
-        yield* workflows.execute(flow, run.id, run.item.value);
-        repeated.push(RunView.make({ ...run }));
-        continue;
-      }
-
-      const at = DateTime.formatIso(yield* DateTime.now);
-
-      const ended = yield* saved(RunRootOps.finish(run, "failed", JOURNAL_GONE, at)).pipe(
-        Effect.tap((one) => events.dispatch(Option.toArray(RunEvents.finished(one)))),
-        inUnitOfWork,
-      );
-
-      abandoned.push(RunView.make({ ...ended }));
-    }
-  }
-
-  return RecoveredRuns.make({ executed, abandoned, left, resumed, repeated, swept });
+  return RecoveredRuns.make({ executed, abandoned, left, swept });
 });
