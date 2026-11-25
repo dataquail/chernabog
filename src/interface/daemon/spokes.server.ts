@@ -210,6 +210,32 @@ export const TAIL_EVERY = Duration.seconds(2);
 // How often the hub measures each live spoke against its bounds.
 export const SAMPLE_EVERY = Duration.seconds(5);
 
+// The longest the hub waits before it tries again to end a spoke past a
+// bound.
+export const BOUND_RETRY_CAP = Duration.minutes(5);
+
+// How long the hub waits, after `failed` attempts to end a spoke past a bound
+// came to nothing, before it measures the spoke and tries again: a sample's
+// interval after the first, doubling with each one after, up to
+// BOUND_RETRY_CAP. A cancel that keeps failing is then tried, and noted,
+// rarely, not at every sample.
+export const boundRetryAfter = (failed: number, every: Duration.Duration = SAMPLE_EVERY) =>
+  Duration.min(Duration.times(every, 2 ** Math.max(0, failed - 1)), BOUND_RETRY_CAP);
+
+// Where the hub is with ending a spoke past a bound: how many attempts it
+// has made, whether one is under way, and when, in millis, it may make the
+// next.
+export type BoundEnding = {
+  readonly attempts: number;
+  readonly ending: boolean;
+  readonly retryAt: number;
+};
+
+// Whether the hub measures a spoke at `now`: not while an attempt to end it
+// is under way, nor before the next one is due.
+export const measuredAt = (state: BoundEnding, now: number) =>
+  !state.ending && now >= state.retryAt;
+
 // How long past its phase-time bound a spoke stops itself, as `ci run` does
 // in a CI job: well after the hub's bound, so that is the one that ends it,
 // and the spoke's own stop is there only for a hub that stopped watching.
@@ -447,9 +473,14 @@ export const hubSpokes = <R>(options: {
   // What the hub holds each spoke to, and what it does with one past a
   // bound: ends its run, through `end` (ADR 23, decision 4).
   readonly bounds: SpokeBounds;
-  // Whether it ended the run: one it couldn't is measured again at the next
-  // sample, and handed over again while it is still past a bound.
-  readonly onBound: (runId: RunId, breach: SpokeBreach) => Effect.Effect<boolean, never, R>;
+  // Whether it ended the run: one it couldn't is measured again once
+  // `boundRetryAfter` its failed attempts, and handed over again, with the
+  // attempt's number (1 the first), while it is still past a bound.
+  readonly onBound: (
+    runId: RunId,
+    breach: SpokeBreach,
+    attempt: number,
+  ) => Effect.Effect<boolean, never, R>;
   // Every process group's resident memory, by its id; `ps`'s, unless a test
   // says otherwise.
   readonly memory?: Effect.Effect<ReadonlyMap<number, number>>;
@@ -478,8 +509,8 @@ export const hubSpokes = <R>(options: {
         // When it was spawned, and when its files last changed, in millis.
         readonly startedAt: number;
         readonly activity: Ref.Ref<SpokeActivity>;
-        // Whether the hub has handed it to `onBound` already.
-        readonly bounded: Ref.Ref<boolean>;
+        // Where the hub is with ending it past a bound, through `onBound`.
+        readonly bounding: Ref.Ref<BoundEnding>;
       }
     >();
 
@@ -562,7 +593,7 @@ export const hubSpokes = <R>(options: {
         const done = yield* Deferred.make<boolean>();
         const startedAt = yield* Clock.currentTimeMillis;
         const activity = yield* Ref.make<SpokeActivity>({ signature: "", at: startedAt });
-        const bounded = yield* Ref.make(false);
+        const bounding = yield* Ref.make<BoundEnding>({ attempts: 0, ending: false, retryAt: 0 });
 
         // A session the spoke opened stays with the spoke; any other report
         // is the hub's to fold into state.db.
@@ -601,7 +632,7 @@ export const hubSpokes = <R>(options: {
           done,
           startedAt,
           activity,
-          bounded,
+          bounding,
         });
 
         const short = shortRunId(handOver.runId);
@@ -652,10 +683,42 @@ export const hubSpokes = <R>(options: {
         );
       }).pipe(Effect.mapError((error) => `could not hand it to a spoke: ${error.message}`));
 
+    const every = options.sampleEvery ?? SAMPLE_EVERY;
+
+    // Hands a spoke past a bound to `onBound`, on a fiber of its own: ending
+    // it waits out its grace, which holds up no other spoke's sample. One it
+    // couldn't end waits `boundRetryAfter` its failed attempts before the
+    // hub measures it again.
+    const endPastBound = (runId: RunId, bounding: Ref.Ref<BoundEnding>, breach: SpokeBreach) =>
+      Effect.gen(function* () {
+        const { attempts } = yield* Ref.updateAndGet(bounding, (state) => ({
+          attempts: state.attempts + 1,
+          ending: true,
+          retryAt: state.retryAt,
+        }));
+
+        yield* Effect.forkIn(
+          options.onBound(runId, breach, attempts).pipe(
+            Effect.flatMap((endedRun) =>
+              Effect.when(
+                Effect.flatMap(Clock.currentTimeMillis, (at) =>
+                  Ref.set(bounding, {
+                    attempts,
+                    ending: false,
+                    retryAt: at + Duration.toMillis(boundRetryAfter(attempts, every)),
+                  }),
+                ),
+                Effect.succeed(!endedRun),
+              ),
+            ),
+            Effect.provideContext(context),
+          ),
+          scope,
+        );
+      });
+
     // Measures every live spoke against its bounds, and hands one past a
-    // bound to `onBound`, on a fiber of its own, and not again unless that
-    // couldn't end its run: ending it waits out
-    // its grace, which holds up no other spoke's sample.
+    // bound to `endPastBound`, and not again unless that couldn't end its run.
     const sample = Effect.gen(function* () {
       if (live.size === 0) {
         return;
@@ -666,7 +729,7 @@ export const hubSpokes = <R>(options: {
       const now = yield* Clock.currentTimeMillis;
 
       for (const [runId, spoke] of [...live.entries()]) {
-        if (yield* Ref.get(spoke.bounded)) {
+        if (!measuredAt(yield* Ref.get(spoke.bounding), now)) {
           continue;
         }
 
@@ -686,16 +749,7 @@ export const hubSpokes = <R>(options: {
         });
 
         for (const breach of Option.toArray(breachOf(measure, options.bounds))) {
-          yield* Ref.set(spoke.bounded, true);
-          yield* Effect.forkIn(
-            options.onBound(runId, breach).pipe(
-              Effect.flatMap((endedRun) =>
-                Effect.when(Ref.set(spoke.bounded, false), Effect.succeed(!endedRun)),
-              ),
-              Effect.provideContext(context),
-            ),
-            scope,
-          );
+          yield* endPastBound(runId, spoke.bounding, breach);
         }
       }
     });
@@ -703,7 +757,7 @@ export const hubSpokes = <R>(options: {
     yield* Effect.forkScoped(
       sample.pipe(
         Effect.catchCause((cause) => options.log(`sampling spokes failed: ${String(cause)}`)),
-        Effect.repeat(Schedule.spaced(options.sampleEvery ?? SAMPLE_EVERY)),
+        Effect.repeat(Schedule.spaced(every)),
       ),
     );
 

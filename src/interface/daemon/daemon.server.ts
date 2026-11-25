@@ -33,7 +33,11 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel, shortRunId } from "../../kernel/run-id.id.ts";
-import { breachSummary, type SpokeBreach } from "../../kernel/spoke-bounds.value-object.ts";
+import {
+  breachSummary,
+  formatDuration,
+  type SpokeBreach,
+} from "../../kernel/spoke-bounds.value-object.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
@@ -144,7 +148,7 @@ import {
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { endAsSaid, foldInStateDb, noteInRun } from "./report-fold.server.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
-import { hubSpokes, type Spokes } from "./spokes.server.ts";
+import { boundRetryAfter, hubSpokes, type Spokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -765,12 +769,17 @@ export const runDaemon = Effect.gen(function* () {
       // is a cancel's: SIGTERM to its group, SIGKILL after the grace, the
       // last fold, its journal deleted, and its agent sessions always
       // closed by their handles, since a session left running would go on
-      // spending for a run that has ended.
-      const endPastBound = (runId: RunId, breach: SpokeBreach) =>
+      // spending for a run that has ended. An attempt after the first, once
+      // one couldn't end it, notes nothing in the run's log, which already
+      // says the hub is ending it, and `hubSpokes` spaces them out.
+      const endPastBound = (runId: RunId, breach: SpokeBreach, attempt: number) =>
         Effect.gen(function* () {
           const reason = breachSummary(breach);
-          yield* log(`spoke for ${shortRunId(runId)} ${reason}; ending it`);
-          yield* noteInRun(runId, `the hub ends this run's spoke: ${reason}`);
+
+          if (attempt === 1) {
+            yield* log(`spoke for ${shortRunId(runId)} ${reason}; ending it`);
+            yield* noteInRun(runId, `the hub ends this run's spoke: ${reason}`);
+          }
 
           const ended = yield* RunFlowsCommands.use((runs) =>
             runs.CancelRunCommand({
@@ -786,10 +795,13 @@ export const runDaemon = Effect.gen(function* () {
               onSuccess: (done) =>
                 [
                   `ended ${runId} (${runLabel(done.run)}) failed: ${Option.getOrElse(done.run.summary, () => reason)}`,
+                  ...done.closedSessions.map(
+                    (session) => `closed its ${session.launcher} session ${session.handle}`,
+                  ),
                   ...done.leftForPerson,
                 ].join("; "),
               onFailure: (error) =>
-                `could not end ${shortRunId(runId)} past its bound (${reason}): ${error.message}; it is measured again`,
+                `could not end ${shortRunId(runId)} past its bound (${reason}), attempt ${attempt}: ${error.message}; it is measured again in ${formatDuration(boundRetryAfter(attempt))}`,
             }),
           );
 

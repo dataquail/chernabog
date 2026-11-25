@@ -9,6 +9,7 @@
     "test/acceptance/hub-spokes.test.ts": 83347,
     "test/acceptance/spoke-bounds.test.ts": 76561,
     "test/acceptance/ci-run.test.ts": 60656,
+    "test/acceptance/rogue-runs.test.ts": 58000,
     "test/acceptance/rehearse.test.ts": 56322,
     "test/acceptance/daemon.test.ts": 52519,
     "test/acceptance/review.test.ts": 50750,

@@ -1,6 +1,7 @@
 import { makeEventBus } from "@effect-server-utils/cqrs";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,10 +22,13 @@ import {
 } from "../src/interface/daemon/report-fold.server.ts";
 import {
   activityOf,
+  BOUND_RETRY_CAP,
+  boundRetryAfter,
   hubSpokes,
   isSpoke,
   journalSignature,
   type LeftSpoke,
+  measuredAt,
   measureOf,
   nextActivity,
   spokeArgs,
@@ -529,6 +533,81 @@ describe("a spoke measured against its bounds", () => {
       Option.some("ended past its idle bound: 39m over 30m"),
     );
   });
+});
+
+describe("a spoke past a bound the hub couldn't end", () => {
+  test("is tried again a sample after the first attempt, then twice as long each time, up to five minutes", () => {
+    expect(
+      [1, 2, 3, 4, 5, 6, 7, 20].map((failed) => Duration.toSeconds(boundRetryAfter(failed))),
+    ).toEqual([5, 10, 20, 40, 80, 160, 300, 300]);
+    expect(Duration.toMinutes(BOUND_RETRY_CAP)).toBe(5);
+  });
+
+  test("isn't measured while an attempt is under way, nor before the next is due", () => {
+    expect(measuredAt({ attempts: 0, ending: false, retryAt: 0 }, 1000)).toBe(true);
+    expect(measuredAt({ attempts: 1, ending: true, retryAt: 0 }, 1000)).toBe(false);
+    expect(measuredAt({ attempts: 1, ending: false, retryAt: 6000 }, 5999)).toBe(false);
+    expect(measuredAt({ attempts: 1, ending: false, retryAt: 6000 }, 6000)).toBe(true);
+  });
+
+  effect("is handed over again with each attempt's number, further apart each time", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-spokes-" });
+      // Each attempt's number, and when it came, in millis.
+      const attempts: Array<{ readonly attempt: number; readonly at: number }> = [];
+      const every = Duration.millis(40);
+      // Done at the fifth attempt.
+      const fifth = yield* Deferred.make<boolean>();
+
+      const spokes = yield* hubSpokes({
+        home,
+        command: ["sh", "-c", "exec sleep 30"],
+        variables: {},
+        log: () => Effect.void,
+        reports: () => Effect.succeed([]),
+        apply: () => Effect.void,
+        record: () => Effect.void,
+        intend: () => Effect.void,
+        onExit: () => Effect.void,
+        // Past its phase time from the start, and never ended.
+        bounds: { ...DEFAULT_SPOKE_BOUNDS, phaseTime: Duration.millis(1) },
+        onBound: (_runId, _breach, attempt) =>
+          Effect.gen(function* () {
+            attempts.push({ attempt, at: yield* Clock.currentTimeMillis });
+
+            if (attempt === 5) {
+              yield* Deferred.succeed(fifth, true);
+            }
+
+            return false;
+          }),
+        memory: Effect.succeed(new Map()),
+        sampleEvery: every,
+      });
+
+      yield* spokes.start(handOver({ checkout: home }));
+      yield* Deferred.await(fifth);
+      yield* spokes.end(RunId.make("3f2a"), {
+        by: "chernabog",
+        closeSessions: false,
+        endAs: Option.none(),
+      });
+
+      expect(attempts.slice(0, 5).map((made) => made.attempt)).toEqual([1, 2, 3, 4, 5]);
+
+      // Each wait is at least what the attempts before it earned, where at
+      // every sample it would have been one sample: some 600 millis to the
+      // fifth, not 160.
+      for (const [index, made] of attempts.entries()) {
+        for (const before of Option.toArray(Option.fromUndefinedOr(attempts[index - 1]))) {
+          expect(made.at - before.at).toBeGreaterThanOrEqual(
+            Duration.toMillis(boundRetryAfter(before.attempt, every)),
+          );
+        }
+      }
+    }),
+  );
 });
 
 // A process standing in for a spoke the hub before left, its command line
