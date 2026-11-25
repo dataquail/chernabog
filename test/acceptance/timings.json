@@ -12,6 +12,7 @@
     "test/acceptance/review.test.ts": 47554,
     "test/acceptance/spoke-bounds.test.ts": 74000,
     "test/acceptance/hub-spokes.test.ts": 58000,
+    "test/acceptance/hub-reap.test.ts": 45000,
     "test/acceptance/ci-park.test.ts": 34210,
     "test/acceptance/e2e.test.ts": 33659,
     "test/acceptance/hybrid.test.ts": 32905,

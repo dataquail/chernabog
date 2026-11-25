@@ -22,6 +22,8 @@ import { listRunMarkersHandler } from "./queries/list-run-markers.handler.ts";
 import { ListRunMarkersQuery } from "./queries/list-run-markers.query.ts";
 import { listRunWaitsHandler } from "./queries/list-run-waits.handler.ts";
 import { ListRunWaitsQuery } from "./queries/list-run-waits.query.ts";
+import { listSpokesHandler } from "./queries/list-spokes.handler.ts";
+import { ListSpokesQuery } from "./queries/list-spokes.query.ts";
 import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.handler.ts";
 import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
 import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
@@ -69,6 +71,7 @@ export const runsQueryGroup = Query.group(
   ListRecentSkipsQuery,
   ListRunMarkersQuery,
   ListRunWaitsQuery,
+  ListSpokesQuery,
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
   ReadFlowPlanQuery,
@@ -88,6 +91,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListRecentSkipsQuery: (payload) => listRecentSkipsHandler(payload),
   ListRunMarkersQuery: (payload) => listRunMarkersHandler(payload),
   ListRunWaitsQuery: (payload) => listRunWaitsHandler(payload),
+  ListSpokesQuery: () => listSpokesHandler(),
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
   ReadFlowPlanQuery: (payload) => readFlowPlanHandler(payload),

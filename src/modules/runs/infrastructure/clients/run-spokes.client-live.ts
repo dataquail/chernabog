@@ -15,10 +15,10 @@ export const RunSpokesClientLive = (spokes: Option.Option<RunSpokesClientService
   Layer.succeed(
     RunSpokesClient,
     RunSpokesClient.of({
-      end: (runId, ending) =>
+      end: (runId, request) =>
         Option.match(spokes, {
           onNone: () => Effect.succeedNone,
-          onSome: (hub) => hub.end(runId, ending),
+          onSome: (hub) => hub.end(runId, request),
         }),
       forget: (runId) =>
         Option.match(spokes, {

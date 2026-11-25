@@ -19,6 +19,7 @@ import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
 import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
+import { endingOf } from "../domain/run-spoke/spoke-end-request.value-object.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
 import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
@@ -744,8 +745,9 @@ describe("cancelRunHandler", () => {
         const runs = yield* RunsRepository;
 
         return RunSpokesClient.of({
-          end: (runId, ending) =>
+          end: (runId, request) =>
             Effect.gen(function* () {
+              const ending = endingOf(request);
               const found = yield* runs.findOne(RunSpecifications.withId(runId));
               seen.push(
                 `${ending} while ${Option.getOrElse(

@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,8 +8,12 @@ import * as Stream from "effect/Stream";
 import { effect } from "../../test/effect-test.ts";
 import {
   describeExit,
+  endForeignGroup,
+  groupAlive,
   groupsMemory,
   parseGroupMemory,
+  parseIdentity,
+  processIdentity,
   spawnGroup,
   stopGroup,
 } from "./process-group.ts";
@@ -123,5 +127,68 @@ describe("groupsMemory", () => {
 
       yield* stopGroup(group, Duration.millis(300));
     }),
+  );
+});
+
+describe("processIdentity", () => {
+  test("reads ps's start time and command line, whatever the day's padding", () => {
+    expect(parseIdentity("Wed Nov  5 06:44:58 2026     bun main.ts ci run --run 3f2a\n")).toEqual(
+      Option.some({
+        startedAt: "Wed Nov 5 06:44:58 2026",
+        command: "bun main.ts ci run --run 3f2a",
+      }),
+    );
+    expect(parseIdentity("")).toEqual(Option.none());
+    expect(parseIdentity("not a ps line")).toEqual(Option.none());
+  });
+
+  effect("says when a live process started and its command line, the same each time", () =>
+    Effect.gen(function* () {
+      const group = yield* sh("sleep 60; : --run run-1");
+      const first = Option.getOrThrow(yield* processIdentity(group.pid));
+      const again = Option.getOrThrow(yield* processIdentity(group.pid));
+
+      expect(first.command).toContain("--run run-1");
+      expect(first.startedAt).toMatch(/^\w{3} \w{3} \d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/);
+      expect(again).toEqual(first);
+
+      yield* stopGroup(group, Duration.millis(300));
+    }),
+  );
+
+  effect("says none for a process that has gone", () =>
+    Effect.gen(function* () {
+      const group = yield* sh("exit 0");
+      yield* group.exited;
+
+      expect(yield* processIdentity(group.pid)).toEqual(Option.none());
+      expect(yield* processIdentity(0)).toEqual(Option.none());
+    }),
+  );
+});
+
+describe("endForeignGroup", () => {
+  effect("stops a group on SIGTERM, and says so", () =>
+    Effect.gen(function* () {
+      const group = yield* sh("sleep 60 & wait");
+
+      expect(yield* groupAlive(group.pid)).toBe(true);
+      expect(yield* endForeignGroup(group.pid, Duration.seconds(5))).toBe("terminated");
+      expect(yield* groupAlive(group.pid)).toBe(false);
+    }),
+  );
+
+  effect(
+    "SIGKILLs a group that outlasts the grace, children and all, and waits until it's gone",
+    () =>
+      Effect.gen(function* () {
+        // A leader that ignores SIGTERM, and a child of it that ignores it too.
+        const group = yield* sh("trap '' TERM; sh -c \"trap '' TERM; sleep 60\" & echo $!; wait");
+        const child = Number((yield* Stream.runHead(group.lines)).pipe(Option.getOrThrow).text);
+
+        expect(yield* endForeignGroup(group.pid, Duration.millis(300))).toBe("killed");
+        expect(yield* groupAlive(group.pid)).toBe(false);
+        expect(yield* gone(child)).toBe(true);
+      }),
   );
 });

@@ -9,6 +9,8 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
+import { killGroupBut } from "./process-group.ts";
+
 type Signal = "SIGINT" | "SIGTERM";
 
 // The parts of the process a stop's deadline uses, so a test can stand in.
@@ -105,15 +107,30 @@ const processStdin: StdinHost = {
       process.stdin.destroy();
     };
   },
+  // A spoke leads its own process group (ADR 23, decision 1): it stops it
+  // all as its hub's stop would, SIGTERM to the group, and on its way out
+  // SIGKILLs what's left of it but itself, so nothing it started (an agent,
+  // git, a local gate) outlives it once its hub has gone, and it exits as a
+  // stop does. A process that leads no group stops itself alone.
   stop: () => {
-    process.kill(process.pid, "SIGTERM");
+    Effect.runSync(
+      Effect.try(() => process.kill(-process.pid, "SIGTERM")).pipe(
+        Effect.match({
+          onFailure: () => process.kill(process.pid, "SIGTERM"),
+          onSuccess: () =>
+            process.once("exit", () => {
+              killGroupBut(process.pid);
+            }),
+        }),
+      ),
+    );
   },
 };
 
 // Stops the process as on SIGTERM, deadline and all, once its stdin closes,
-// for as long as the scope lasts. A spoke's stdin is a pipe its hub holds
-// open, so a spoke dies with its hub, however the hub exits (ADR 23,
-// decision 7).
+// for as long as the scope lasts, and the process group it leads with it. A
+// spoke's stdin is a pipe its hub holds open, so a spoke and what it started
+// die with its hub, however the hub exits (ADR 23, decision 7).
 export const stopWhenStdinCloses = (host: StdinHost = processStdin) =>
   Effect.acquireRelease(
     Effect.sync(() => {

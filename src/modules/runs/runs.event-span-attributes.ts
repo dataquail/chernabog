@@ -38,18 +38,22 @@ const ofFlowRef = (message: { readonly flow: { readonly repo: string; readonly f
 
 export const runsCommandSpanAttributes = {
   AdoptImplicitRunsCommand: (payload: { readonly repo: string }) => ({ "run.repo": payload.repo }),
+  AdvanceSpokeFoldCommand: ofRun,
   AttachExecutionCommand: ofRun,
   DeclareLaneCommand: ofRun,
   EnterStepCommand: ofRun,
   FinishRunCommand: ofRun,
   FinishStepCommand: ofRun,
   ForgetMarkerCommand: ofRun,
+  ForgetSpokeCommand: ofRun,
   HoldMarkerCommand: ofRun,
+  IntendSpokeEndingCommand: ofRun,
   NameSubjectCommand: ofRun,
   ParkRunCommand: ofRun,
   RecordCreatedIssueCommand: ofRun,
   RecordNodeCommand: ofRun,
   RecordSkipCommand: ofFlow,
+  RecordSpokeCommand: ofRun,
   // The run alone: never what was spent, nor on what.
   RecordTokenUsageCommand: ofRun,
   ReleaseRunWaitCommand: (payload: { readonly wait: { readonly runId: RunId } }) =>

@@ -8,6 +8,8 @@ import * as Schema from "effect/Schema";
 import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { AdoptImplicitRunsCommand } from "./commands/adopt-implicit-runs.command.ts";
 import { adoptImplicitRunsHandler } from "./commands/adopt-implicit-runs.handler.ts";
+import { AdvanceSpokeFoldCommand } from "./commands/advance-spoke-fold.command.ts";
+import { advanceSpokeFoldHandler } from "./commands/advance-spoke-fold.handler.ts";
 import { AttachExecutionCommand } from "./commands/attach-execution.command.ts";
 import { attachExecutionHandler } from "./commands/attach-execution.handler.ts";
 import { CancelRunCommand } from "./commands/cancel-run.command.ts";
@@ -28,10 +30,14 @@ import { FinishStepCommand } from "./commands/finish-step.command.ts";
 import { finishStepHandler } from "./commands/finish-step.handler.ts";
 import { ForgetMarkerCommand } from "./commands/forget-marker.command.ts";
 import { forgetMarkerHandler } from "./commands/forget-marker.handler.ts";
+import { ForgetSpokeCommand } from "./commands/forget-spoke.command.ts";
+import { forgetSpokeHandler } from "./commands/forget-spoke.handler.ts";
 import { GateFlowCommand } from "./commands/gate-flow.command.ts";
 import { gateFlowHandler } from "./commands/gate-flow.handler.ts";
 import { HoldMarkerCommand } from "./commands/hold-marker.command.ts";
 import { holdMarkerHandler } from "./commands/hold-marker.handler.ts";
+import { IntendSpokeEndingCommand } from "./commands/intend-spoke-ending.command.ts";
+import { intendSpokeEndingHandler } from "./commands/intend-spoke-ending.handler.ts";
 import { NameSubjectCommand } from "./commands/name-subject.command.ts";
 import { nameSubjectHandler } from "./commands/name-subject.handler.ts";
 import { ParkRunCommand } from "./commands/park-run.command.ts";
@@ -48,6 +54,8 @@ import { RecordNodeCommand } from "./commands/record-node.command.ts";
 import { recordNodeHandler } from "./commands/record-node.handler.ts";
 import { RecordSkipCommand } from "./commands/record-skip.command.ts";
 import { recordSkipHandler } from "./commands/record-skip.handler.ts";
+import { RecordSpokeCommand } from "./commands/record-spoke.command.ts";
+import { recordSpokeHandler } from "./commands/record-spoke.handler.ts";
 import { RecordTokenUsageCommand } from "./commands/record-token-usage.command.ts";
 import { recordTokenUsageHandler } from "./commands/record-token-usage.handler.ts";
 import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
@@ -82,19 +90,23 @@ import {
 // RunTookBranch, RunReachedEnd) on the EventBus the root provides.
 export const runsCommandGroup = Command.group(
   AdoptImplicitRunsCommand,
+  AdvanceSpokeFoldCommand,
   AttachExecutionCommand,
   DeclareLaneCommand,
   EnterStepCommand,
   FinishRunCommand,
   FinishStepCommand,
   ForgetMarkerCommand,
+  ForgetSpokeCommand,
   HoldMarkerCommand,
+  IntendSpokeEndingCommand,
   NameSubjectCommand,
   ParkRunCommand,
   PruneRunLogsCommand,
   RecordCreatedIssueCommand,
   RecordNodeCommand,
   RecordSkipCommand,
+  RecordSpokeCommand,
   RecordTokenUsageCommand,
   ReleaseRunWaitCommand,
   SaveRunPlanCommand,
@@ -103,19 +115,23 @@ export const runsCommandGroup = Command.group(
 
 const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   AdoptImplicitRunsCommand: (payload) => adoptImplicitRunsHandler(payload),
+  AdvanceSpokeFoldCommand: (payload) => advanceSpokeFoldHandler(payload),
   AttachExecutionCommand: (payload) => attachExecutionHandler(payload),
   DeclareLaneCommand: (payload) => declareLaneHandler(payload),
   EnterStepCommand: (payload) => enterStepHandler(payload),
   FinishRunCommand: (payload) => finishRunHandler(payload),
   FinishStepCommand: (payload) => finishStepHandler(payload),
   ForgetMarkerCommand: (payload) => forgetMarkerHandler(payload),
+  ForgetSpokeCommand: (payload) => forgetSpokeHandler(payload),
   HoldMarkerCommand: (payload) => holdMarkerHandler(payload),
+  IntendSpokeEndingCommand: (payload) => intendSpokeEndingHandler(payload),
   NameSubjectCommand: (payload) => nameSubjectHandler(payload),
   ParkRunCommand: (payload) => parkRunHandler(payload),
   PruneRunLogsCommand: () => pruneRunLogsHandler(),
   RecordCreatedIssueCommand: (payload) => recordCreatedIssueHandler(payload),
   RecordNodeCommand: (payload) => recordNodeHandler(payload),
   RecordSkipCommand: (payload) => recordSkipHandler(payload),
+  RecordSpokeCommand: (payload) => recordSpokeHandler(payload),
   RecordTokenUsageCommand: (payload) => recordTokenUsageHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
   SaveRunPlanCommand: (payload) => saveRunPlanHandler(payload),

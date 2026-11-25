@@ -7,6 +7,7 @@ import { type RunId } from "../../../../kernel/run-id.id.ts";
 import { RunSpokesClient } from "../../domain/ports/clients/run-spokes.client.ts";
 import { type EndedSpoke } from "../../domain/run/ended-spoke.value-object.ts";
 import { type RunStatus } from "../../domain/run/run-status.value-object.ts";
+import { endingOf } from "../../domain/run-spoke/spoke-end-request.value-object.ts";
 
 // A test's live spokes, by run id, each as it ends, and the spokes ended, in
 // order, with the ending each was ended for. `steps`, if given, is told when
@@ -30,12 +31,12 @@ export const RunSpokesClientFake = (spokes: FakeSpokes) =>
   Layer.succeed(
     RunSpokesClient,
     RunSpokesClient.of({
-      end: (runId, ending) =>
+      end: (runId, request) =>
         Effect.sync(() => {
           const found = Record.get(spokes.live, runId);
 
           if (Option.isSome(found)) {
-            spokes.ended.push({ runId, ending });
+            spokes.ended.push({ runId, ending: endingOf(request) });
             spokes.steps.push(`ended spoke of ${runId}`);
             delete spokes.live[runId];
           }

@@ -317,7 +317,11 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   // into state.db while its run still runs, so its last steps and markers
   // land, and the ending releases them. Its journal goes with it. Only then
   // is the run's ending recorded, and cleaning up after it starts.
-  const spoke = yield* spokes.end(found.id, cancelled.status);
+  const spoke = yield* spokes.end(found.id, {
+    by: options.by,
+    closeSessions: options.closeSessions,
+    endAs: options.endAs,
+  });
 
   // Another ending asked of the spoke first (a lost lease while an item went)
   // is the run's: whoever asked for it records it.
