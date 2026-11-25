@@ -130,15 +130,21 @@ export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string
     ];
   }
 
+  // A run in a spoke: the spoke exited before cancel answered, and its
+  // journal went with it (ADR 23, decision 5).
   const stopped = Option.match(run.executionId, {
-    onNone: () => [],
-    onSome: () => {
-      if (cancelled.stopped) {
-        return ["its workflow stopped in the engine"];
-      }
+    onNone: (): ReadonlyArray<string> => [],
+    onSome: () =>
+      Option.match(Option.fromUndefinedOr(cancelled.spokeExited), {
+        onSome: (exit) => [`its spoke ${exit}, and its journal is deleted`],
+        onNone: () => {
+          if (cancelled.stopped) {
+            return ["its workflow stopped in the engine"];
+          }
 
-      return ["its workflow is interrupted in the engine, which never resumes it"];
-    },
+          return ["its workflow is interrupted in the engine, which never resumes it"];
+        },
+      }),
   });
 
   return [

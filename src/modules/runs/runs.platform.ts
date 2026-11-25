@@ -6,7 +6,12 @@
 export { Routing } from "./domain/domain-services/routing.domain-service.ts";
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
 export { FlowPlan, FoundPlan } from "./domain/plan/flow-plan.value-object.ts";
+export {
+  type AgentSessionOpened,
+  sessionOpenedIn,
+} from "./domain/run/agent-session-opened.value-object.ts";
 export { CancelledRun, CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
+export { type EndedSpoke } from "./domain/run/ended-spoke.value-object.ts";
 export {
   PullRequestOpened,
   RunEnteredNode,
@@ -20,6 +25,7 @@ export {
   RunTookBranch,
 } from "./domain/run/run.events.ts";
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
+export { type RunStatus } from "./domain/run/run-status.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { SpokeEnding } from "./domain/run/spoke-ending.value-object.ts";
 export { SpokeHandOver, SpokeHandOverJson } from "./domain/run/spoke-hand-over.value-object.ts";

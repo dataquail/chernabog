@@ -21,6 +21,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
+import { RunId } from "../../../../kernel/run-id.id.ts";
 import type { StandIns } from "../../../../kernel/stand-in.value-object.ts";
 import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
@@ -44,6 +45,7 @@ import {
 } from "./agents/sessions.ts";
 import { recordingTokenUsage } from "./agents/token-usage.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
+import { RunRecords } from "./run-records.ts";
 
 export type AgentsConfig = Readonly<
   Record<
@@ -178,6 +180,16 @@ export const AgentLive = (
                 request.cwd,
                 account,
               );
+
+              // A spoke reports the session in its journal too, where its hub
+              // finds it to close it (ADR 23, decision 5).
+              for (const records of Option.toArray(yield* Effect.serviceOption(RunRecords))) {
+                yield* records.openedSession(RunId.make(run.value.runId), {
+                  adapter: name,
+                  sessionId: request.sessionId,
+                  launch: sessionFiles((yield* Home).root, request.sessionId).launch,
+                });
+              }
             }
 
             const env = {

@@ -1,5 +1,6 @@
 // Where a run's workflow keeps what the machine records of it: its steps,
-// lanes, plan nodes, subjects, markers, created issues, plan, usage and park,
+// lanes, plan nodes, subjects, markers, created issues, plan, usage, park and
+// the agent sessions it opened,
 // and what it reads back of them within itself.
 //
 // A process that is its own hub (the foreground `run`, `rehearse`, `ci run`
@@ -23,6 +24,11 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
+import {
+  AGENT_SESSION_OPENED,
+  type AgentSessionOpened,
+  encodeSessionOpened,
+} from "../../domain/run/agent-session-opened.value-object.ts";
 import { type RunView } from "../../domain/run/run-view.value-object.ts";
 import { type SpokeHandOver } from "../../domain/run/spoke-hand-over.value-object.ts";
 import { type SpokeReport } from "../../domain/run/spoke-report.value-object.ts";
@@ -73,6 +79,11 @@ export type RunRecordsService = {
   readonly saveRunPlan: (plan: PayloadOf<"SaveRunPlanCommand">) => Effect.Effect<void>;
   readonly recordTokenUsage: (call: PayloadOf<"RecordTokenUsageCommand">) => Effect.Effect<void>;
   readonly parkRun: (parking: PayloadOf<"ParkRunCommand">) => Effect.Effect<void>;
+  // That one of the run's agent calls started or resumed a session: what a
+  // spoke reports, so its hub can close the session by its launcher's handle
+  // (ADR 23, decision 5). A process that is its own hub records nothing: the
+  // session is in the run's session files, where cancel finds it.
+  readonly openedSession: (runId: RunId, opened: AgentSessionOpened) => Effect.Effect<void>;
   // The arguments of the markers named `name` the run holds.
   readonly held: (runId: RunId, name: string) => Effect.Effect<ReadonlyArray<Schema.Json>>;
   // How far a session's token usage has been read; none for one never read.
@@ -109,6 +120,7 @@ export const dispatchingRecords = (
   saveRunPlan: (plan) => commands.SaveRunPlanCommand(plan),
   recordTokenUsage: (call) => commands.RecordTokenUsageCommand(call),
   parkRun: (parking) => commands.ParkRunCommand(parking).pipe(Effect.asVoid),
+  openedSession: () => Effect.void,
   held: (runId, name) =>
     queries
       .ListRunMarkersQuery({ runId, name: Option.some(name) })
@@ -238,6 +250,8 @@ export const RunRecordsInJournal = (handOver: SpokeHandOver, database: string) =
         saveRunPlan: append(SaveRunPlanCommand),
         recordTokenUsage: append(RecordTokenUsageCommand),
         parkRun: append(ParkRunCommand),
+        openedSession: (runId, opened) =>
+          journals.append(runId, AGENT_SESSION_OPENED, encodeSessionOpened(opened)),
         held: (runId, name) => Effect.map(reportsOf(runId), (reports) => heldIn(reports, name)),
         cursor: (adapter, sessionId) =>
           Effect.flatMap(reportsOf(handOver.run.id), (reports) =>

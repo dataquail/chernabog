@@ -101,9 +101,9 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         reportEnded: (runId, ending) => journals.reportEnded(runId, ending),
         reportedEnding: (runId) => journals.reportedEnding(runId),
         reports: (runId, after) => journals.reports(runId, after),
-        // The engine keeps the interrupt first, so it holds across a restart;
-        // then the workflow in this process stops at once, and the agent call
-        // it was in after it.
+        // The engine keeps the interrupt first, then the workflow in this
+        // process stops at once, and the agent call it was in after it. A
+        // journal not open here (a spoke's) takes nothing from it.
         interrupt: (flow, executionId) =>
           Option.match(handleOf(handles, flow), {
             onNone: () => workflowNamed(flow.repo, flow.flow),

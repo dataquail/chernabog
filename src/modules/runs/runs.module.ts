@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { Exec } from "../../platform/exec.ts";
 import { GitHubApi } from "../../platform/github-api.ts";
@@ -9,6 +10,7 @@ import { FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
 import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
+import { RunSpokesClientLive } from "./infrastructure/clients/run-spokes.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
 import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.repository-live.ts";
 import { RunCreatedIssuesRepositoryLive } from "./infrastructure/repositories/run-created-issues.repository-live.ts";
@@ -103,15 +105,17 @@ export const RunsModule = {
   events: RunTriggersLive.pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunsUnitOfWorkLive))),
 
   // The runtime a tick and a run drive: the flows a process loaded, with each
-  // persona's services, their workflows in the engine it runs, and cleaning up
-  // after a run that's cancelled. Which flows those are is the composition
-  // root's (the daemon's, a foreground run's, a rehearsal's, a cancel's), so
-  // each root passes its registry, and provides this beneath `engine`.
+  // persona's services, their workflows in the engine it runs, cleaning up
+  // after a run that's cancelled, and, in a hub, the spokes its runs execute
+  // in. Which flows those are is the composition root's (the daemon's, a
+  // foreground run's, a rehearsal's, a cancel's), so each root passes its
+  // registry, and provides this beneath `engine`.
   runtime: (registry: FlowRegistry) =>
     Layer.mergeAll(
       FlowsClientLive(registry),
       WorkflowsClientLive(registry.handles),
       RunCleanupClientLive(registry.services).pipe(Layer.provide(Exec.layer)),
+      RunSpokesClientLive(Option.fromUndefinedOr(registry.spokes)),
     ).pipe(Layer.provide(RunsRepositoryLive)),
 
   // The unit of work the runs' commands declare, for a test that drives their

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { sessionOpenedIn } from "../../domain/run/agent-session-opened.value-object.ts";
 import { RunView } from "../../domain/run/run-view.value-object.ts";
 import { decodeSpokeReport, SpokeReportCommand } from "../../runs.command-handlers.ts";
 import { JournalsAt, RunJournals } from "./journals.ts";
@@ -131,6 +132,21 @@ describe("a spoke's run records, in its journal", () => {
 
       expect(yield* records.held(runId, "claim")).toEqual([{ item: "b" }]);
       expect(yield* records.held(runId, "label")).toEqual([{ name: "x" }]);
+    }).pipe(Effect.provide(spokeIn(Option.none()))),
+  );
+
+  effect("reports each agent session it opens, as the hub reads it back", () =>
+    Effect.gen(function* () {
+      const records = yield* RunRecords;
+      const opened = { adapter: "claude", sessionId: "s-1", launch: "/home/s-1/launch.json" };
+      yield* records.openedSession(runId, opened);
+
+      const reports = yield* (yield* RunJournals).reports(runId, 0);
+
+      expect(reports.map((report) => report.tag)).toEqual(["AgentSessionOpened"]);
+      expect(reports.flatMap((report) => Option.toArray(sessionOpenedIn(report)))).toEqual([
+        opened,
+      ]);
     }).pipe(Effect.provide(spokeIn(Option.none()))),
   );
 

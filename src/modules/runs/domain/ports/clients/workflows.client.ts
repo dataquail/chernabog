@@ -38,10 +38,13 @@ export type WorkflowsClientService = {
   // Resumes a run's execution from its journal, opening the journal if this
   // process hasn't, as after a restart; whether the run had a journal here.
   readonly resume: (flow: FlowRef, runId: RunId, executionId: string) => Effect.Effect<boolean>;
-  // Interrupts an execution for good: the engine keeps the interrupt, so it
-  // holds across a restart, even for a flow this process didn't load. An
-  // agent call in progress stops at once, leaving its session open; any
-  // other activity in progress finishes first.
+  // Interrupts an execution that executes in this process, for good: the
+  // engine keeps the interrupt in its journal, so a resume in this process
+  // stops at once. An agent call in progress stops at once, leaving its
+  // session open; any other activity in progress finishes first. It reaches
+  // nothing in a journal this process hasn't open: a spoke's workflow stops
+  // when its spoke is ended (RunSpokesClient, ADR 23 decision 5), and a
+  // journal nobody runs any more is deleted when its run ends.
   readonly interrupt: (flow: FlowRef, executionId: string) => Effect.Effect<void>;
   // Lets go of a run's journal once the run has ended: its execution is
   // interrupted and its engine closed, then its file is deleted. Nothing for
