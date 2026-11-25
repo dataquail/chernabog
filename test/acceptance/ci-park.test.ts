@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { openSandbox, type Sandbox } from "./sandbox.ts";
+import { openSandbox, runnerUserEnv, type Sandbox } from "./sandbox.ts";
 
 const Matrix = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ flow: Schema.String, persona: Schema.String, item: Schema.String })),
@@ -49,7 +49,7 @@ describe("a CI job waiting on its pull request's CI", () => {
 
   const runnerEnv = (job: ReturnType<typeof runner>, eventName: string, workspace: string) => ({
     CHERNABOG_HOME: join(job.job, "home"),
-    HOME: job.user,
+    ...runnerUserEnv(job.user),
     GITHUB_ACTIONS: "true",
     // chernabog's own workflow, whose runs never wake a flow: not the repo's
     // CI that the events below finish, whatever the runner running this sets.

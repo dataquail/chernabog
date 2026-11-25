@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 
 import { documentOf, generated, IMPLEMENT_DOCUMENT } from "../compose-harness.ts";
 import { BOT } from "./fake-github.ts";
-import { openSandbox, type Sandbox } from "./sandbox.ts";
+import { openSandbox, runnerUserEnv, type Sandbox } from "./sandbox.ts";
 
 const Matrix = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ flow: Schema.String, persona: Schema.String, item: Schema.String })),
@@ -141,7 +141,7 @@ const journey = async (
 
   const runnerEnv = (job: ReturnType<typeof runner>, eventName: string, workspace: string) => ({
     CHERNABOG_HOME: join(job.job, "home"),
-    HOME: job.user,
+    ...runnerUserEnv(job.user),
     GITHUB_ACTIONS: "true",
     GITHUB_WORKFLOW: "chernabog",
     GITHUB_REPOSITORY: "dataquail/demo",
