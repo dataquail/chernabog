@@ -575,10 +575,10 @@ const takenAnswer = (waiting: Waiting, within: Duration.Input) =>
   });
 
 // Specs whose posted plan a person answered, or that nobody answered within
-// `within` of its posting, as work a run may start (ADR 0021, decision 4): a
-// CI job that waited on the answer has ended, and a new run takes the plan up
-// from its record. An answer also signals the run still waiting on it, on a
-// daemon, which holds the spec, so no second run starts. Routed by assignees.
+// `within` of its posting, as work a run may start (ADR 0021, decision 4): the
+// run that waited on the answer ended at its park (ADR 23, decision 2), and a
+// new run takes the plan up from its record. A person's answer is also named
+// in the item's signals. Routed by assignees.
 export const answered = (within: Duration.Input) =>
   Effect.gen(function* () {
     const items: Array<WorkItem> = [];
@@ -593,8 +593,8 @@ export const answered = (within: Duration.Input) =>
           },
         };
 
-        // A person's answer also wakes the run still waiting on it; a timeout
-        // has no run to wake, as that run's own timer ends it.
+        // A person's answer is named in the item's signals; a timeout is not
+        // a signal.
         if (found === "timeout") {
           items.push(yield* routed(waiting.spec, item));
           continue;
