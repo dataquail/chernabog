@@ -3,7 +3,7 @@
 // one starts a run job; the run that job starts replaces the reservation as no
 // takeover, and no other run may while its lease lasts.
 
-import { Claims, DEFAULT_LABELS, Run } from "@chernabog/sdk";
+import { Claims, DEFAULT_LABELS, GitHub, Run } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -60,6 +60,8 @@ describe("reserving an item", () => {
       const held = Option.getOrThrow(holderOf(fake));
       expect(held.runId).toBe("ci-plan-41");
       expect(held.flow).toBe("implement");
+      // A reservation is no person's work.
+      expect(held.withPerson).toBe(false);
       expect(Claims.expired(held, yield* DateTime.now)).toBe(false);
       expect(
         Claims.expired(held, DateTime.addDuration(yield* DateTime.now, Duration.minutes(16))),
@@ -130,6 +132,47 @@ describe("a run taking its reservation over", () => {
       // A commit on top of the reservation, as a renewal or a takeover is.
       expect(fake.refs.get(ISSUE_REF)).not.toBe(reservation);
     }),
+  );
+
+  effect(
+    "a run that loses the reservation to a writer that replaced it first is told by whom",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        yield* onFake(fake, Claims.reserve(CLAIM, PLAN, TTL));
+
+        const github = yield* onFake(fake, GitHub);
+
+        const winner: Claims.Holder = {
+          runId: "another-run",
+          persona: "data-quail",
+          flow: "implement",
+          claimedAt: "2026-10-26T14:00:00.000Z",
+          withPerson: false,
+        };
+
+        // Another writer makes the lease ref on the reservation just before this run does.
+        const beaten = {
+          ...github,
+          createRef: (ref: string, sha: string) =>
+            Effect.sync(() => {
+              if (ref.startsWith("refs/chernabog/leases/")) {
+                fake.commits.set("taken000", Claims.messageOf(winner));
+                fake.refs.set(ref, "taken000");
+              }
+            }).pipe(Effect.andThen(github.createRef(ref, sha))),
+        };
+
+        const taken = yield* asRun(
+          fake,
+          "the-run",
+          Effect.provideService(Claims.acquire(CLAIM), GitHub, beaten),
+          Option.some("ci-plan-41"),
+        );
+
+        expect(taken).toEqual({ acquired: false, holder: Option.some(winner) });
+        expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
+      }),
   );
 
   effect("a run another plan's reservation was made for can't take this one", () =>

@@ -97,12 +97,14 @@ const optional = <A extends object>(value: Option.Option<string>, field: (found:
   // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
   Option.match(value, { onNone: () => ({}), onSome: field });
 
-const TRAILER = /^([A-Za-z-]+): (.*)$/;
+// A trailer's name, and its value to the end of the line.
+const TRAILER = /^([A-Za-z-]+): (.*)/;
 
 // The holder a claim commit's message names; none for a message that isn't a claim's.
 export const holderOf = (message: string): Option.Option<Holder> => {
   const lines = message.split("\n");
 
+  // Stryker disable next-line OptionalChaining: split always returns at least one string, so lines[0] is never undefined
   if (lines[0]?.trim() !== TITLE) {
     return Option.none();
   }
@@ -449,29 +451,34 @@ const take = (item: string, mine: Holder, handedOverBy: Option.Option<string>) =
       return { kind: "won" } satisfies Taken;
     }
 
+    // Another writer replaced the claim commit first, when this one tried to:
+    // the claim is whoever's that writer made it.
+    const replacedFirst = holder(item).pipe(
+      Effect.map((named): Taken => ({ kind: "held", holder: named })),
+    );
+
     const handed = Option.filter(found, (claim) =>
       Option.contains(handedOverBy, claim.holder.runId),
     );
 
-    if (Option.isSome(handed) && (yield* replace(item, handed.value, mine))) {
-      return { kind: "handed-over" } satisfies Taken;
+    if (Option.isSome(handed)) {
+      if (yield* replace(item, handed.value, mine)) {
+        return { kind: "handed-over" } satisfies Taken;
+      }
+
+      return yield* replacedFirst;
     }
 
-    const lapsed = Option.filter(
-      found,
-      (claim) => Option.isNone(handed) && expired(claim.holder, now),
-    );
+    const lapsed = Option.filter(found, (claim) => expired(claim.holder, now));
 
-    if (
-      Option.isSome(lapsed) &&
-      (yield* replace(item, lapsed.value, { ...mine, takenOverFrom: lapsed.value.holder.runId }))
-    ) {
-      return { kind: "taken-over", from: lapsed.value.holder } satisfies Taken;
-    }
+    if (Option.isSome(lapsed)) {
+      if (
+        yield* replace(item, lapsed.value, { ...mine, takenOverFrom: lapsed.value.holder.runId })
+      ) {
+        return { kind: "taken-over", from: lapsed.value.holder } satisfies Taken;
+      }
 
-    // Another writer replaced it first, when this one tried to.
-    if (Option.isSome(handed) || Option.isSome(lapsed)) {
-      return { kind: "held", holder: yield* holder(item) } satisfies Taken;
+      return yield* replacedFirst;
     }
 
     return { kind: "held", holder: Option.map(found, (claim) => claim.holder) } satisfies Taken;

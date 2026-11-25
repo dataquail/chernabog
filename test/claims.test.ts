@@ -4,6 +4,7 @@
 // version hold by their branch and comments alone.
 
 import {
+  activity,
   awaitSignal,
   claimMarker,
   Claims,
@@ -13,11 +14,13 @@ import {
   PullRequest,
   Review,
   reviewMarker,
+  Run,
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
@@ -26,6 +29,7 @@ import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import { readRunMadeHandler } from "../src/modules/runs/queries/read-run-made.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -35,6 +39,7 @@ import {
   ISSUE,
   item,
   makeFake,
+  onFake,
   PULL,
   repo,
   runToEnd,
@@ -93,12 +98,179 @@ describe("a claim commit", () => {
     }),
   );
 
+  effect("reads back a claim whose lines a tool indented or ended in a carriage return", () =>
+    Effect.sync(() => {
+      const message = Claims.messageOf({ ...OTHER, withPerson: true })
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\r\n");
+
+      expect(Claims.holderOf(message)).toEqual(Option.some({ ...OTHER, withPerson: true }));
+    }),
+  );
+
+  effect("names no holder for a message that isn't a claim's, whatever trailers it has", () =>
+    Effect.sync(() => {
+      const body = Claims.messageOf(OTHER).split("\n").slice(1).join("\n");
+      expect(Claims.holderOf(`Merge branch main\n${body}`)).toEqual(Option.none());
+      // A line that names a trailer partway along is no trailer.
+      expect(Claims.holderOf("chernabog claim\n\nTaken from Run: another-run")).toEqual(
+        Option.none(),
+      );
+    }),
+  );
+
+  effect("reads a claim that names only its run, with nothing for whose or since when", () =>
+    Effect.sync(() => {
+      expect(Claims.holderOf("chernabog claim\n\nRun: another-run")).toEqual(
+        Option.some({
+          runId: "another-run",
+          persona: "",
+          flow: "",
+          claimedAt: "",
+          withPerson: false,
+        }),
+      );
+    }),
+  );
+
   effect("records the base the run claimed the item on, when it names one, and reads it back", () =>
     Effect.sync(() => {
       const based = { ...OTHER, base: "auto/issue-9" };
       expect(Claims.messageOf(based).split("\n")).toContain("Base: auto/issue-9");
       expect(Claims.holderOf(Claims.messageOf(based))).toEqual(Option.some(based));
       expect(Claims.messageOf(OTHER)).not.toContain("Base:");
+    }),
+  );
+});
+
+// Runs `body` against the fake as the run `runId` of implement, outside the engine.
+const asRun = <A, E, R>(fake: Fake, runId: string, body: Effect.Effect<A, E, R>) =>
+  onFake(
+    fake,
+    Effect.provideService(body, Run, {
+      flow: "implement",
+      runId,
+      executionId: `execution-${runId}`,
+      item: work,
+    }),
+  );
+
+const CLAIM = Claims.issue(ISSUE);
+
+describe("acquiring and releasing a claim", () => {
+  effect(
+    "records whose run claimed the item, with no person unless asked, on the base it names",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        expect(
+          (yield* asRun(fake, "a-run", Claims.acquire(CLAIM, { base: "auto/issue-9" }))).acquired,
+        ).toBe(true);
+
+        const held = Option.getOrThrow(holderOf(fake, ISSUE_REF));
+        expect(held).toMatchObject({
+          runId: "a-run",
+          flow: "implement",
+          withPerson: false,
+          base: "auto/issue-9",
+        });
+
+        const plain = makeFake("approve");
+        yield* asRun(plain, "a-run", Claims.acquire(CLAIM));
+        expect(Option.getOrThrow(holderOf(plain, ISSUE_REF)).base).toBeUndefined();
+      }),
+  );
+
+  effect("a run lets go of its own claim, and says so, but leaves another run's", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      yield* asRun(fake, "a-run", Claims.acquire(CLAIM));
+
+      expect(yield* asRun(fake, "a-run", Claims.release(CLAIM))).toBe(true);
+      expect(fake.refs.has(ISSUE_REF)).toBe(false);
+
+      heldBy(fake, ISSUE_REF);
+      expect(yield* asRun(fake, "a-run", Claims.release(CLAIM))).toBe(false);
+      expect(holderOf(fake, ISSUE_REF)).toEqual(Option.some(OTHER));
+    }),
+  );
+});
+
+describe("releasing a claim as soon as the work ends", () => {
+  const releasingFlow = (fake: Fake) =>
+    defineFlow({
+      trigger: Effect.succeed([]),
+      workflow: (released) =>
+        Effect.gen(function* () {
+          const claimed = activity(
+            "claim",
+            Claims.acquire(CLAIM).pipe(Effect.map((taken) => taken.acquired)),
+            Schema.Boolean,
+          );
+
+          if (released.key === "waits") {
+            return yield* Claims.releasing(CLAIM)(
+              claimed.pipe(
+                Effect.andThen(awaitSignal(["pushed"], { id: "wait", timeout: "1 hour" })),
+              ),
+            );
+          }
+
+          yield* Claims.releasing(CLAIM)(claimed);
+
+          const still = yield* activity(
+            "after",
+            Effect.sync(() => fake.refs.has(ISSUE_REF)),
+            Schema.Boolean,
+          );
+
+          return `claimed after: ${String(still)}`;
+        }),
+    });
+
+  effect("lets the claim go in its own step, before the run goes on", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      const steps: Array<string> = [];
+
+      const finished = yield* runUntil(
+        flowHandle(repo, "releasing", releasingFlow(fake)),
+        fake,
+        item("done"),
+        (run) =>
+          readRunHistoryHandler({ runId: run.id }).pipe(
+            Effect.orDie,
+            Effect.map((history) => {
+              steps.splice(0, steps.length, ...history.steps.map((step) => step.step));
+
+              return run.status !== "running";
+            }),
+          ),
+      );
+
+      expect(summaryOf(finished)).toBe("claimed after: false");
+      expect(steps).toEqual(["claim", "release-claim-issue-3", "after"]);
+    }),
+  );
+
+  effect("keeps the claim while the run waits", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+
+      const parked = yield* runUntil(
+        flowHandle(repo, "releasing", releasingFlow(fake)),
+        fake,
+        item("waits"),
+        (run) =>
+          listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+            Effect.map(({ waits }) => waits.length > 0),
+          ),
+      );
+
+      expect(Option.map(holderOf(fake, ISSUE_REF), (holder) => holder.runId)).toEqual(
+        Option.some(parked.id),
+      );
     }),
   );
 });
