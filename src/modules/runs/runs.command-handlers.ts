@@ -125,22 +125,6 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
 // The runs' commands a spoke reports in its journal rather than dispatching
 // (ADR 23, decision 3): what its run records, each encoded with its own
 // schema, which the hub folds into state.db by dispatching it on its bus.
-export const spokeReportCommands = Command.subsetOf(
-  runsCommandGroup,
-  "DeclareLaneCommand",
-  "EnterStepCommand",
-  "FinishStepCommand",
-  "ForgetMarkerCommand",
-  "HoldMarkerCommand",
-  "NameSubjectCommand",
-  "ParkRunCommand",
-  "RecordCreatedIssueCommand",
-  "RecordNodeCommand",
-  "RecordTokenUsageCommand",
-  "SaveRunPlanCommand",
-);
-
-// The same commands by tag, typed, for the spoke that writes them.
 export const SpokeReportCommand = {
   DeclareLaneCommand,
   EnterStepCommand,
@@ -154,6 +138,9 @@ export const SpokeReportCommand = {
   RecordTokenUsageCommand,
   SaveRunPlanCommand,
 } as const;
+
+// The same, as a list: not a group, since each is in runsCommandGroup already.
+export const spokeReportCommands = Object.values(SpokeReportCommand);
 
 // A report's payload as its journal holds it, JSON, coded with its command's
 // own payload schema: what the spoke writes and the hub reads back. A

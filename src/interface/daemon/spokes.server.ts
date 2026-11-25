@@ -16,6 +16,7 @@
 // the fold's transaction, where here it is the hub's memory), `stop`
 // (cancel, #662, and the bounds, #663).
 
+import type { Command } from "@effect-server-utils/cqrs";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -27,6 +28,7 @@ import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { type RunId, shortRunId } from "../../kernel/run-id.id.ts";
@@ -71,6 +73,9 @@ export type Spokes = {
   readonly has: (runId: RunId) => boolean;
   // How many spokes are live.
   readonly live: Effect.Effect<number>;
+  // Folds what the run's spoke has reported since the last fold, if it is
+  // live: before the hub ends its run itself, so the ending sees its steps.
+  readonly fold: (runId: RunId) => Effect.Effect<void>;
   // Stops the run's spoke, if it is live: SIGTERM to its group, then
   // SIGKILL after the grace. Its exit is handled as any other.
   readonly stop: (runId: RunId) => Effect.Effect<void>;
@@ -115,7 +120,7 @@ export const spokeEnvironment = (
 // hub reads apart once the spoke has exited.
 export type ReportFold = Data.TaggedEnum<{
   Dispatch: {
-    readonly command: (typeof spokeReportCommands.messages)[number];
+    readonly command: Command.Any;
     readonly payload: unknown;
   };
   Skip: { readonly why: string };
@@ -132,7 +137,7 @@ export const reportFold = (report: SpokeReport): ReportFold => {
   }
 
   return Option.match(
-    Option.fromUndefinedOr(spokeReportCommands.messages.find((known) => known.tag === report.tag)),
+    Option.fromUndefinedOr(spokeReportCommands.find((known) => known.tag === report.tag)),
     {
       onNone: () =>
         ReportFold.Skip({ why: `the hub skipped a report it doesn't fold: ${report.tag}` }),
@@ -183,7 +188,14 @@ export const hubSpokes = <R>(options: {
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<R>();
     const paths = homePaths(options.home);
-    const live = new Map<RunId, ProcessGroup>();
+
+    // Each live spoke: its process group, and a fold of its journal, which
+    // runs one at a time however many ask for it.
+    const live = new Map<
+      RunId,
+      { readonly group: ProcessGroup; readonly fold: Effect.Effect<void> }
+    >();
+
     const [program, ...prefix] = selfCommand();
 
     // Completed, and replaced, whenever a journal changes: what wakes every
@@ -207,12 +219,8 @@ export const hubSpokes = <R>(options: {
 
     // Folds a live spoke's journal for as long as it lives: at once, then on
     // each change to the journals or every TAIL_EVERY, whichever is first.
-    const tail = (runId: RunId, folded: Ref.Ref<number>) =>
-      Effect.forever(
-        foldSpoke(runId, folded, options.reports, options.apply).pipe(
-          Effect.andThen(nextChange.pipe(Effect.timeoutOption(TAIL_EVERY))),
-        ),
-      );
+    const tail = (fold: Effect.Effect<void>) =>
+      Effect.forever(fold.pipe(Effect.andThen(nextChange.pipe(Effect.timeoutOption(TAIL_EVERY)))));
 
     // A hub that stops ends its spokes, waiting for none: their runs are the
     // next hub's to end (ADR 23, decision 7). Closing their stdin does the
@@ -220,7 +228,7 @@ export const hubSpokes = <R>(options: {
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
         [...live.values()],
-        (group) => Effect.andThen(group.signal("SIGTERM"), group.closeStdin),
+        ({ group }) => Effect.andThen(group.signal("SIGTERM"), group.closeStdin),
         { discard: true },
       ),
     );
@@ -246,7 +254,15 @@ export const hubSpokes = <R>(options: {
           },
         );
 
-        live.set(handOver.runId, group);
+        const folded = yield* Ref.make(0);
+        const folding = yield* Semaphore.make(1);
+
+        const fold = foldSpoke(handOver.runId, folded, options.reports, options.apply).pipe(
+          folding.withPermits(1),
+          Effect.provideContext(context),
+        );
+
+        live.set(handOver.runId, { group, fold });
 
         const short = shortRunId(handOver.runId);
         yield* options.log(`spawned spoke ${group.pid} for ${short}`);
@@ -256,12 +272,7 @@ export const hubSpokes = <R>(options: {
           scope,
         );
 
-        const folded = yield* Ref.make(0);
-
-        const tailing = yield* Effect.forkIn(
-          tail(handOver.runId, folded).pipe(Effect.provideContext(context)),
-          scope,
-        );
+        const tailing = yield* Effect.forkIn(tail(fold), scope);
 
         // Once the spoke has exited, its tail stops, and what it wrote since
         // the last fold is folded before its run ends: the steps, markers and
@@ -270,7 +281,7 @@ export const hubSpokes = <R>(options: {
           Effect.gen(function* () {
             const exit = yield* group.exited;
             yield* Fiber.interrupt(tailing);
-            yield* foldSpoke(handOver.runId, folded, options.reports, options.apply);
+            yield* fold;
             live.delete(handOver.runId);
             yield* fs.remove(handOverFile, { force: true }).pipe(Effect.ignore);
             yield* options.onExit(handOver.runId, exit);
@@ -283,10 +294,16 @@ export const hubSpokes = <R>(options: {
       start,
       has: (runId) => live.has(runId),
       live: Effect.sync(() => live.size),
+      fold: (runId) =>
+        Option.match(Option.fromUndefinedOr(live.get(runId)), {
+          onNone: () => Effect.void,
+          onSome: (spoke) => spoke.fold,
+        }),
       stop: (runId) =>
         Option.match(Option.fromUndefinedOr(live.get(runId)), {
           onNone: () => Effect.void,
-          onSome: (group) => Effect.forkIn(stopGroup(group, STOP_GRACE), scope).pipe(Effect.asVoid),
+          onSome: ({ group }) =>
+            Effect.forkIn(stopGroup(group, STOP_GRACE), scope).pipe(Effect.asVoid),
         }),
     } satisfies Spokes;
   });

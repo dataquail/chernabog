@@ -929,16 +929,20 @@ export const runDaemon = Effect.gen(function* () {
       const checkFailures = new Map<string, CheckFailures>();
 
       // Ends a run whose work item went as superseded, released as a cancel
-      // releases it; its agent sessions stay open.
+      // releases it; its agent sessions stay open. What its spoke has
+      // reported is folded first, so its ending names the step it was in.
       const supersede = (run: ActiveRun, reason: string) =>
-        RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "superseded", reason }),
-          }),
-        ).pipe(
+        spokes.fold(run.id).pipe(
+          Effect.andThen(
+            RunFlowsCommands.use((runs) =>
+              runs.CancelRunCommand({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "chernabog",
+                closeSessions: false,
+                endAs: Option.some({ ending: "superseded", reason }),
+              }),
+            ),
+          ),
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -975,16 +979,20 @@ export const runDaemon = Effect.gen(function* () {
       const leasesRenewed = new Map<string, DateTime.Utc>();
 
       // Ends a run whose lease someone else took over as lost. What it left on
-      // the item, worktree included, stays for whoever took it over.
+      // the item, worktree included, stays for whoever took it over. What its
+      // spoke has reported is folded first.
       const loseRun = (run: ActiveRun, reason: string) =>
-        RunFlowsCommands.use((runs) =>
-          runs.CancelRunCommand({
-            target: CancelTarget.cases.ById.make({ asked: run.id }),
-            by: "chernabog",
-            closeSessions: false,
-            endAs: Option.some({ ending: "lost", reason }),
-          }),
-        ).pipe(
+        spokes.fold(run.id).pipe(
+          Effect.andThen(
+            RunFlowsCommands.use((runs) =>
+              runs.CancelRunCommand({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "chernabog",
+                closeSessions: false,
+                endAs: Option.some({ ending: "lost", reason }),
+              }),
+            ),
+          ),
           Effect.result,
           Effect.flatMap((ended) =>
             log(

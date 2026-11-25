@@ -10,7 +10,7 @@
     "test/acceptance/daemon.test.ts": 51537,
     "test/acceptance/rehearse.test.ts": 50025,
     "test/acceptance/review.test.ts": 47554,
-    "test/acceptance/hub-spokes.test.ts": 40000,
+    "test/acceptance/hub-spokes.test.ts": 47000,
     "test/acceptance/ci-park.test.ts": 34210,
     "test/acceptance/e2e.test.ts": 33659,
     "test/acceptance/hybrid.test.ts": 32905,
