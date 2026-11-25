@@ -8,6 +8,7 @@ Feature: The review loop
     Given alice and bob are personas on this machine
     And alice and bob both review for the team
 
+  @driver:ci @driver:live
   Scenario: bob asks for changes, alice fixes them, and bob merges
     When someone files an auto:ship issue
     Then alice opens a pull request for it
