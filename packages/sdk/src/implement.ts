@@ -1478,13 +1478,18 @@ const parkOnCi = (park: CiParking, round: number, timeout: Duration.Duration, op
   );
 
 // One poll of the pull request's CI, for a round whose wait began `began`
-// (none for its first poll, which begins it now).
+// (none for its first poll, which begins it as it reads).
 const readChecks = (
   pullRequest: number,
   began: Option.Option<string>,
   timeout: Duration.Duration,
 ) =>
   Effect.gen(function* () {
+    const since = yield* Option.match(began, {
+      onNone: () => Effect.map(DateTime.now, DateTime.formatIso),
+      onSome: Effect.succeed,
+    });
+
     const reading = yield* Ci.pullRequestState(pullRequest);
 
     if (reading.state === "green") {
@@ -1498,11 +1503,6 @@ const readChecks = (
     if (yield* Ci.conflicting(pullRequest)) {
       return { state: "conflicting" } as const;
     }
-
-    const since = yield* Option.match(began, {
-      onNone: () => Effect.map(DateTime.now, DateTime.formatIso),
-      onSome: Effect.succeed,
-    });
 
     const overdue = yield* Phases.pastSince(DateTime.make(since), timeout);
 
