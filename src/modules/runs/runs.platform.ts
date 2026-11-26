@@ -28,7 +28,11 @@ export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { type RunStatus } from "./domain/run/run-status.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { SpokeEnding } from "./domain/run/spoke-ending.value-object.ts";
-export { SpokeHandOver, SpokeHandOverJson } from "./domain/run/spoke-hand-over.value-object.ts";
+export {
+  SpokeHandOver,
+  SpokeHandOverJson,
+  SpokeSessionApi,
+} from "./domain/run/spoke-hand-over.value-object.ts";
 export { type SpokeReport } from "./domain/run/spoke-report.value-object.ts";
 export { type FlowRef, WorkItem } from "./domain/run/work-item.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";

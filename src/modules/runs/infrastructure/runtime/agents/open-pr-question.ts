@@ -1,7 +1,7 @@
 // How a Claude session with a person finishes on the hybrid path: the agent
 // drafts the pull request with `chernabog open-pr --draft`, then asks the
-// person with AskUserQuestion. `chernabog __question-hook --dir <session dir>`,
-// Claude's PreToolUse and PostToolUse hook on that tool, checks the question
+// person with AskUserQuestion. Claude's PreToolUse and PostToolUse hook on
+// that tool, an HTTP hook on the session API's question route, checks the question
 // before it is shown and acts on the answer, so only the person's Yes hands
 // the work to chernabog, and only while the worktree is as it was drafted.
 

@@ -7,7 +7,7 @@ No flow depends on a specific agent. The SDK's `Agent` service calls an adapter,
 
 | Adapter    | Start                                                                 | Resume                       | Answer                                         |
 | ---------- | --------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------- |
-| `claude`   | interactive `claude --session-id <id> --permission-mode auto` under a [launcher](/chernabog/agents/launchers/); `claude -p … --output-format stream-json` headless | `--resume <id>`              | a JSON file checked by a Stop hook; `--json-schema` headless |
+| `claude`   | interactive `claude --session-id <id> --permission-mode auto` under a [launcher](/chernabog/agents/launchers/); `claude -p … --output-format stream-json` headless | `--resume <id>`              | JSON sent to the session API, checked by a Stop hook; `--json-schema` headless |
 | `codex`    | `codex exec --json --approve-for-me`, sandboxed to the workspace (network on, `.git` writable) | `codex exec resume <thread>` | `--output-schema`, `-o`                        |
 | `opencode` | `opencode run --format json`                                          | `--session <id>`             | the last JSON object in its final message      |
 | your own   | `agents.<name>.start`                                                 | `agents.<name>.resume`       | the last JSON object it prints                 |

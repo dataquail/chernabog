@@ -78,7 +78,7 @@ import {
 } from "../../repo-config.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import { fail } from "./cli.output.ts";
-import { followOwnRun, startOwnRun } from "./own-hub.main.ts";
+import { followOwnRun, ownSessionApi, startOwnRun } from "./own-hub.main.ts";
 import { repoFlag } from "./repo.arguments.ts";
 import { choosePersona, tailer } from "./run.main.ts";
 
@@ -456,7 +456,7 @@ const runRehearsal = (
             }),
           ),
         ],
-        engine: EngineAt(scratch.root),
+        engine: Layer.merge(EngineAt(scratch.root), yield* ownSessionApi),
       }),
     );
 

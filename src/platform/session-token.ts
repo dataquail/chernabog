@@ -11,6 +11,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
+// The address every hub's session API binds; an unsandboxed session reaches it here.
+export const SESSION_API_LOOPBACK = "127.0.0.1";
+
 // A hub's key: 32 random bytes, drawn once per hub start.
 export const newHubKey = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -34,3 +37,8 @@ export const sameSessionToken = (given: string, token: string) => {
 
   return a.length === b.length && timingSafeEqual(a, b);
 };
+
+// A run's key as a spoke's hand-over carries it, and back.
+export const encodeRunKey = (key: Uint8Array) => Buffer.from(key).toString("base64url");
+
+export const decodeRunKey = (text: string) => new Uint8Array(Buffer.from(text, "base64url"));

@@ -19,6 +19,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { type Environment, withVariables } from "../../../../../platform/environment.ts";
 import type { Exec } from "../../../../../platform/exec.ts";
 import type { Home } from "../../../../../platform/home.ts";
+import type { SessionEndpoint } from "../../../../../platform/session-api-access.ts";
 import { type TokenUsageReading } from "../../../domain/token-usage/model-usage.value-object.ts";
 
 export type AdapterServices =
@@ -32,6 +33,9 @@ export type AdapterContext = {
   // Where an interactive session runs; headless for none. Only Claude has an interactive mode so far.
   readonly launcher: ResolvedLauncher;
   readonly log: (line: string) => Effect.Effect<void>;
+  // This session's routes on its hub's session API (ADR 24), for an
+  // interactive session: none outside a run, or where no hub opened one.
+  readonly sessionApi: Option.Option<SessionEndpoint>;
 };
 
 // What an adapter needs to find a session's own records: our id for it, the

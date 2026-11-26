@@ -12,9 +12,12 @@
 // run that finds the run still running can tell whether a live process still
 // owns it.
 
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { type RunId, shortRunId } from "../../kernel/run-id.id.ts";
@@ -32,8 +35,12 @@ import {
   type WorkItem,
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
+import { containerGateways } from "../../platform/container-gateways.ts";
+import { Home } from "../../platform/home.ts";
 import { processIdentity } from "../../platform/process-group.ts";
+import { SessionApiAccess } from "../../platform/session-api-access.ts";
 import { endAsSaid, foldInStateDb, foldSpoke } from "../daemon/report-fold.server.ts";
+import { openSessionApi } from "../daemon/session-api.server.ts";
 import { isSpoke } from "../daemon/spokes.server.ts";
 
 // Why a run a foreground run takes over ends: the process it ran in stopped.
@@ -96,6 +103,38 @@ export const ownerAlive = (record: SpokeRecordView) =>
     }),
   );
 
+// The runs this process is the hub of while it runs them: the only ones whose
+// sessions its session API answers.
+const ownRuns = new Set<string>();
+
+// This process's session API (ADR 24): the hub of its own runs opens the
+// listener a daemon's hub does, in-process, for its interactive sessions,
+// and gives them its access through the engine. One that can't open says
+// why and gives none, so an interactive session refuses to start.
+export const ownSessionApi = Effect.gen(function* () {
+  const opened = yield* openSessionApi({
+    root: (yield* Home).root,
+    isLive: (runId) => Effect.sync(() => ownRuns.has(runId)),
+    log: (line) => Effect.logDebug(line),
+    gateways: containerGateways(),
+  }).pipe(Effect.result);
+
+  if (Result.isFailure(opened)) {
+    yield* Console.error(
+      `session API: ${opened.failure.message}; an interactive session can't run here`,
+    );
+
+    return Layer.empty;
+  }
+
+  const api = opened.success;
+
+  return Layer.succeed(
+    SessionApiAccess,
+    SessionApiAccess.of({ port: api.port, runKey: (runId) => Option.some(api.runKey(runId)) }),
+  );
+});
+
 // A run's own hub: folds its journal into state.db from `folded`, and ends it.
 const hubOf = (runId: RunId, folded: Ref.Ref<number>) =>
   Effect.gen(function* () {
@@ -138,6 +177,7 @@ export const startOwnRun = (flow: FlowRef, item: WorkItem) =>
 
     const run = yield* Effect.fromOption(outcome.run).pipe(Effect.orDie);
     const startedAt = yield* self;
+    ownRuns.add(run.id);
 
     yield* (yield* RunsCommands)
       .RecordSpokeCommand({
@@ -219,6 +259,7 @@ export const followOwnRun = <A, E, R, P = never>(
 
     if (Option.isSome(said)) {
       yield* hub.end(said, "it ended without saying how");
+      ownRuns.delete(run.id);
     } else {
       yield* hub.fold;
     }

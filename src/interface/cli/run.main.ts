@@ -42,7 +42,7 @@ import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { type EffectiveRepo, findEnrolled, loadMachineConfig } from "../../repo-config.ts";
 import { engineRuntime } from "../application-runtime.ts";
-import { followOwnRun, startOwnRun, takeOverLeftRun } from "./own-hub.main.ts";
+import { followOwnRun, ownSessionApi, startOwnRun, takeOverLeftRun } from "./own-hub.main.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -306,7 +306,7 @@ export const runInForeground = (options: RunOptions) =>
             }),
           ),
         ],
-        engine: EngineLive,
+        engine: Layer.merge(EngineLive, yield* ownSessionApi),
       }),
     );
 

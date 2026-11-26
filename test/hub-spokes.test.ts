@@ -66,6 +66,7 @@ import {
   RunsQueries,
   type RunStatus,
   RunView,
+  SpokeHandOverJson,
   type SpokeReport,
   SpokeReportCommand,
   spokeReportPayloadJson,
@@ -110,6 +111,39 @@ const handOver = (fields: Partial<SpokeHandOver> = {}): SpokeHandOver => ({
 });
 
 describe("a spoke's hand-over", () => {
+  effect("carries the session API's port and its run's key, in a file only its owner reads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-hand-over-" });
+
+      const spokes = yield* hubSpokes({
+        home,
+        command: ["sh", "-c", "exec sleep 30"],
+        variables: {},
+        log: () => Effect.void,
+        reports: () => Effect.succeed([]),
+        apply: () => Effect.void,
+        record: () => Effect.void,
+        intend: () => Effect.void,
+        onExit: () => Effect.void,
+        bounds: DEFAULT_SPOKE_BOUNDS,
+        onBound: () => Effect.succeed(true),
+        sessionApi: (runId) => Option.some({ port: 4321, key: `key-of-${runId}` }),
+      });
+
+      yield* spokes.start(handOver({ checkout: home }));
+
+      const file = `${home}/spokes/3f2a.hand-over.json`;
+      const given = yield* Schema.decodeEffect(SpokeHandOverJson)(yield* fs.readFileString(file));
+
+      expect(given.sessionApi).toEqual({ port: 4321, key: "key-of-3f2a" });
+
+      expect(Number((yield* fs.stat(file)).mode) & 0o777).toBe(0o600);
+
+      yield* spokes.stop(RunId.make("3f2a"));
+    }),
+  );
+
   test("is `ci run --run` with the run, its repo, flow, persona, item and tree", () => {
     expect(spokeArgs(handOver(), "/home/spokes/3f2a.hand-over.json", DEFAULT_SPOKE_BOUNDS)).toEqual(
       [

@@ -108,6 +108,7 @@ import {
   TELEMETRY_RETENTION,
 } from "../../platform/retention.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
+import { encodeRunKey } from "../../platform/session-token.ts";
 import { watchStateChanges } from "../../platform/state-changes.ts";
 import {
   checkFlowSettings,
@@ -150,7 +151,7 @@ import {
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { endAsSaid, foldInStateDb, noteInRun } from "./report-fold.server.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
-import { openSessionApi } from "./session-api.server.ts";
+import { openSessionApi, type SessionApi } from "./session-api.server.ts";
 import { boundRetryAfter, hubSpokes, type Spokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -861,6 +862,26 @@ export const runDaemon = Effect.gen(function* () {
           return Result.isSuccess(ended);
         });
 
+      // The session API (ADR 24): a run's agent sessions reach its routes
+      // while the run's spoke lives, with tokens minted from the run's key,
+      // which each spoke's hand-over carries. A hub that can't open it says
+      // why and carries on; its spokes get no key, so their interactive
+      // sessions refuse to start.
+      const sessionApi = yield* openSessionApi({
+        root: (yield* Home).root,
+        isLive: (runId) =>
+          Effect.map(Ref.get(hubSpokesHandle), (found) =>
+            Option.exists(found, (live) => live.has(RunId.make(runId))),
+          ),
+        log,
+        gateways: containerGateways(),
+      }).pipe(
+        Effect.asSome,
+        Effect.catch((refused) =>
+          log(`session API: ${refused.message}`).pipe(Effect.as(Option.none<SessionApi>())),
+        ),
+      );
+
       const spokes = yield* hubSpokes<
         | CommandBus
         | FileSystem.FileSystem
@@ -894,6 +915,11 @@ export const runDaemon = Effect.gen(function* () {
         onExit: endSpokeRun,
         bounds: machine.spokes,
         onBound: endPastBound,
+        sessionApi: (runId) =>
+          Option.map(sessionApi, (api) => ({
+            port: api.port,
+            key: encodeRunKey(api.runKey(runId)),
+          })),
       });
 
       // The runs module ends a run's spoke through these, from now on.
@@ -2385,17 +2411,6 @@ export const runDaemon = Effect.gen(function* () {
       // The dashboard's 127.0.0.1 listener, which only the socket's
       // /dashboard routes open and close (a browser never reaches them).
       const dashboardListener = yield* openDashboardListener((yield* Home).root, log);
-
-      // The session API (ADR 24): a run's agent sessions reach its routes
-      // while the run's spoke lives. Nothing hands out its run keys yet
-      // (#714), so no session holds a token for it; a hub that can't open it
-      // says why and carries on.
-      yield* openSessionApi({
-        root: (yield* Home).root,
-        isLive: (runId) => Effect.sync(() => spokes.has(RunId.make(runId))),
-        log,
-        gateways: containerGateways(),
-      }).pipe(Effect.catch((refused) => log(`session API: ${refused.message}`)));
 
       const dashboardStart = Effect.gen(function* () {
         const body = yield* HttpServerRequest.schemaBodyJson(DashboardStart);
