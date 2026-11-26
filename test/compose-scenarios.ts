@@ -2094,6 +2094,16 @@ const askFor = (change: string) => (fake: Fake) => {
   fake.comment(change, "zach");
 };
 
+// The claim comments on the spec: one, from the run that claimed it, however
+// many runs took the plan up after a person answered (#710).
+const claimComments = (observed: Observed) =>
+  observed.comments.filter((comment) => comment.startsWith("Claimed by Chernabog at "));
+
+// What a run that takes a plan up journals for it: its claim taken back, and
+// the answer of each round it took up (#710).
+const takeUpSteps = (observed: Observed) =>
+  observed.steps.filter((step) => step === "claim-again" || /^plan-answer-\d+$/.test(step));
+
 export const PLAN_SCENARIOS = scenarios((scenario) => {
   scenario(
     "when a person approves the plan",
@@ -2106,6 +2116,8 @@ export const PLAN_SCENARIOS = scenarios((scenario) => {
       expect(recipe.filed).toHaveLength(4);
       expect(recipe.issueLabels).toEqual([Plan.LABELS.epic]);
       expect(recipe.steps).toContain(`clean-up-${Plan.planCheckout(ISSUE)}`);
+      expect(claimComments(recipe)).toHaveLength(1);
+      expect(takeUpSteps(recipe)).toEqual(["claim-again", "plan-answer-1"]);
     },
   );
 
@@ -2120,6 +2132,8 @@ export const PLAN_SCENARIOS = scenarios((scenario) => {
       expect(recipe.steps).toContain("draft-plan-2");
       expect(recipe.steps).toContain("propose-plan-2");
       expect(recipe.filed).toHaveLength(2);
+      expect(claimComments(recipe)).toHaveLength(1);
+      expect(takeUpSteps(recipe)).toEqual(["claim-again", "plan-answer-1", "plan-answer-2"]);
     },
   );
 
@@ -2132,6 +2146,8 @@ export const PLAN_SCENARIOS = scenarios((scenario) => {
     (recipe) => {
       expect(recipe.steps).toContain("fix-plan-1-1");
       expect(recipe.steps).not.toContain("fix-plan-1-2");
+      expect(claimComments(recipe)).toHaveLength(1);
+      expect(takeUpSteps(recipe)).toEqual(["claim-again", "plan-answer-1"]);
     },
   );
 
@@ -2170,6 +2186,10 @@ export const PLAN_SCENARIOS = scenarios((scenario) => {
     (recipe) => {
       expect(recipe.steps).toContain("draft-plan-2");
       expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsClarification]);
+      expect(claimComments(recipe)).toHaveLength(1);
+      // The run that took the plan up hands the spec to a person, and lets go
+      // of the persona's assignment the parked run's claim put on (#710).
+      expect(recipe.assigned).toEqual([]);
     },
   );
 

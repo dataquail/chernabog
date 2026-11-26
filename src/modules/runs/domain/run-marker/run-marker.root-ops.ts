@@ -69,17 +69,27 @@ const holdAgain = (
 // Markers.requeue), released only when the run ends interrupted.
 const REQUEUE = "chernabog/requeue";
 
+// The marker of a claim ref a run holds (core's Claims.refMarker), whose
+// release deletes the ref only while it still names the run.
+const CLAIM_REF = "chernabog/claim-ref";
+
 // Whether the marker stays on this ending. A run that lost its item keeps
 // every marker: they are the new holder's now. So does one that ended at a
 // park: the run that takes the item up from its record carries on with them,
 // as a CI job's next one does, and so does one interrupted by its process's
-// stop: the run that repeats its phase uses them again. The one exception is
-// the requeue marker, released on an interruption alone, so the item's
-// trigger offers it again for that run (ADR 23, decision 7); any other ending
-// keeps it, and the label stays off.
+// stop: the run that repeats its phase uses them again. Two exceptions. A
+// park lets go of the claim refs its run holds, its item's and any other
+// (an epic's), so the run that takes the item up may claim them, in whatever
+// process it runs (#709). And the requeue marker is released on an
+// interruption alone, so the item's trigger offers it again for that run
+// (ADR 23, decision 7); any other ending keeps it, and the label stays off.
 const keptOn = (marker: RunMarkerRoot, ending: string) => {
   if (marker.name === REQUEUE) {
     return ending !== "interrupted";
+  }
+
+  if (marker.name === CLAIM_REF && ending === "ended-at-park") {
+    return false;
   }
 
   return (

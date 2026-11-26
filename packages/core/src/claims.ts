@@ -335,9 +335,11 @@ const replace = (item: string, from: Claim, next: Holder) =>
 
 export type Renewal =
   | { readonly status: "renewed"; readonly expiresAt: string }
-  // Another run took the item over, or let it go after it did.
+  // Another run took the item over, the run its holder names. renew always
+  // names one; the Option is the type's shape from before (#732).
   | { readonly status: "lost"; readonly holder: Option.Option<Holder> }
-  // Nobody holds the claim: the run let it go, or a person deleted it.
+  // Nobody holds the claim: the run let it go, a person deleted it, or a run
+  // that took it over let it go since.
   | { readonly status: "released" };
 
 // Renews the lease of `runId`'s claim on `item` for `ttl` from now, unless
@@ -372,7 +374,18 @@ export const renew = (
       return { status: "renewed", expiresAt: expiry } satisfies Renewal;
     }
 
-    return { status: "lost", holder: yield* holder(item) } satisfies Renewal;
+    // A takeover always leaves a holder: the taker's lease ref, which a read
+    // follows, or the claim ref it moved. Nobody holding the claim once the
+    // replace failed means its ref went since it was read: the run let it go
+    // (a park's wrap-up does, before it reports its ending), a person deleted
+    // it, or a taker let it go, as when renewing finds no claim at the start.
+    const after = yield* holder(item);
+
+    if (Option.isNone(after)) {
+      return { status: "released" } satisfies Renewal;
+    }
+
+    return { status: "lost", holder: after } satisfies Renewal;
   });
 
 export type Holding =
