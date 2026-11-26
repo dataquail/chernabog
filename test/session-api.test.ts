@@ -27,7 +27,10 @@ import {
   SESSION_COMMANDS,
   type SessionApi,
 } from "../src/interface/daemon/session-api.server.ts";
-import { withAnswerFile } from "../src/modules/runs/infrastructure/runtime/agents/claude-interactive.ts";
+import {
+  NO_SESSION_URL,
+  withAnswerFile,
+} from "../src/modules/runs/infrastructure/runtime/agents/claude-interactive.ts";
 import {
   Draft,
   questionFor,
@@ -885,6 +888,18 @@ describe("the note a session with a person gets", () => {
 
     expect(prompt).toContain("$CHERNABOG_SESSION_URL/commands/open-pr");
     expect(prompt).toContain("Authorization: Bearer $CHERNABOG_SESSION_TOKEN");
-    expect(prompt).not.toContain(shellCommand(selfCommand()));
+
+    // A prompt that never asks for a pull request still doesn't, note and all.
+    expect(prompt).not.toContain("chernabog open-pr");
+
+    // The binary only where the session has no URL, which #714 hands every one.
+    const api = prompt.indexOf("$CHERNABOG_SESSION_URL/commands/open-pr");
+
+    const fallback = prompt.indexOf(
+      `${NO_SESSION_URL} To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\``,
+    );
+
+    expect(fallback).toBeGreaterThan(api);
+    expect(prompt.split(shellCommand(selfCommand())).length).toBe(2);
   });
 });
