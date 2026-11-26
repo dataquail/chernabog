@@ -14,6 +14,7 @@ import {
 } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -337,16 +338,17 @@ describe("the plan document runs as the recipe does", () => {
 });
 
 // The recipe waits 14 days for a person's answer, which no run here can, so
-// the document's own wait is shortened to see where its timeout goes. The
-// park ends the run; once the time is up, the document's trigger offers the
-// spec to a new run, which hands it to a person, with the checkout removed and
-// the claim let go, as the recipe's does.
+// the document's own wait is shortened to a day, and the spec's record, once
+// the run parks, says the plan was posted two days ago. The park ends the
+// run; with the time up, the document's trigger offers the spec to a new run,
+// which hands it to a person, with the checkout removed and the claim let go,
+// as the recipe's does.
 describe("the plan document's wait for a person", () => {
   effect(
     "hands the spec to a person once nobody answers within its time",
     () =>
       Effect.gen(function* () {
-        const document = documentOf(PLAN_DOCUMENT.replace("within: 14 days", "within: 0 days"));
+        const document = documentOf(PLAN_DOCUMENT.replace("within: 14 days", "within: 1 days"));
         const [approved] = PLAN_SCENARIOS;
 
         const observed = yield* observe(
@@ -354,13 +356,25 @@ describe("the plan document's wait for a person", () => {
           "plan",
           approved.setup,
           PLAN_WORK_ITEM,
-          // Nobody answers: nothing changes at the park, and time is up at once.
-          { signal: "approved", change: () => void 0 },
+          // Nobody answers, and the day is up: the record says two days ago.
+          {
+            signal: "approved",
+            change: (fake) => {
+              for (const record of Option.toArray(
+                Option.fromUndefinedOr(fake.records().get(`issue-${ISSUE}`)),
+              )) {
+                fake.recordPhase(`issue-${ISSUE}`, record.phase, {
+                  at: DateTime.subtract(record.at, { days: 2 }),
+                  data: Option.getOrElse(record.data, () => ({})),
+                });
+              }
+            },
+          },
         );
 
         expect(observed.status).toBe("needs-human");
         expect(observed.summary).toBe(
-          `#${ISSUE} needs a person: nobody answered the plan within 0 days`,
+          `#${ISSUE} needs a person: nobody answered the plan within 1 days`,
         );
         expect(observed.issueLabels).toEqual([DEFAULT_LABELS.needsHuman]);
         expect(observed.steps).toContain("propose-plan-1");
@@ -368,7 +382,7 @@ describe("the plan document's wait for a person", () => {
         expect(observed.steps).toContain("needs-human");
         expect(observed.steps).not.toContain("create-issues");
         expect(observed.comments.at(-1)).toContain(
-          "Chernabog stopped planning and needs a person: nobody answered the plan within 0 days",
+          "Chernabog stopped planning and needs a person: nobody answered the plan within 1 days",
         );
       }),
     60_000,
