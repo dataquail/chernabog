@@ -494,6 +494,29 @@ export const openSandbox = (
   const cli = cliOn(home, checkout);
   const runCli = collecting(cli);
 
+  // The CLI with `input` on its stdin, as a person pipes a secret into it.
+  const runCliWithInput = async (
+    args: ReadonlyArray<string>,
+    input: string,
+    extraEnv: Readonly<Record<string, string>> = {},
+  ): Promise<CliResult> => {
+    const child = Bun.spawn([program, ...programArgs, ...args], {
+      env: { ...env, CHERNABOG_HOME: home, ...extraEnv },
+      cwd: Option.getOrElse(Option.liftPredicate(checkout, existsSync), () => root),
+      stdin: new TextEncoder().encode(input),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+
+    return { code, output: `${stdout}${stderr}`, pid: child.pid };
+  };
+
   // What a hub does before it starts a spoke (ADR 23, decision 2, step 1),
   // standing in for the daemon's: records a run of `flow` on `item` in this
   // machine's state.db, as the implicit persona, attaches the execution its
@@ -776,6 +799,7 @@ process.stdout.write(Schema.encodeSync(SpokeHandOverJson)({ run, item }));
     installCheckout,
     cli,
     runCli,
+    runCliWithInput,
     spokeCli,
     recordRun,
     anotherMachine,

@@ -197,6 +197,16 @@ const USER_MAPPING = {
   podman: "--userns=keep-id",
 } as const;
 
+// A token as `claude setup-token` prints one.
+const CLAUDE_TOKEN = "sk-ant-oat01-sandboxed-session-token";
+
+// What a sandboxed session's env may hold (ADR 24, decision 7): Claude's
+// config dir and token, the persona's GH_TOKEN and the git config that
+// answers github.com with it, who commits are by, and its session API's
+// URL and token (and with a person, its session dir).
+const SANDBOXED_VARIABLE =
+  /^(CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|GH_TOKEN|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)|CHERNABOG_SESSION(_URL|_TOKEN)?)$/;
+
 // ADR 24: with a docker or podman sandbox, __launch runs the agent in a
 // container (here fakebin's runtime, which runs it on the host as a
 // container would), and a sandbox that can't start refuses the run, never
@@ -218,13 +228,33 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
   };
 
   test("runs the session in a container, under the launcher, through the session API", async () => {
-    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    const sandbox = sandboxFor(
+      { sandbox: provider },
+      { launcher: "tmux", github: ["alice"], personas: ["alice"] },
+    );
+
     sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
 
-    const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
-      ...runtimeEnv(sandbox),
-      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
-    });
+    // The account's Claude token, from `claude setup-token`, piped in.
+    const stored = await sandbox.runCliWithInput(
+      ["accounts", "set-token", "work"],
+      `${CLAUDE_TOKEN}\n`,
+    );
+
+    expect(stored.output).not.toContain(CLAUDE_TOKEN);
+    expect(stored.code).toBe(0);
+
+    const { code, output } = await sandbox.runCli(
+      ["run", "implement", "--repo", "demo", "--as", "alice"],
+      {
+        ...runtimeEnv(sandbox),
+        CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+        // A host's own credentials, none of which reach the container.
+        ANTHROPIC_API_KEY: "host-api-key",
+        AWS_SECRET_ACCESS_KEY: "host-aws-secret",
+        SSH_AUTH_SOCK: join(sandbox.root, "ssh-agent.sock"),
+      },
+    );
 
     expect(output).toContain("done: #1:");
     expect(code).toBe(0);
@@ -292,6 +322,14 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     expect(Object.keys(spec.env)).not.toContain("HOME");
     expect(args.join(" ")).not.toContain(spec.env.CHERNABOG_SESSION_TOKEN);
 
+    // Signed in to Claude as the repo's account and to gh as its persona,
+    // and no other credential: neither token is on the command line.
+    expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(CLAUDE_TOKEN);
+    expect(spec.env.GH_TOKEN).toBe("token-alice");
+    expect(args.join(" ")).not.toContain(CLAUDE_TOKEN);
+    expect(args.join(" ")).not.toContain("token-alice");
+    expect(Object.keys(spec.env).filter((name) => !SANDBOXED_VARIABLE.test(name))).toEqual([]);
+
     // It reaches the hub at the runtime's name for the host.
     expect(spec.env.CHERNABOG_SESSION_URL).toStartWith(`http://${CONTAINER_HOST[provider]}:`);
     expect(spec.env.CLAUDE_CONFIG_DIR).toBe(
@@ -300,6 +338,23 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     // Commits come out owned by the person.
     expect(args).toContain(USER_MAPPING[provider]);
+  }, 60_000);
+
+  test("refuses the session when the repo's account has no Claude token, saying how to set one", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+
+    const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
+      ...runtimeEnv(sandbox),
+      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+    });
+
+    expect(output).toContain("account work has no Claude token");
+    expect(output).toContain("claude setup-token");
+    expect(output).toContain("chernabog accounts set-token work");
+    expect(sandbox.claudeCalls()).toHaveLength(0);
+    expect(runtimeCalls(sandbox).filter((call) => call.startsWith(`${provider} run `))).toEqual([]);
+    expect(sandbox.tmuxCalls()).toHaveLength(0);
   }, 60_000);
 
   test("refuses the session when the runtime isn't there, saying why, and never starts the agent", async () => {
@@ -348,6 +403,59 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     expect(output).toContain("only under a launcher");
     expect(sandbox.claudeCalls()).toHaveLength(0);
+  }, 60_000);
+});
+
+// Decision 7: each Claude account's token for sandboxed sessions, kept in the
+// chernabog home, readable only by its owner, and never on a command line.
+describe("chernabog accounts set-token", () => {
+  test("keeps the token it reads from stdin for the account, readable only by its owner", async () => {
+    const sandbox = sandboxFor();
+
+    const { code, output } = await sandbox.runCliWithInput(
+      ["accounts", "set-token", "work"],
+      `  ${CLAUDE_TOKEN}\n`,
+    );
+
+    expect(code).toBe(0);
+    expect(output).toContain("work");
+    expect(output).not.toContain(CLAUDE_TOKEN);
+
+    const file = join(sandbox.home, "keys/claude/work.token");
+
+    expect(readFileSync(file, "utf8")).toBe(CLAUDE_TOKEN);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(join(sandbox.home, "keys/claude")).mode & 0o777).toBe(0o700);
+
+    // Setting it again replaces it.
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], "sk-ant-oat01-another\n");
+    expect(readFileSync(file, "utf8")).toBe("sk-ant-oat01-another");
+  }, 60_000);
+
+  test("refuses an account machine config doesn't name, one that isn't Claude's, or no token", async () => {
+    const sandbox = sandboxFor();
+
+    const unknown = await sandbox.runCliWithInput(
+      ["accounts", "set-token", "nobody"],
+      `${CLAUDE_TOKEN}\n`,
+    );
+
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.output).toContain('account "nobody" is not one of work, codex');
+
+    const codex = await sandbox.runCliWithInput(
+      ["accounts", "set-token", "codex"],
+      `${CLAUDE_TOKEN}\n`,
+    );
+
+    expect(codex.code).not.toBe(0);
+    expect(codex.output).toContain("codex is a codex account");
+
+    const empty = await sandbox.runCliWithInput(["accounts", "set-token", "work"], "\n");
+
+    expect(empty.code).not.toBe(0);
+    expect(empty.output).toContain("no token");
+    expect(existsSync(join(sandbox.home, "keys/claude"))).toBe(false);
   }, 60_000);
 });
 
