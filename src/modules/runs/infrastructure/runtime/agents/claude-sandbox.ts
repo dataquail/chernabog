@@ -105,7 +105,8 @@ export const sandboxedClaudeEnvironment = (
 });
 
 // A sandboxed session can't read the macOS Keychain, so it signs in with the
-// token stored for its account, and is refused without one (decision 2).
+// token stored for its account (ADR 24, decision 7), and is refused without
+// one, as a sandbox that can't start is (decision 2).
 const accountToken = (context: AdapterContext) =>
   Effect.flatMap(storedClaudeToken(context.account.name), Effect.fromOption).pipe(
     Effect.mapError(
