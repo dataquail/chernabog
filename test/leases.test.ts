@@ -213,19 +213,75 @@ describe("reading a claim a writer left half moved", () => {
     });
   };
 
-  effect("finishes at most eight of their moves at a time, and the rest on the next read", () =>
+  effect("follows every move they made, and moves nothing itself", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       chain(fake);
 
-      const first = yield* onFake(fake, Claims.holder(CLAIM));
-      expect(Option.map(first, (found) => found.runId)).toEqual(Option.some("writer-8"));
-      expect(fake.refs.get(ISSUE_REF)).toBe("moved8");
-      expect(leaseRefs(fake)).toHaveLength(2);
+      const found = yield* onFake(fake, Claims.holder(CLAIM));
 
-      const next = yield* onFake(fake, Claims.holder(CLAIM));
-      expect(Option.map(next, (found) => found.runId)).toEqual(Option.some("writer-10"));
+      expect(Option.map(found, (named) => named.runId)).toEqual(Option.some("writer-10"));
+      expect(fake.refs.get(ISSUE_REF)).toBe("held0000");
+      expect(leaseRefs(fake)).toHaveLength(10);
+    }),
+  );
+
+  effect("the writer that replaces the last of them finishes their moves with its own", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      chain(fake);
+      const made: Array<NewCommit> = [];
+
+      const renewal = yield* asRun(
+        fake,
+        "writer-10",
+        withGitHub(fake, keepingCommits(made), Claims.renew(CLAIM, "writer-10", Duration.hours(2))),
+      );
+
+      expect(renewal.status).toBe("renewed");
+      expect(made.map((commit) => commit.parents)).toEqual([["moved10"]]);
+      expect(Option.map(holderOf(fake), (named) => named.runId)).toEqual(Option.some("writer-10"));
+      expect(fake.refs.get(ISSUE_REF)).not.toBe("held0000");
       expect(leaseRefs(fake)).toEqual([]);
+    }),
+  );
+
+  // #703: a reader that found its writer's lease ref just before the writer
+  // moved the claim ref on and let the lease ref go, while another machine
+  // took the claim over on top of the writer's, would move the claim ref back
+  // to the writer's commit, and the taker's claim would be gone.
+  effect("leaves a claim made since it read a lease ref its writer has let go", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      heldBy(fake, FUTURE);
+      const lease = "refs/chernabog/leases/issue-3/held0000";
+      // A renewal won the lease ref on held0000 and is moving the claim ref on.
+      fake.commits.set("renewed0", Claims.messageOf({ ...OTHER, expiresAt: FUTURE }));
+      fake.refs.set(lease, "renewed0");
+
+      // Just after this reader reads the lease ref, the renewal finishes, and
+      // a taker replaces the renewal's commit, as another machine would.
+      const takenAfterTheRead = (github: GitHub["Service"]) => ({
+        ref: (ref: string) =>
+          github.ref(ref).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                if (ref === lease) {
+                  fake.refs.delete(lease);
+                  fake.commits.set("taken000", Claims.messageOf(TAKER));
+                  fake.refs.set(ISSUE_REF, "taken000");
+                }
+              }),
+            ),
+          ),
+      });
+
+      const read = yield* withGitHub(fake, takenAfterTheRead, Claims.holder(CLAIM));
+
+      // What it read was so when it read it; the taker's claim stays.
+      expect(Option.map(read, (named) => named.runId)).toEqual(Option.some("another-run"));
+      expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
+      expect(Option.getOrThrow(holderOf(fake)).runId).toBe("taker");
     }),
   );
 });
@@ -243,8 +299,9 @@ describe("taking over an expired claim", () => {
       );
 
       expect(taken).toEqual({ acquired: false, holder: Option.some(TAKER) });
-      expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
-      expect(leaseRefs(fake)).toEqual([]);
+      // The taker's move is the taker's to finish, or the next writer's.
+      expect(fake.refs.get(ISSUE_REF)).toBe("held0000");
+      expect(leaseRefs(fake)).toEqual(["refs/chernabog/leases/issue-3/held0000"]);
     }),
   );
 
@@ -352,8 +409,9 @@ describe("renewing a lease", () => {
       );
 
       expect(renewal).toEqual({ status: "lost", holder: Option.some(TAKER) });
-      expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
-      expect(leaseRefs(fake)).toEqual([]);
+      // The taker's move is the taker's to finish, or the next writer's.
+      expect(fake.refs.get(ISSUE_REF)).toBe("held0000");
+      expect(leaseRefs(fake)).toEqual(["refs/chernabog/leases/issue-3/held0000"]);
     }),
   );
 
@@ -430,9 +488,36 @@ describe("renewing a lease", () => {
           Claims.renew(CLAIM, "another-run", Duration.hours(2)),
         );
 
-        expect(renewal.status).toBe("lost");
-        // A reader finished the taker's move for it.
-        expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
+        expect(renewal).toEqual({
+          status: "lost",
+          holder: Option.some({ ...OTHER, runId: "taker", expiresAt: FUTURE }),
+        });
+        // Reading moves nothing: the taker's move is the taker's to finish,
+        // or the next writer's.
+        expect(fake.refs.get(ISSUE_REF)).toBe("held0000");
+        expect(leaseRefs(fake)).toEqual(["refs/chernabog/leases/issue-3/held0000"]);
+      }),
+  );
+
+  effect(
+    "a taker that stopped before moving the claim ref has it moved on by the next writer",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        heldBy(fake, PAST);
+        // A taker made the lease ref and stopped before it moved the claim ref.
+        fake.commits.set("taken000", Claims.messageOf(TAKER));
+        fake.refs.set("refs/chernabog/leases/issue-3/held0000", "taken000");
+
+        const renewal = yield* asRun(
+          fake,
+          "taker",
+          Claims.renew(CLAIM, "taker", Duration.hours(2)),
+        );
+
+        expect(renewal.status).toBe("renewed");
+        expect(Option.getOrThrow(holderOf(fake)).runId).toBe("taker");
+        expect(fake.refs.get(ISSUE_REF)).not.toBe("held0000");
         expect(leaseRefs(fake)).toEqual([]);
       }),
   );
