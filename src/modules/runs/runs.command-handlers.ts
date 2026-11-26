@@ -66,6 +66,8 @@ import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
 import { StartSpokeRunCommand } from "./commands/start-spoke-run.command.ts";
 import { startSpokeRunHandler } from "./commands/start-spoke-run.handler.ts";
+import { SweepContainersCommand } from "./commands/sweep-containers.command.ts";
+import { sweepContainersHandler } from "./commands/sweep-containers.handler.ts";
 import { SweepJournalsCommand } from "./commands/sweep-journals.command.ts";
 import { sweepJournalsHandler } from "./commands/sweep-journals.handler.ts";
 import {
@@ -209,6 +211,7 @@ export const runFlowsCommandGroup = Command.group(
   ReleaseMarkersCommand,
   ReportRunEndedCommand,
   StartSpokeRunCommand,
+  SweepContainersCommand,
   SweepJournalsCommand,
 );
 
@@ -221,13 +224,14 @@ const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
   ReleaseMarkersCommand: () => releaseMarkersHandler(),
   ReportRunEndedCommand: (payload) => reportRunEndedHandler(payload),
   StartSpokeRunCommand: (payload) => startSpokeRunHandler(payload),
+  SweepContainersCommand: () => sweepContainersHandler(),
   SweepJournalsCommand: () => sweepJournalsHandler(),
 });
 
 // The runs module's slice of the write side over the loaded flows, which the
 // daemon dispatches to check and renew its runs' leases, to plan each tick of
 // a flow, to ask its gate, to record the runs its spokes execute, to sweep
-// the journals of ended runs, to release the markers ended runs hold and to
+// the journals and containers of ended runs, to release the markers ended runs hold and to
 // end a run; a spoke to execute the run it was handed and report how it
 // ended; the foreground `run`, `rehearse` and `ci run` under Actions, each its
 // own hub, to record a run, execute it and end it; and `cancel` to end one

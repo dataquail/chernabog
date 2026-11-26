@@ -3,7 +3,13 @@
 // a flow's handle in it, and the services a trigger runs with. Kept apart from
 // the clients' live adapters so that only the module's wiring names those.
 
-import { type Flow, Runs, type SetupError, type TriggerServices } from "@chernabog/core";
+import {
+  type Flow,
+  Runs,
+  type SandboxName,
+  type SetupError,
+  type TriggerServices,
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -20,7 +26,9 @@ import { capturing, type FlowHandle, surfaceSetup } from "./engine.ts";
 // The flows a process loaded, and the services each persona's runs of them
 // use, which fail with the setup error that stops the persona acting: none
 // for a persona the repo no longer has. A hub adds the spokes its runs
-// execute in (ADR 23); any other process has none.
+// execute in (ADR 23), and the sandboxes its repos' personas resolved (ADR
+// 24), whose runtimes its sweep removes ended runs' containers on; any other
+// process has neither.
 export type FlowRegistry = {
   readonly handles: ReadonlyArray<FlowHandle>;
   readonly services: (
@@ -28,6 +36,7 @@ export type FlowRegistry = {
     persona: Persona,
   ) => Option.Option<Effect.Effect<Context.Context<TriggerServices>, SetupError>>;
   readonly spokes?: RunSpokesClientService;
+  readonly sandboxes?: ReadonlyArray<SandboxName>;
 };
 
 // The registry's handle for a flow, if it loaded it.

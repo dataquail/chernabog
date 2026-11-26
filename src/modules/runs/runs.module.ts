@@ -116,7 +116,9 @@ export const RunsModule = {
     Layer.mergeAll(
       FlowsClientLive(registry),
       WorkflowsClientLive(registry.handles),
-      RunCleanupClientLive(registry.services).pipe(Layer.provide(Exec.layer)),
+      RunCleanupClientLive(registry.services, registry.sandboxes ?? []).pipe(
+        Layer.provide(Exec.layer),
+      ),
       RunSpokesClientLive(Option.fromUndefinedOr(registry.spokes)),
     ).pipe(Layer.provide(RunsRepositoryLive)),
 

@@ -342,6 +342,32 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       return { closedSessions, openSessions };
     });
 
+  // Removes the run's containers, by its label (ADR 24, decision 9), but for
+  // those of the sessions it leaves open, which their own `__launch` removes
+  // as it exits: an agent whose terminal is gone, or whose session it closed,
+  // would otherwise run on in the runtime's daemon or VM. What it couldn't
+  // remove is left for a person, and the sweep tries it again.
+  const removeContainersLeft = (
+    run: RunRoot,
+    open: ReadonlyArray<OpenSession>,
+    leftForPerson: Array<string>,
+  ) =>
+    cleanup
+      .removeContainers(
+        run,
+        open.map((session) => session.sessionId),
+      )
+      .pipe(
+        Effect.map((removed) => removed.map(({ id, runtime }) => ({ runtime, id }))),
+        Effect.catch((failure) =>
+          Effect.sync(() => {
+            leftForPerson.push(`removing its containers failed: ${failure.message}`);
+
+            return [];
+          }),
+        ),
+      );
+
   if (found.status !== "running" && Option.isNone(options.endAs)) {
     return yield* releaseEnded(found);
   }
@@ -445,6 +471,11 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
 
       yield* tellEnded(cancelled);
 
+      const sessions = yield* closeSessionsLeft(
+        yield* sessionsLeft(cancelled, spoke),
+        leftForPerson,
+      );
+
       return CancelledRun.make({
         run: RunView.make({ ...cancelled }),
         alreadyEnded: false,
@@ -453,7 +484,12 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
         removedWorktrees: [],
         releasedClaims: [...releasedClaims],
         released: Option.none(),
-        ...(yield* closeSessionsLeft(yield* sessionsLeft(cancelled, spoke), leftForPerson)),
+        ...sessions,
+        removedContainers: yield* removeContainersLeft(
+          cancelled,
+          sessions.openSessions,
+          leftForPerson,
+        ),
         leftForPerson,
         ...spokeExitOf(spoke),
       });
@@ -469,6 +505,9 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       yield* sessionsLeft(cancelled, spoke),
       leftForPerson,
     );
+
+    // Then their containers, before the worktrees they mount go.
+    const removedContainers = yield* removeContainersLeft(cancelled, openSessions, leftForPerson);
 
     // Worktrees another run in flight on the same issue or pull request may be
     // using stay, for the last run on it, or a person, to remove.
@@ -521,6 +560,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       released,
       closedSessions,
       openSessions,
+      removedContainers,
       leftForPerson,
       ...spokeExitOf(spoke),
     });

@@ -85,3 +85,16 @@ export class SweptJournals extends Schema.Class<SweptJournals, { readonly brand:
 )({
   swept: Schema.Array(Schema.String),
 }) {}
+
+// The containers labelled with a run that had ended, removed, each with the
+// runtime it ran in and its run; and each runtime that couldn't list or
+// remove one, with why.
+export class SweptContainers extends Schema.Class<
+  SweptContainers,
+  { readonly brand: "SweptContainers" }
+>("SweptContainers")({
+  removed: Schema.Array(
+    Schema.Struct({ runtime: Schema.String, id: Schema.String, runId: Schema.String }),
+  ),
+  failed: Schema.Array(Schema.Struct({ runtime: Schema.String, message: Schema.String })),
+}) {}

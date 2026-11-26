@@ -6,7 +6,7 @@
 // CLI does) and PATH, and FAKE_HOST_GATEWAY telling fakebin/claude that the
 // container's host names are this machine's loopback. It keeps each
 // "container" in FAKE_RUNTIME_STATE by its labels, for `ps --filter label=`
-// and `rm -f`.
+// `inspect`, and `rm -f`.
 // FAKE_RUNTIME_MISSING: behave as if neither runtime were installed.
 // FAKE_RUNTIME_DETACH: the container's process outlives this CLI, as a real
 // container outlives its client, until `rm -f` removes it.
@@ -40,10 +40,30 @@ if (args[0] === 'info') {
   console.log(`${runtime} fake`);
 } else if (args[0] === 'ps') {
   const filter = args[args.indexOf('--filter') + 1] ?? '';
-  const [, name, value] = /^label=([^=]+)=(.*)$/.exec(filter) ?? [];
+  const [, name, value] = /^label=([^=]+)(?:=(.*))?$/.exec(filter) ?? [];
   for (const container of containers()) {
-    if (name && container.labels[name] === value && alive(container.pid)) console.log(container.id);
+    const labelled = name !== undefined && (value === undefined ? name in container.labels : container.labels[name] === value);
+    if (labelled && alive(container.pid)) console.log(container.id);
   }
+} else if (args[0] === 'inspect') {
+  // Only the format's {{.Id}} and {{index .Config.Labels "name"}}, as chernabog asks.
+  const format = args[args.indexOf('--format') + 1] ?? '{{.Id}}';
+  let missing = false;
+  for (const id of args.slice(1).filter((arg, at, rest) => !arg.startsWith('-') && rest[at - 1] !== '--format')) {
+    const file = join(state, `${id}.json`);
+    if (!existsSync(file)) {
+      console.error(`Error: No such object: ${id}`);
+      missing = true;
+      continue;
+    }
+    const container: Container = JSON.parse(readFileSync(file, 'utf8'));
+    console.log(
+      format
+        .replaceAll('{{.Id}}', container.id)
+        .replaceAll(/\{\{index \.Config\.Labels "([^"]+)"\}\}/g, (_, label: string) => container.labels[label] ?? ''),
+    );
+  }
+  if (missing) process.exit(1);
 } else if (args[0] === 'rm') {
   log(args.join(' '));
   for (const id of args.slice(1).filter((arg) => !arg.startsWith('-'))) {
