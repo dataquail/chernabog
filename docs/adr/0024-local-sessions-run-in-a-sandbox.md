@@ -216,6 +216,15 @@ session, saying so.
 | `PUT …/answer`          | the answer, as JSON                                             | Checks it against the call's schema (`checkAnswer`) and stores it where the stop route and the spoke read it; a `422` with the reason when it doesn't match, so the agent can fix it             |
 | `POST …/commands/:name` | the command's arguments, as JSON                                | One of the allowlisted things an agent may ask of chernabog (#715): what the bundled prompts and recipes tell an agent to run, such as `open-pr --draft`, and nothing else; a test pins the list |
 
+**The allowlist (#715)** is one command, because the bundled prompts and
+recipes tell an agent to run only `chernabog open-pr --draft`. The API's
+`open-pr` takes `{"draft": true, "title", "body", "summary"}` and nothing
+less: without `--draft` it is the person's own way to finish, which no agent
+runs. It drafts by the same code as the CLI, and answers what the CLI
+prints, or a `422` with its reason. `SESSION_COMMANDS` in
+`session-api.server.ts` is the list, and a test pins it and checks that
+every `chernabog` command in a bundled prompt's shell block is on it.
+
 Whether a session works with a person is read from its own launch record
 (`LaunchRecord.withPerson`), never taken from the request, so an agent can't
 claim a person's leniency.
