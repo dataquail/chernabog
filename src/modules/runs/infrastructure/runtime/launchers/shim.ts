@@ -205,19 +205,28 @@ export const runLaunch = (specFile: string) =>
       ),
       {
         onNone: () => exited,
+        // The runtime's CLI gets the hangup too, and may be seen to exit, or
+        // fail as killed, before the signal is: however the wait ends, the
+        // session's containers are removed (none are left after a clean
+        // exit, with --rm), and a signal that came by then is what it exits with.
         onSome: (removed) =>
           Effect.flatMap(listenForEndingSignal, (signalled) =>
             Effect.raceFirst(
-              Effect.map(exited, (code) => ({ code, ended: false })),
-              Effect.map(Deferred.await(signalled), (signal) => ({
-                code: SIGNAL_EXIT[signal],
-                ended: true,
-              })),
+              exited,
+              Effect.map(Deferred.await(signalled), (signal) => SIGNAL_EXIT[signal]),
+            ).pipe(
+              Effect.ensuring(removed),
+              Effect.exit,
+              Effect.flatMap((ended) =>
+                Effect.gen(function* () {
+                  if (yield* Deferred.isDone(signalled)) {
+                    return SIGNAL_EXIT[yield* Deferred.await(signalled)];
+                  }
+
+                  return yield* ended;
+                }),
+              ),
             ),
-          ).pipe(
-            Effect.tap((outcome) => Effect.when(removed, Effect.succeed(outcome.ended))),
-            Effect.map((outcome) => outcome.code),
-            Effect.onInterrupt(() => removed),
           ),
       },
     );

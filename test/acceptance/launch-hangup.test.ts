@@ -4,7 +4,7 @@
 // `chernabog __launch` removes the session's containers by label.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,11 +62,22 @@ test.each(["docker", "podman"] as const)(
       },
     );
 
-    await waitFor(() => existsSync(agentPid), "the container's agent to start");
+    // Up once the fake runtime has recorded its container, as a real one has
+    // before the container's process starts, and the agent is running in it.
+    const state = join(dir, "runtime");
+
+    await waitFor(
+      () =>
+        existsSync(agentPid) &&
+        existsSync(state) &&
+        readdirSync(state).some((name) => name.endsWith(".json")),
+      "the container's agent to start",
+    );
     const agent = Number(readFileSync(agentPid, "utf8"));
 
     process.kill(-(launch.pid ?? 0), "SIGHUP");
 
+    // It handled the hangup and exited as hung up, rather than being killed by it.
     await closed(launch);
     expect(launch.exitCode).toBe(129);
     expect(readFileSync(log, "utf8")).toContain(`${runtime} rm -f `);
