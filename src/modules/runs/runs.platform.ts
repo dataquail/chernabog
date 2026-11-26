@@ -114,6 +114,7 @@ export {
   runSessions,
 } from "./infrastructure/runtime/agents.ts";
 export { runAnswers, runUnanswered } from "./infrastructure/runtime/agents/answers.ts";
+export { recordPullRequest } from "./infrastructure/runtime/agents/open-pr.ts";
 export {
   Draft,
   handOver,

@@ -83,14 +83,28 @@ export const interactiveClaudeArgs = (
 };
 
 // What a session with a person adds: whatever the prompt says about working
-// unattended, the person decides with the agent, and chernabog is at hand.
+// unattended, the person decides with the agent, and chernabog is at hand,
+// through the session API (ADR 24, #715), never its binary, which a
+// sandboxed session can't run. The commands are the API's allowlist,
+// SESSION_COMMANDS in session-api.server.ts.
 const personNote = () =>
   [
     "## A person is here",
     "",
     "A person is working in this session with you. Where this prompt says you are unattended, that doesn't hold: talk it over with them, ask what you need to, and decide together. Stopping to wait for them is fine.",
     "",
-    `To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\`.`,
+    "## Reaching chernabog",
+    "",
+    "The `chernabog` binary isn't for you to run from here. Where this prompt tells you to run `chernabog open-pr --draft`, ask chernabog through this session's API instead, with its URL and token from your environment. Put the command's arguments in a JSON file outside the worktree, then:",
+    "",
+    "```sh",
+    'curl -sS --fail-with-body -X POST "$CHERNABOG_SESSION_URL/commands/open-pr" \\',
+    '  -H "Authorization: Bearer $CHERNABOG_SESSION_TOKEN" \\',
+    '  -H "Content-Type: application/json" \\',
+    "  --data-binary @<file>",
+    "```",
+    "",
+    'The file holds `{"draft": true, "title": "<title>", "body": "<the body in Markdown>", "summary": "<summary>"}`: `draft` must be `true`, and `body` replaces `--body-file`. It answers with what the command prints, the AskUserQuestion input to ask the person, or with why it refused. That is the only command the API takes; it refuses any other.',
     "",
   ].join("\n");
 
