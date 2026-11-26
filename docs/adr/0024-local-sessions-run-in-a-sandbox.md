@@ -138,8 +138,9 @@ launcher terminal (Orca tab, tmux pane)
 
 8. **The session API lives on the hub** (ADR 23). It never exposes
    `POST /commands/:tag`. Each session gets its own token, scoped to its
-   routes and revoked when the session ends. Its shape is settled below,
-   under _The session API_.
+   routes and revoked when the session ends. Its routes, its token scheme
+   and how the hub tells that a session has ended are settled below, under
+   _The session API_.
 
 9. **Containers carry a run-id label.** Each is labelled
    `chernabog.run=<run id>` and `chernabog.session=<session id>`. Cancel,
@@ -224,19 +225,26 @@ That way:
   session id is never another's, and the listener has no other routes;
 - the spoke mints a token without telling the hub, which ADR 23 forbids,
   and the hub needs no store of tokens;
-- **revocation is the run ending.** The hub refuses every route of a run
+- **a token is revoked when its session ends** (decision 8), checked on
+  disk on every request, so the hub still stores no tokens. A session has
+  ended once the `__launch` that runs it has: its `agent.pid` is gone
+  (`__launch` removes it as it exits) or names no live process. The file
+  holds the PID and, once #713 adds it, the process's start time, and the
+  hub checks both, as
+  ADR 23's `processIdentity` does, so a reused PID doesn't keep a session
+  alive. Closing a session by its launcher handle, a hangup on its terminal
+  and the agent exiting all end its `__launch`, so each revokes the token.
+  A new call that resumes the same session starts a new `__launch`, and
+  the session's token works again while it runs: it is the same session.
+- **the run ending revokes too.** The hub also refuses every route of a run
   that isn't live (no running run with a live spoke, or a foreground run
-  that isn't this process's). ADR 23 ends a run's sessions with the run:
-  closed by their handles, or, for a person's session the reap spares, left
-  open but with its run ended. A hub restart draws a new key and kills
-  every token at once, which matches decision 7 of ADR 23 (spokes die with
-  the hub). The issue's "revoked when the session ends" is read as "when the
-  run that launched it ends" **(settled here)**: a session chernabog closes
-  earlier in a live run holds a still-valid token, but nobody else holds it,
-  since it was only in that session's env.
+  that isn't this process's), so a person's session that the reap spares
+  (ADR 23, decision 7) can't reach the API for a run that has ended. A hub
+  restart draws a new key and kills every token at once, which matches
+  decision 7 of ADR 23 (spokes die with the hub).
 
-A hook refused because its run has ended lets Claude stop: nothing waits on
-it any more.
+A hook refused because its session or run has ended lets Claude stop:
+nothing waits on it any more.
 
 ### The container (#717, #718, #719)
 
