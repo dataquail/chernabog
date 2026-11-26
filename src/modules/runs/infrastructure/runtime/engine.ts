@@ -589,6 +589,18 @@ export const recordsOfRun = (runId: RunId) =>
     }),
   );
 
+// What a run's claim-ref marker holds: the item it claimed, and the run.
+const HeldClaim = Schema.Struct({ item: Schema.String, runId: Schema.String });
+
+// The claims a run's records say it holds (Claims.refMarker): what a spoke or
+// a CI job lets go of when its run stops short of its end, as at a park.
+export const heldClaims = (runId: RunId) =>
+  Effect.gen(function* () {
+    const held = yield* (yield* recordsOfRun(runId)).held(runId, Claims.refMarker.name);
+
+    return held.flatMap((marker) => Option.toArray(Schema.decodeUnknownOption(HeldClaim)(marker)));
+  });
+
 // What the process executing a run hears of its park, once the run's wait is
 // recorded: a spoke ends there, at its phase boundary, and says so in its
 // journal (ADR 23, decision 2). Nothing by default.

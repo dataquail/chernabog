@@ -105,7 +105,8 @@ const runOf = (
   settings: FlowInput = scenario.settings,
 ) =>
   Effect.gen(function* () {
-    let seen = Option.none<Seen>();
+    // What each run left, in order: a park ends its run, and a new run takes it up.
+    const seen: Array<Seen> = [];
 
     const observed = yield* observe(
       flow,
@@ -124,7 +125,7 @@ const runOf = (
             readFlowPlanHandler({ hash }),
           );
 
-          seen = Option.some({
+          seen.push({
             path: pathOf(history),
             logged: loggedSteps(Option.getOrElse(log, () => "")),
             plan,
@@ -140,16 +141,19 @@ const runOf = (
 
     expect(observed.status).toBe(scenario.ends);
 
-    return Option.getOrThrow(seen);
+    return seen;
   });
 
 const scenarioOf = (scenarios: ReadonlyArray<Scenario>, title: string) =>
   Option.getOrThrow(Option.fromUndefinedOr(scenarios.find((each) => each.title === title)));
 
 // The epic run that opens #10 and #12, then #11 in the next round, parks in
-// the third with nothing to start, and once every task merged, wakes, replays
-// the rounds before and ends in the fourth.
-const EPIC_RUN = scenarioOf(EPIC_SCENARIOS, "when every task merges, and the run wakes and ends");
+// the third with nothing to start, which ends it; once every task merged, a
+// new run takes the epic up and ends in its first round.
+const EPIC_RUN = scenarioOf(
+  EPIC_SCENARIOS,
+  "when every task merges, and a new run takes the epic up and ends",
+);
 
 // A task's lane, one step after another, in its round.
 const laneSteps = (task: number, round: number, review: number) => {
@@ -209,13 +213,20 @@ const EPIC_STEPS = [
   "refresh-diff-202-base1234 @ carried r3",
   "tasks-ci-3 @ settled r3",
   // Nothing to start: the run records the epic's wait and parks, at the node
-  // of the branch it took.
+  // of the branch it took, which ends the run there.
   "epic-waiting-3 @ parked r3",
   "await-layer-changed:epic-3 @ parked r3",
-  "epic-tasks-4 @ progress r4",
-  "epic-status-4 @ status r4",
-  // Every task closed: the epic's record says so.
-  "epic-finished-4 @ closed r4",
+];
+
+// The run that takes the epic up once every task merged: every task closed,
+// in its first round, so the epic's record says so.
+const FINISHED_STEPS = [
+  "claim-epic @ claimed",
+  "ships @ ships",
+  "at-once @ howMany",
+  "epic-tasks-1 @ progress r1",
+  "epic-status-1 @ status r1",
+  "epic-finished-1 @ closed r1",
   // The subject's claim, let go as the run ends, outside any node.
   "release-claim-epic-40 @ -",
 ];
@@ -234,18 +245,19 @@ const EPIC_NODES = [
   ...laneNodes(11, 2),
   "recorded r2: ok",
   ...roundNodes(3),
-  "parked r3: ok",
-  "progress r4: ok",
-  "status r4: ok",
-  "noted r4: ok",
-  "closed r4: ok",
+  // The run ended in the node it parked at.
+  "parked r3: -",
 ];
 
-// The branches it took, and the end it reached, each once: the run passed
-// the third round's branch again when it woke, and recorded nothing new.
-const EPIC_BRANCHES = ["ready r3: none", "closed r4: finished"];
-
-const EPIC_ENDS = ["steps[3].repeat.steps[3].on.finished.steps[0] r4"];
+const FINISHED_NODES = [
+  "claimed: ok",
+  "ships: ok",
+  "howMany: ok",
+  "progress r1: ok",
+  "status r1: ok",
+  "noted r1: ok",
+  "closed r1: ok",
+];
 
 const epicDocument = documentOf(EPIC_DOCUMENT);
 
@@ -255,21 +267,39 @@ describe("a document's run records where in its plan each step ran", () => {
     () =>
       Effect.gen(function* () {
         const module = yield* loadModule(generated(epicDocument));
-        const seen = yield* runOf(module.default, "epic", EPIC_WORK_ITEM, EPIC_RUN);
 
-        expect(seen.path).toEqual({
+        const [parked, finished, ...more] = yield* runOf(
+          module.default,
+          "epic",
+          EPIC_WORK_ITEM,
+          EPIC_RUN,
+        );
+
+        expect(more).toEqual([]);
+
+        // The run that parked took the third round's branch, and reached no end.
+        expect(parked.path).toEqual({
           steps: EPIC_STEPS,
           nodes: EPIC_NODES,
-          branches: EPIC_BRANCHES,
-          ends: EPIC_ENDS,
+          branches: ["ready r3: none"],
+          ends: [],
         });
 
-        // Its log tags each step's line with the step's node too.
-        expect(seen.logged).toEqual(EPIC_STEPS);
+        expect(finished.path).toEqual({
+          steps: FINISHED_STEPS,
+          nodes: FINISHED_NODES,
+          branches: ["closed r1: finished"],
+          ends: ["steps[3].repeat.steps[3].on.finished.steps[0] r1"],
+        });
 
-        // It kept the plan it started with, which the daemon answers by its hash.
-        expect(seen.plan).toEqual(Option.some(module.plan.hash));
-        expect(seen.kept).toEqual(Option.some(module.plan.hash));
+        for (const run of [parked, finished]) {
+          // Its log tags each step's line with the step's node too.
+          expect(run.logged).toEqual(run.path.steps);
+
+          // It kept the plan it started with, which the daemon answers by its hash.
+          expect(run.plan).toEqual(Option.some(module.plan.hash));
+          expect(run.kept).toEqual(Option.some(module.plan.hash));
+        }
       }),
     60_000,
   );
@@ -280,7 +310,7 @@ describe("a document's run records where in its plan each step ran", () => {
       Effect.gen(function* () {
         const module = yield* loadModule(generated(documentOf(REVIEW_DOCUMENT)));
 
-        const seen = yield* runOf(
+        const [seen] = yield* runOf(
           module.default,
           "review",
           REVIEW_WORK_ITEM,
@@ -307,7 +337,8 @@ describe("a document's run records where in its plan each step ran", () => {
 
         expect(sabotaged).not.toBe(source);
 
-        const seen = yield* runOf(yield* loadSource(sabotaged), "epic", EPIC_WORK_ITEM, EPIC_RUN);
+        // The run that parked, which ran the tasks' lanes.
+        const [seen] = yield* runOf(yield* loadSource(sabotaged), "epic", EPIC_WORK_ITEM, EPIC_RUN);
 
         expect(seen.path.steps).not.toEqual(EPIC_STEPS);
         // The claim's steps are in the forEach's node, which is all the lane knows.

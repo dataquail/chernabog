@@ -198,18 +198,6 @@ graph:
         - "@/modules/*/*.contracts.ts"
         - "@/modules/*/domain/**"
         - "@/kernel/**"
-    # The SDK's block tests still wake a run parked in their own engine, a
-    # path no chernabog process has since a park ends its run (ADR 23,
-    # decisions 2 and 9). The wake is the tests' alone: nothing chernabog runs
-    # or publishes may reach it.
-    - name: only-tests-wake-runs
-      message: >-
-        This reaches test/wake-signals.ts, the tests' wake of a run parked in their own engine. No
-        chernabog process wakes a parked run: a park ends its run, and a later run takes the item
-        up from its record (ADR 23, decisions 2 and 9). Keep the wake to the tests.
-      from: ["@/**", "~/**", "scripts/**"]
-      fromNot: "**/*.test.ts"
-      to: "test/wake-signals.ts"
     - name: daemon-reaches-no-sdk
       message: >-
         The binary provides @chernabog/core and nothing else of the flows' packages: each repo

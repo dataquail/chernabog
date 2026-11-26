@@ -7,6 +7,7 @@ import {
   AgentError,
   CurrentActivity,
   HEADLESS,
+  NO_SANDBOX,
   type RepoSettings,
   Run,
   RunLog,
@@ -47,6 +48,7 @@ import {
 import { recordingTokenUsage } from "./agents/token-usage.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
 import { RunRecords } from "./run-records.ts";
+import { sandboxRefusal } from "./sandboxes.ts";
 
 export type AgentsConfig = Readonly<
   Record<
@@ -165,6 +167,17 @@ export const AgentLive = (
               });
             }
 
+            // A sandbox that can't start refuses the session; nothing falls
+            // back to running the agent on the host (ADR 24, decision 2). A
+            // rehearsal runs no agent, so it has nothing to sandbox.
+            const sandbox = settings.sandbox ?? NO_SANDBOX;
+
+            for (const refusal of Option.toArray(
+              Option.filter(sandboxRefusal(sandbox), () => name !== REHEARSAL),
+            )) {
+              return yield* new AgentError({ message: `${name}: ${refusal}` });
+            }
+
             // Each agent runs under its own account: a Codex reviewer on a Claude repo spends the Codex account.
             const account = Option.getOrElse(
               Record.get(settings.agentAccounts, name),
@@ -235,6 +248,7 @@ export const AgentLive = (
                 host: host.variables,
                 env,
                 launcher: settings.launcher,
+                sandbox,
                 log,
                 sessionApi,
               })
@@ -326,6 +340,7 @@ export const attachCommand = (record: SessionRecord) =>
       host,
       env: {},
       launcher: HEADLESS,
+      sandbox: NO_SANDBOX,
       log: () => Effect.void,
       sessionApi: Option.none(),
     };

@@ -162,9 +162,31 @@ describe.each(["tmux", "orca", "mine", "headless"])(
       );
 
       expect(recorded.map((record) => record.runId)).toEqual(runs.map((run) => run.id));
+
+      // It carries the repo's sandbox to __launch: none, when nothing sets one.
+      for (const spec of specs) {
+        expect(readFileSync(join(sandbox.home, "sessions/interactive", spec), "utf8")).toContain(
+          '"sandbox":"none"',
+        );
+      }
     }, 60_000);
   },
 );
+
+// ADR 24, decision 2: a sandbox that can't start refuses the run, and nothing
+// falls back to running on the host. Until the container lands, none can.
+describe.each(["docker", "podman"])("a repo whose sandbox is %s", (provider) => {
+  test("refuses the session, saying why, and never starts the agent", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+    const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
+    expect(output).toContain(`sandbox ${provider} (from repo config) isn't supported yet`);
+    expect(sandbox.claudeCalls()).toHaveLength(0);
+    // Refused before any session was opened, so nothing reached the launcher.
+    expect(existsSync(join(sandbox.home, "sessions/interactive"))).toBe(false);
+    expect(sandbox.tmuxCalls()).toHaveLength(0);
+  }, 60_000);
+});
 
 describe("the answer", () => {
   test("a session that stops without its answer is sent back to send it", async () => {

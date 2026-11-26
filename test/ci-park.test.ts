@@ -123,7 +123,7 @@ describe("a wait for CI in a CI job", () => {
         parkedOn(polled, 1),
       );
 
-      expect(run.status).toBe("running");
+      expect(run.status).toBe("ended-at-park");
       expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
     }),
   );
@@ -153,8 +153,8 @@ describe("a wait for CI in a CI job", () => {
         (polled) => parkedOn(polled, 3),
       );
 
-      expect(summaryOf(run)).toBe("");
-      expect(run.status).toBe("running");
+      expect(summaryOf(run)).toContain("a later run takes it up");
+      expect(run.status).toBe("ended-at-park");
       expect(fake.requests).toHaveLength(1);
       expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
       expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci-3");
@@ -192,7 +192,7 @@ describe("a wait for CI on a daemon", () => {
       const fake = makeFake("approve");
       fake.merge.ci = { state: "pending", waitingOn: ["test"] };
       const { parked, run } = yield* parkedAfterPolls(waiting(PARKING), fake);
-      expect(run.status).toBe("running");
+      expect(run.status).toBe("ended-at-park");
       expect(parked).toBe(true);
       expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
     }),
@@ -267,7 +267,7 @@ describe("implement in a CI job", () => {
           (polled) => parkedOn(polled, 1),
         );
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.git.opened).toBe(true);
         expect(fake.phases()[ISSUE_ITEM]).toBe("awaiting-ci");
         // Not handed off: nobody is asked to review it yet.
@@ -459,7 +459,7 @@ describe("address-review in a CI job", () => {
             ),
         );
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.git.pushes).toBe(2);
         expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
         // The reviewer isn't asked again until CI has finished.

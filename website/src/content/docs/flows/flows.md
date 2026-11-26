@@ -140,11 +140,11 @@ A manual flow must have `item`, since nothing else could start it, and can't hav
 
 Activity names are unique within a run, so one in a loop carries its round: `fix-ci-2`.
 
-**Signals.** A trigger reports signals in `WorkItem.signals`; a waiting run's `awaitSignal` wakes on them. Report an item with `wakeOnly` to wake a waiting run without starting a new one.
+**Signals.** A trigger reports signals in `WorkItem.signals`, and `awaitSignal` names the signals a park waits on. A park ends its run, so nothing wakes a parked run: the trigger offers the item again from its parked phase record, and a new run takes it up. An item reported with `wakeOnly` starts no run and wakes none; the SDK's wake-only sources, `Plan.answers` and `PullRequest.baseTurnedGreen`, are deprecated (#694).
 
-**Work that waits on someone.** Report an item with `waitsOn: { who: "bob", why: "not on this machine" }` when it waits on a person or a login, such as a review request no persona here serves. Like held work, it starts no run and its signals still wake a waiting run; `chernabog status` lists it as `waiting: pr-73 waits on bob (not on this machine)`. A trigger knows the logins this machine acts as from the `Machine` service (`Effect.serviceOption(Machine)`, since an older binary provides none), as `Review.waitingElsewhere` reads them.
+**Work that waits on someone.** Report an item with `waitsOn: { who: "bob", why: "not on this machine" }` when it waits on a person or a login, such as a review request no persona here serves. Like held work, it starts no run; `chernabog status` lists it as `waiting: pr-73 waits on bob (not on this machine)`. A trigger knows the logins this machine acts as from the `Machine` service (`Effect.serviceOption(Machine)`, since an older binary provides none), as `Review.waitingElsewhere` reads them.
 
-**Held work.** Report an item with `held: "waits on #12, #13"` when the trigger won't start it yet. It starts no run, even with `wakeOnly` unset, its signals still wake a waiting run, and `chernabog status` and the live view list it with the reason, so an idle queue and a queue of blocked work look different.
+**Held work.** Report an item with `held: "waits on #12, #13"` when the trigger won't start it yet. It starts no run, even with `wakeOnly` unset, and `chernabog status` and the live view list it with the reason, so an idle queue and a queue of blocked work look different.
 
 ## Errors
 

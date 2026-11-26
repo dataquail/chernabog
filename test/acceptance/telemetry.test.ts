@@ -1,14 +1,24 @@
 // Every CLI command writes its spans and logs under the chernabog home's
 // telemetry/, in a file of its own process: telemetry/<day>/cli-<pid>.jsonl.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { openSandbox, type Sandbox } from "./sandbox.ts";
+import { TELEMETRY_RETENTION } from "../../src/platform/retention.ts";
+import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // What the test reads of a line, decoded as any reader of the files would.
 const TelemetryLine = Schema.Struct({
@@ -139,4 +149,51 @@ describe("telemetry", () => {
     expect(output).toContain("chernabog");
     expect(recordsOf(sandbox.home, "cli", pid)).toEqual([]);
   }, 30_000);
+});
+
+describe("today's telemetry, for a process with no bound of its own", () => {
+  let sandbox: Sandbox;
+  // None until a test starts it, so a test cut short stops nothing.
+  let daemon: Option.Option<ChildProcess> = Option.none();
+  const stopped = "writes no more telemetry until the next UTC day";
+
+  beforeAll(() => {
+    sandbox = openSandbox();
+    // Today's folder already holds the day's cap, in a sparse file another
+    // process left (#701).
+    const today = join(sandbox.home, "telemetry", new Date().toISOString().slice(0, 10));
+    mkdirSync(today, { recursive: true });
+    const file = openSync(join(today, "cli-1.jsonl"), "w");
+    ftruncateSync(file, TELEMETRY_RETENTION.maxBytes);
+    closeSync(file);
+  });
+
+  afterAll(async () => {
+    for (const running of Option.toArray(daemon)) {
+      if (Option.isNone(Option.fromNullishOr(running.exitCode))) {
+        running.kill("SIGTERM");
+        await closed(running);
+      }
+    }
+
+    await sandbox.github.stop();
+  }, 30_000);
+
+  test("a CLI call past the day's cap writes none, and says so once on stderr", async () => {
+    const { code, output, pid } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
+
+    expect(code).toBe(0);
+    expect(output.split(stopped)).toHaveLength(2);
+    expect(recordsOf(sandbox.home, "cli", pid)).toEqual([]);
+  }, 60_000);
+
+  test("the daemon past the day's cap says so once in daemon.log, and writes none", async () => {
+    const started = sandbox.cli(["daemon"]);
+    daemon = Option.some(started);
+
+    await waitFor(() => sandbox.daemonLog().includes(stopped), "the daemon's telemetry notice");
+
+    expect(sandbox.daemonLog().split(stopped)).toHaveLength(2);
+    expect(recordsOf(sandbox.home, "daemon", started.pid ?? -1)).toEqual([]);
+  }, 60_000);
 });

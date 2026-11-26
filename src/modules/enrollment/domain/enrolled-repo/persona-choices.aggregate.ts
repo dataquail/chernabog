@@ -33,6 +33,8 @@ export const PersonaChoices = {
   schedule: Schema.optionalKey(Schema.String),
   activeHours: Schema.optionalKey(Schema.String),
   launcher: Schema.optionalKey(Schema.String),
+  // Where agent sessions run: none, docker or podman, within the repo's allowedSandboxes (ADR 24).
+  sandbox: Schema.optionalKey(Schema.String),
   enabled: Schema.optionalKey(Schema.Boolean),
 };
 

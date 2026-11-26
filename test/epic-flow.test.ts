@@ -1,7 +1,9 @@
 // The epic recipe through the engine, on an in-memory GitHub: an epic of
 // tasks, some building on others, implemented as pull requests stacked on the
 // branch of the task each builds on; a task still blocked twice over waits;
-// and the run parks between rounds until a layer's pull request changes.
+// and the run parks between rounds, which ends it (ADR 23, decision 2), until
+// a layer's pull request changes and Epic.queued offers the epic to a new
+// run, which carries on from the epic's waiting record.
 
 import {
   Claims,
@@ -18,20 +20,20 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import epic from "../packages/recipes/flows/epic.ts";
-import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
-  deliverSignals,
+  type EngineRun,
   type Fake,
   flowTriggered,
+  follow,
   item,
   makeFake,
+  onEngine,
   repo,
-  runUntil,
   summaryOf,
+  takeUp,
   triggered,
 } from "./sdk-fakes.ts";
 
@@ -118,66 +120,67 @@ type Snapshot = { readonly bases: Record<string, string>; readonly status: strin
 
 const NOTHING: Snapshot = { bases: {}, status: "" };
 
-// Runs the epic flow; each time it parks, records what the fake looks like,
-// makes the next change and delivers what the trigger then reports, as the
-// daemon's ticks would, until the run ends or no change is left.
+// Runs the epic flow; each time a run ends at its park, records what the
+// fake looks like, makes the next change, and takes the epic up in a new run
+// from what Epic.queued then offers, as a tick would; until a run ends
+// otherwise, or no change is left. The last run, the snapshots, the lanes
+// each run declared, in run order, and how each run before the last ended.
 const workWith = (
   fake: Fake,
   changes: ReadonlyArray<(fake: Fake) => void>,
   handle: typeof working = working,
-) => {
-  const snapshots: Array<Snapshot> = [];
-  const answered = new Set<string>();
-  // The lanes the run declared, by lane, read once it ended.
-  const lanes = new Map<string, ReadonlyArray<string>>();
-
-  const run = runUntil(handle, fake, work, (current) =>
+) =>
+  onEngine(
+    handle,
+    fake,
     Effect.gen(function* () {
-      if (current.status !== "running") {
-        for (const declared of (yield* readRunHistoryHandler({ runId: current.id })).lanes ?? []) {
-          lanes.set(declared.lane, declared.needs);
+      const snapshots: Array<Snapshot> = [];
+      // The lanes each run declared, by lane: a lane waits only on lanes of its own run.
+      const lanes: Array<Record<string, ReadonlyArray<string>>> = [];
+      const before: Array<EngineRun["status"]> = [];
+      let last: EngineRun = yield* follow(handle, work);
+
+      for (;;) {
+        lanes.push(
+          Object.fromEntries(
+            ((yield* readRunHistoryHandler({ runId: last.id })).lanes ?? []).map((declared) => [
+              declared.lane,
+              declared.needs,
+            ]),
+          ),
+        );
+
+        if (last.status !== "ended-at-park") {
+          break;
         }
 
-        return true;
-      }
-
-      const { waits } = yield* listRunWaitsHandler({
-        runId: current.id,
-        signal: Epic.LAYER_CHANGED,
-      });
-
-      const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
-
-      if (Option.isNone(parked)) {
-        return false;
-      }
-
-      const change = Arr.get(changes, answered.size);
-
-      if (snapshots.length === answered.size) {
         snapshots.push({ bases: bases(fake), status: Option.getOrElse(statusOf(fake), () => "") });
+        const change = Arr.get(changes, snapshots.length - 1);
 
-        for (const next of Option.toArray(change)) {
-          next(fake);
+        if (Option.isNone(change)) {
+          break;
         }
+
+        change.value(fake);
+
+        const offered = (yield* triggered(fake, Epic.queued).pipe(Effect.orDie)).filter(
+          (found) => found.key === work.key,
+        );
+
+        before.push(last.status);
+
+        last = yield* Effect.flatMap(
+          takeUp(handle, offered),
+          Option.match({
+            onNone: () => Effect.die(`nothing took the epic up after change ${snapshots.length}`),
+            onSome: Effect.succeed,
+          }),
+        );
       }
 
-      if (Option.isNone(change)) {
-        return true;
-      }
-
-      const found = yield* triggered(fake, Epic.queued).pipe(Effect.orDie);
-
-      if ((yield* deliverSignals(handle, IMPLICIT, found)) > 0) {
-        answered.add(parked.value.deferred);
-      }
-
-      return false;
+      return { run: last, snapshots, lanes, before };
     }),
-  );
-
-  return Effect.map(run, (ended) => ({ run: ended, snapshots, lanes }));
-};
+  ).pipe(Effect.orDie);
 
 describe("epic", () => {
   effect("finds open epics with an open task as work, keyed by the epic", () =>
@@ -198,7 +201,7 @@ describe("epic", () => {
       Effect.gen(function* () {
         const fake = epicFake();
 
-        const { lanes, run, snapshots } = yield* workWith(fake, [
+        const { before, lanes, run, snapshots } = yield* workWith(fake, [
           // #10 and #12 merge: #13 is no longer blocked.
           (changed) => {
             merge(changed, 10);
@@ -212,6 +215,8 @@ describe("epic", () => {
         ]);
 
         expect(run.status).toBe("done");
+        // Each park ended its run, and a new run took the epic up.
+        expect(before).toEqual(["ended-at-park", "ended-at-park"]);
         expect(summaryOf(run)).toBe(`#${EPIC}: every task is closed`);
 
         // First park: three pull requests, #11's on #10's branch; #13 waits on two.
@@ -226,7 +231,7 @@ describe("epic", () => {
         expect(first.status).toMatch(/#11 Task 11: in review: #\d+, stacked on #10/);
         expect(first.status).toMatch(/#12 Task 12: in review: #\d+\n/);
 
-        // Woken by the merges, it started #13 on the base branch, and parked again.
+        // Taken up after the merges, a new run started #13 on the base branch, and parked.
         expect(second.bases).toEqual({
           "auto/issue-10": "main",
           "auto/issue-12": "main",
@@ -258,16 +263,17 @@ describe("epic", () => {
         ).toEqual([]);
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
 
-        // Each task's lane waited on the lanes of the tasks it waited on: #11
-        // stacked on #10, and #13 held on #10 and #12.
-        expect(Object.fromEntries(lanes)).toEqual({
-          "task-10": [],
-          "task-11": ["task-10"],
-          "task-12": [],
-          "task-13": ["task-10", "task-12"],
-        });
+        // In each run, a task's lane waited on the lanes of the tasks it waited
+        // on in that run: #11 stacked on #10. #13 started in a later run, once
+        // #10 and #12 had merged, so its lane waits on none. The last run had
+        // nothing left to start.
+        expect(lanes).toEqual([
+          { "task-10": [], "task-11": ["task-10"], "task-12": [] },
+          { "task-13": [] },
+          {},
+        ]);
 
-        // The run let go of the epic's claim and its tasks'.
+        // The runs let go of the epic's claim and its tasks'.
         expect(fake.refs.size).toBe(0);
       }),
     ENGINE_TIMEOUT,
@@ -281,7 +287,7 @@ describe("epic", () => {
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
 
-        const { lanes, run, snapshots } = yield* workWith(fake, [
+        const { before, lanes, run, snapshots } = yield* workWith(fake, [
           // A person answers, and hands #12 back.
           (changed) => {
             changed.setLabels(12, [DEFAULT_LABELS.eligible]);
@@ -294,6 +300,8 @@ describe("epic", () => {
         ]);
 
         expect(run.status).toBe("done");
+        // Each park ended its run, and a new run took the epic up.
+        expect(before).toEqual(["ended-at-park", "ended-at-park"]);
 
         // Parked with #12 waiting for answers, and no pull request for it.
         const first = Option.getOrElse(Arr.get(snapshots, 0), () => NOTHING);
@@ -311,8 +319,9 @@ describe("epic", () => {
         expect(
           ["implement#task-12", "implement#task-12-2"].filter((step) => !steps.has(step)),
         ).toEqual([]);
-        // The second attempt's lane follows the first.
-        expect(lanes.get("task-12-2")).toEqual(["task-12"]);
+        // The second attempt's lane, in the run that took #12 up again, follows
+        // the first, which the epic's record carried over.
+        expect(lanes[1]).toEqual({ "task-12-2": ["task-12"] });
         // #10, #11, #12 and #12's second attempt; #13 merged without the run.
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
         expect(fake.refs.size).toBe(0);
@@ -352,7 +361,7 @@ describe("epic", () => {
       const { snapshots } = yield* workWith(fake, []);
       expect(snapshots).toHaveLength(1);
 
-      // The run parked with nothing changed since: nothing to start or wake.
+      // The run ended at its park with nothing changed since: nothing to start.
       expect(yield* triggered(fake, Epic.queued)).toEqual([]);
 
       // A push to #10's pull request is a change.

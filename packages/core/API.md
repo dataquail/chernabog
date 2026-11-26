@@ -878,6 +878,15 @@ export declare const ResolvedLauncher: Schema.Struct<{
 }>;
 export type ResolvedLauncher = typeof ResolvedLauncher.Type;
 export declare const HEADLESS: ResolvedLauncher;
+export declare const SANDBOXES: readonly ["none", "docker", "podman"];
+export declare const SandboxName: Schema.Literals<readonly ["none", "docker", "podman"]>;
+export type SandboxName = typeof SandboxName.Type;
+export declare const ResolvedSandbox: Schema.Struct<{
+    readonly name: Schema.Literals<readonly ["none", "docker", "podman"]>;
+    readonly from: Schema.String;
+}>;
+export type ResolvedSandbox = typeof ResolvedSandbox.Type;
+export declare const NO_SANDBOX: ResolvedSandbox;
 export declare const AppIdentity: Schema.Struct<{
     readonly id: Schema.Int;
     readonly slug: Schema.String;
@@ -924,6 +933,10 @@ export declare const RepoSettings: Schema.Struct<{
             readonly attach: Schema.Option<Schema.$Array<Schema.String>>;
         }>>;
     }>;
+    readonly sandbox: Schema.optionalKey<Schema.Struct<{
+        readonly name: Schema.Literals<readonly ["none", "docker", "podman"]>;
+        readonly from: Schema.String;
+    }>>;
     readonly flowAgents: Schema.$Record<Schema.String, Schema.String>;
     readonly flowRoleAgents: Schema.optionalKey<Schema.$Record<Schema.String, Schema.$Record<Schema.String, Schema.String>>>;
     readonly roleAgents: Schema.optionalKey<Schema.$Record<Schema.String, Schema.String>>;
@@ -1010,6 +1023,10 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
             readonly attach: Option.Option<readonly string[]>;
         }>;
     };
+    readonly sandbox?: {
+        readonly name: "docker" | "none" | "podman";
+        readonly from: string;
+    } | undefined;
     readonly flowAgents: {
         readonly [x: string]: string;
     };

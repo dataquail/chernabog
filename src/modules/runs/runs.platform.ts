@@ -87,6 +87,7 @@ export {
 export {
   EngineAt,
   EngineLive,
+  heldClaims,
   recordsOfRun,
   SpokeEngineAt,
   SpokeEngineLive,

@@ -42,9 +42,9 @@ import {
   flowHandle,
   flowLayer,
   type FlowRef,
+  heldClaims,
   noHooks,
   openRepo,
-  recordsOfRun,
   type RepoContext,
   RunFlowsCommands,
   RunFlowsQueries,
@@ -562,24 +562,18 @@ const followToBoundary = (
     }
   });
 
-const ClaimArgs = Schema.Struct({ item: Schema.String, runId: Schema.String });
-
 // Lets go of the claims a run holds, which a run that ended has let go
-// already: those its records say it holds, which a spoke reads from its own
-// journal.
+// already: those its records say it holds (heldClaims), which a spoke reads
+// from its own journal.
 const releaseClaims = (runId: RunId, context: RepoContext) =>
   Effect.gen(function* () {
-    const held = yield* (yield* recordsOfRun(runId)).held(runId, Claims.refMarker.name);
+    for (const claim of yield* heldClaims(runId)) {
+      const released = yield* withRepo(context, Claims.releaseFor(claim.item, claim.runId)).pipe(
+        Effect.orElseSucceed(() => false),
+      );
 
-    for (const marker of held) {
-      for (const args of Option.toArray(Schema.decodeUnknownOption(ClaimArgs)(marker))) {
-        const released = yield* withRepo(context, Claims.releaseFor(args.item, args.runId)).pipe(
-          Effect.orElseSucceed(() => false),
-        );
-
-        if (released) {
-          yield* Console.log(`let go of the claim on ${args.item}`);
-        }
+      if (released) {
+        yield* Console.log(`let go of the claim on ${claim.item}`);
       }
     }
   });

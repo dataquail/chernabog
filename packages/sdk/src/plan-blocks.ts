@@ -316,6 +316,9 @@ export const planBlocks = {
       polls: false,
     },
     contributes: {
+      // Wakes nothing, and starts nothing: parks.offers takes the plan up.
+      // Kept, deprecated (#694), so a document's plan.awaitAnswer still
+      // validates.
       wakes: Plan.answers.pipe(reportAs("trigger")),
       wakeEvents: [Events.commentCreated],
       wakeReads: [{ item: "issue", phases: [PHASES.issue.proposed] }],

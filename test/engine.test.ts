@@ -73,15 +73,7 @@ import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
-import {
-  deliverSignals,
-  engineOver,
-  type EngineRun,
-  foldRun,
-  pollRun,
-  repoAs,
-  startRun,
-} from "./sdk-fakes.ts";
+import { engineOver, type EngineRun, foldRun, pollRun, repoAs, startRun } from "./sdk-fakes.ts";
 
 const settings: RepoSettings = {
   name: "demo",
@@ -129,6 +121,26 @@ const gate = { entries: 0, release: Deferred.makeUnsafe<void>() };
 
 // Whether the long-step flow's step started, and whether it was interrupted.
 const longStep = { started: false, interrupted: false };
+
+// Whether the lane-step-sleep flow's step started, and whether it was interrupted.
+const laneStep = { started: false, interrupted: false };
+
+// A step that never ends on its own, which records in `seen` that it started
+// and whether it was interrupted.
+const neverEnding = (name: string, seen: { started: boolean; interrupted: boolean }) =>
+  activity(
+    name,
+    Effect.sync(() => {
+      seen.started = true;
+    }).pipe(
+      Effect.andThen(Effect.never),
+      Effect.onInterrupt(() =>
+        Effect.sync(() => {
+          seen.interrupted = true;
+        }),
+      ),
+    ),
+  );
 
 const ItemData = Schema.Struct({ key: Schema.String });
 
@@ -249,21 +261,32 @@ const flow = defineFlow({
         );
       }
 
+      // One lane in a step that never ends, the other asleep on a durable
+      // clock from its start, so it sleeps before the step has begun (#675).
+      if (key === "lane-step-sleep") {
+        yield* Effect.all([neverEnding("stuck#a", laneStep), sleep("nap#b", "1 minute")], {
+          concurrency: 2,
+        });
+      }
+
+      // One lane's step fails while the other sleeps on a durable clock from
+      // its start (#675).
+      if (key === "lane-fails-sleep") {
+        yield* Effect.all(
+          [
+            activity(
+              "fails#a",
+              Effect.fail(new StepFailed({ step: "fails#a", message: "kaboom" })),
+            ),
+            sleep("nap#b", "1 minute"),
+          ],
+          { concurrency: 2 },
+        );
+      }
+
       // A step that never ends on its own, which a cancel must stop.
       if (key === "long-step") {
-        yield* activity(
-          "long",
-          Effect.sync(() => {
-            longStep.started = true;
-          }).pipe(
-            Effect.andThen(Effect.never),
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                longStep.interrupted = true;
-              }),
-            ),
-          ),
-        );
+        yield* neverEnding("long", longStep);
       }
 
       // Files two issues, as a plan does its sub-issues.
@@ -377,7 +400,8 @@ const withEngine = <A, E, R>(
   program: Effect.Effect<A, E, R>,
   personas = Effect.map(Layer.build(repoServices), forEveryPersona),
   flowsOf = handle,
-  onParked: OnParked = () => Effect.void,
+  // The harness's own by default, which ends a parked run at its park.
+  onParked?: OnParked,
   options: EngineOptions = {},
 ) =>
   Effect.gen(function* () {
@@ -628,31 +652,22 @@ describe("the engine", () => {
     }),
   );
 
-  effect("a waiting run wakes when the trigger reports its signal", () =>
+  effect("nothing wakes a parked run: it ends at its park, and a later run takes its item up", () =>
     Effect.gen(function* () {
-      const wakes = Effect.gen(function* () {
-        const run = yield* started(item("wait"));
+      const parks = Effect.gen(function* () {
+        const parked = yield* runToEnd(item("wait"));
+        const history = yield* readRunHistoryHandler({ runId: parked.id });
+        // Its item is free: a later run for it starts, and parks in its turn.
+        const later = yield* runToEnd(item("wait"));
 
-        // Before the run registers its wait, there is nothing to deliver.
-        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
-          Effect.repeat({
-            schedule: Schedule.spaced("25 millis"),
-            until: ({ waits }) => waits.length > 0,
-            times: POLLS,
-          }),
-        );
-        expect(yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])])).toBe(1);
-        const ended = yield* toEnd(run);
-
-        return { ended, history: yield* readRunHistoryHandler({ runId: run.id }) };
+        return { parked, history, later };
       });
 
-      const { value } = yield* withEngine(wakes);
-      expect(value.ended.status).toBe("done");
-      expect(summaryOf(value.ended)).toBe("woke by pushed");
+      const { value } = yield* withEngine(parks);
+      expect(value.parked.status).toBe("ended-at-park");
+      expect(summaryOf(value.parked)).toContain("a later run takes it up");
 
-      // The steps before the wait replay from the journal when it wakes: each
-      // was entered and ended once.
+      // The steps before the park ran once, and its wait went with the run.
       expect(
         value.history.steps
           .filter((step) => step.step === "who-am-i" || step.step === "log")
@@ -661,8 +676,13 @@ describe("the engine", () => {
         ["who-am-i", "ok"],
         ["log", "ok"],
       ]);
+      expect(value.history.waits).toEqual([]);
+
+      expect(value.later.id).not.toBe(value.parked.id);
+      expect(value.later.status).toBe("ended-at-park");
     }),
   );
+
   effect(
     "tells the process executing a run that it parked, once its wait is recorded, and never a run that ends",
     () =>
@@ -710,7 +730,7 @@ describe("the engine", () => {
       }),
   );
 
-  effect("a cancelled waiting run stops, its journal goes, and no signal wakes it", () =>
+  effect("a cancelled waiting run stops, and its journal goes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
 
@@ -733,17 +753,16 @@ describe("the engine", () => {
           endAs: Option.none(),
         });
 
-        const delivered = yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
         const polled = yield* pollRun(run);
         const execution = yield* handle.workflow.poll(Option.getOrThrow(run.executionId));
 
-        return { run, cancelled, delivered, polled, execution };
+        return { run, cancelled, polled, execution };
       });
 
       const { home, value } = yield* withEngine(cancels);
 
       expect([value.cancelled.stopped, value.cancelled.wakesCleared]).toEqual([true, 1]);
-      expect([value.delivered, value.polled.status]).toEqual([0, "cancelled"]);
+      expect(value.polled.status).toBe("cancelled");
       // Its journal is gone, so nothing of its execution is left to resume.
       expect(value.execution).toEqual(Option.none());
       expect(yield* fs.exists(homePaths(home).journal(value.run.id))).toBe(false);
@@ -780,6 +799,65 @@ describe("the engine", () => {
 
       expect([value.cancelled.stopped, value.polled.status]).toEqual([true, "cancelled"]);
       expect(longStep.interrupted).toBe(true);
+    }),
+  );
+
+  // A lane asleep from its start must not mark the run suspended before its
+  // sibling's step has begun: the step would then run on through the
+  // suspension, and an interrupt would wait for it (#675).
+  for (const [ending, endAs, status] of [
+    ["a cancel", Option.none(), "cancelled"],
+    [
+      "a lost claim",
+      Option.some({ ending: "lost" as const, reason: "another run took it over" }),
+      "lost",
+    ],
+  ] as const) {
+    effect(
+      `${ending} stops a lane's step while another lane sleeps on a durable clock (#675)`,
+      () =>
+        Effect.gen(function* () {
+          laneStep.started = false;
+          laneStep.interrupted = false;
+
+          const { value } = yield* withEngine(
+            Effect.gen(function* () {
+              const run = yield* started(item("lane-step-sleep"));
+
+              yield* Effect.sync(() => laneStep.started).pipe(
+                Effect.repeat({
+                  schedule: Schedule.spaced("25 millis"),
+                  until: (begun) => begun,
+                  times: POLLS,
+                }),
+              );
+
+              const cancelled = yield* cancelRunHandler({
+                target: CancelTarget.cases.ById.make({ asked: run.id }),
+                by: "alice",
+                closeSessions: false,
+                endAs,
+              });
+
+              return { cancelled, polled: yield* pollRun(run) };
+            }),
+          );
+
+          expect([value.cancelled.stopped, value.cancelled.run.status]).toEqual([true, status]);
+          expect(value.polled.status).toBe(status);
+          expect(laneStep.interrupted).toBe(true);
+        }),
+    );
+  }
+
+  effect("a lane's failure ends its run while another lane sleeps on a durable clock (#675)", () =>
+    Effect.gen(function* () {
+      // Its sibling sleeps a minute: the run must fail long before that.
+      const { value: failed } = yield* withEngine(runToEnd(item("lane-fails-sleep")));
+
+      expect(failed.status).toBe("failed");
+      expect(summaryOf(failed)).toContain("fails#a");
+      expect(summaryOf(failed)).toContain("kaboom");
     }),
   );
 });
@@ -874,8 +952,7 @@ describe("a run's journal", () => {
               state: tablesIn(paths.state, "cluster_"),
             };
 
-            yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
-
+            // Its park ends it.
             return { during: tables, ended: yield* toEnd(waited), run: waited };
           }),
         );
@@ -886,7 +963,7 @@ describe("a run's journal", () => {
         expect(during.state).toEqual([]);
         expect(tablesIn(paths.state, "om_runs")).toEqual(["om_runs"]);
 
-        expect(ended.status).toBe("done");
+        expect(ended.status).toBe("ended-at-park");
         expect(yield* gone(paths.journal(run.id))).toBe(false);
         expect(yield* fs.readDirectory(paths.journals)).toEqual([]);
         expect(tablesIn(paths.state, "cluster_")).toEqual([]);

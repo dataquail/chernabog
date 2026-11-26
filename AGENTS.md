@@ -89,7 +89,10 @@ Look before you guess. Everything below is under the chernabog home,
   The daemon sweeps it when it starts and every 24 hours
   (`TELEMETRY_RETENTION`, `src/platform/retention.ts`): day folders older than
   30 days go, then the oldest while the rest hold more than 500 MB, never
-  today's.
+  today's. Today's is held to that 500 MB as it's written: past it, the
+  daemon or a CLI call writes no more telemetry until the next UTC day, and
+  says so once on stderr (the daemon in `daemon.log` too). A spoke is held
+  to its own bound instead (`--telemetry-limit`, ADR 23, decision 4).
 
 A **span** line is `type: "span"`, `traceId`, `spanId`, `parentSpanId` (absent
 on a root), `name`, `startTime`, `endTime` (ISO), `durationMs`, `status`

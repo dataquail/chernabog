@@ -1,7 +1,8 @@
 // The implement recipe on an issue an open pull request already closes,
 // against an in-memory GitHub: it adopts that pull request rather than
-// implementing the issue again, waits for a draft to be marked ready, and
-// hands the issue to a person when it can't adopt one.
+// implementing the issue again, waits for a draft to be marked ready (a park,
+// which ends the run; a new run takes the issue up once it is), and hands the
+// issue to a person when it can't adopt one.
 
 import {
   claimMarker,
@@ -20,24 +21,24 @@ import * as Option from "effect/Option";
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
-import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
-  deliverSignals,
   type Fake,
   flowTriggered,
+  follow,
   HEAD,
   ISSUE,
   item,
   makeFake,
+  onEngine,
   onFake,
   PULL,
   repo,
   runToEnd,
-  runUntil,
   summaryOf,
+  takeUp,
   triggered,
 } from "./sdk-fakes.ts";
 
@@ -72,6 +73,13 @@ const queuedWithPull = (draft = false) => {
   fake.closing.push(closingPull({ isDraft: draft }));
 
   return fake;
+};
+
+// Its author marks the draft ready: GitHub says so of the pull request
+// wherever it's read.
+const markReady = (fake: Fake) => {
+  fake.authored.draft = false;
+  fake.closing.splice(0, fake.closing.length, closingPull({ isDraft: false }));
 };
 
 const adoptions = (fake: Fake) =>
@@ -193,57 +201,55 @@ describe("an issue an open pull request already closes", () => {
   );
 
   effect(
-    "that is a draft is adopted, but goes for review only once its author marks it ready",
+    "that is a draft is adopted, and its run ends at the park; once its author marks it ready, a new run sends it for review",
     () =>
       Effect.gen(function* () {
         const fake = queuedWithPull(true);
-        let parked = false;
 
-        const finished = yield* runUntil(implementing, fake, work, (run) =>
+        const { finished, parked } = yield* onEngine(
+          implementing,
+          fake,
           Effect.gen(function* () {
-            if (run.status !== "running") {
-              return true;
-            }
+            const ended = yield* follow(implementing, work);
 
-            const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "ready" });
+            // Parked, it has asked nobody to review the draft.
+            expect(fake.people.requested).toEqual([]);
+            expect(adoptions(fake)).toEqual([{ number: PULL, url: PULL_URL, draft: true }]);
+            // Its wait is the issue's record.
+            expect(fake.phases()[`issue-${ISSUE}`]).toBe("awaiting-ready");
+            // Still a draft: nothing offers it, so no run takes it up.
+            expect(yield* triggered(fake, Implement.readied).pipe(Effect.orDie)).toEqual([]);
+            expect(fake.labelsOf(ISSUE)).toContain(Implement.AWAITING_READY_LABEL);
+            // The draft is its author's: until hand-off, it isn't the persona's to push to.
+            expect(fake.labelsOf(PULL)).toEqual([]);
+            expect(fake.people.pullAssigned).toEqual([]);
+            expect(yield* onFake(fake, Review.authoredByMe).pipe(Effect.orDie)).toEqual([]);
+            markReady(fake);
 
-            if (!waits.some((wait) => wait.deferred === `ready:draft-${PULL}`)) {
-              return false;
-            }
-
-            if (!parked) {
-              parked = true;
-              // Waiting, it has asked nobody to review the draft.
-              expect(fake.people.requested).toEqual([]);
-              expect(adoptions(fake)).toEqual([{ number: PULL, url: PULL_URL, draft: true }]);
-              // Still a draft: nothing wakes it.
-              expect(yield* triggered(fake, Implement.readied).pipe(Effect.orDie)).toEqual([]);
-              expect(fake.labelsOf(ISSUE)).toContain(Implement.AWAITING_READY_LABEL);
-              // The draft is its author's: until hand-off, it isn't the persona's to push to.
-              expect(fake.labelsOf(PULL)).toEqual([]);
-              expect(fake.people.pullAssigned).toEqual([]);
-              expect(yield* onFake(fake, Review.authoredByMe).pipe(Effect.orDie)).toEqual([]);
-              fake.authored.draft = false;
-            }
-
-            // Work a run may start, not only a wake: a CI job that parked
-            // here has ended. On this daemon the parked run holds the issue,
-            // so the signal wakes it and nothing new starts.
+            // Marked ready: work a new run may start, from the issue's record.
             const readied = yield* triggered(fake, Implement.readied).pipe(Effect.orDie);
-            expect(
-              readied.map((found) => [found.key, found.signals, found.wakeOnly === true]),
-            ).toEqual([[`issue-${ISSUE}`, ["ready"], false]]);
-            yield* deliverSignals(implementing, IMPLICIT, readied);
+            expect(readied.map((found) => [found.key, found.signals, mayStart(found)])).toEqual([
+              [`issue-${ISSUE}`, ["ready"], true],
+            ]);
 
-            return false;
+            return { parked: ended, finished: yield* takeUp(implementing, readied) };
           }),
         );
 
-        expect(parked).toBe(true);
-        expect(finished.status).toBe("done");
+        expect(parked.status).toBe("ended-at-park");
+
+        const handedOff = yield* Effect.fromOption(finished).pipe(Effect.orDie);
+        expect(handedOff.status).toBe("done");
+        expect(handedOff.id).not.toBe(parked.id);
         expect(fake.people.requested).toEqual(["data-quail"]);
         expect(fake.requests).toEqual([]);
         expect(fake.labelsOf(ISSUE)).not.toContain(Implement.AWAITING_READY_LABEL);
+        // The new run adopts it again, now ready: the recipe's adoption doesn't
+        // read the awaiting-ready record, so it says so a second time.
+        expect(adoptions(fake)).toEqual([
+          { number: PULL, url: PULL_URL, draft: true },
+          { number: PULL, url: PULL_URL, draft: false },
+        ]);
       }),
   );
 
@@ -273,26 +279,32 @@ describe("an issue an open pull request already closes", () => {
       }),
   );
 
-  effect("the recipe's trigger wakes a run waiting on a draft once it is marked ready", () =>
-    Effect.gen(function* () {
-      const fake = queuedWithPull(true);
-      // The record says the run waits; the label is only for people, and a
-      // person who took it off leaves the run to be woken as before.
-      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
-      fake.recordPhase(`issue-${ISSUE}`, "awaiting-ready", {
-        data: {
-          pullRequest: PULL,
-          withinMillis: 14 * 24 * 60 * 60 * 1000,
-          since: DateTime.formatIso(yield* DateTime.now),
-        },
-      });
-      expect(yield* flowTriggered(fake, implement)).toEqual([]);
+  effect(
+    "the recipe's trigger offers an issue waiting on a draft to a new run once it is marked ready",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedWithPull(true);
+        // The record says the issue waits; the label is only for people, and a
+        // person who took it off leaves it to be taken up as before.
+        fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+        fake.recordPhase(`issue-${ISSUE}`, "awaiting-ready", {
+          data: {
+            pullRequest: PULL,
+            withinMillis: 14 * 24 * 60 * 60 * 1000,
+            since: DateTime.formatIso(yield* DateTime.now),
+          },
+        });
+        expect(yield* flowTriggered(fake, implement)).toEqual([]);
 
-      fake.authored.draft = false;
-      expect(
-        (yield* flowTriggered(fake, implement)).map((found) => [found.key, found.signals]),
-      ).toEqual([[`issue-${ISSUE}`, ["ready"]]]);
-    }),
+        fake.authored.draft = false;
+        expect(
+          (yield* flowTriggered(fake, implement)).map((found) => [
+            found.key,
+            found.signals,
+            mayStart(found),
+          ]),
+        ).toEqual([[`issue-${ISSUE}`, ["ready"], true]]);
+      }),
   );
 
   effect("goes to a person, naming them, when several close it", () =>
