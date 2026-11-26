@@ -1,5 +1,6 @@
 // The text of src/platform/templates.ts: the files under templates/.chernabog/, which
-// init scaffolds. The binary bundles no recipes: a repo installs
+// init scaffolds, and under templates/sandbox/, which `chernabog sandbox init`
+// writes into .chernabog/sandbox/. The binary bundles no recipes: a repo installs
 // @chernabog/recipes. A test renders it again to check the generated file is
 // current.
 
@@ -15,7 +16,10 @@ export const templatesRoot = fileURLToPath(new URL("../", import.meta.url));
 
 // Each generated constant, and the directories under the repo it holds, by
 // the path each is keyed under.
-const SOURCES = [["TEMPLATES", [["templates/.chernabog/", ""]]]] as const;
+const SOURCES = [
+  ["TEMPLATES", [["templates/.chernabog/", ""]]],
+  ["SANDBOX_TEMPLATES", [["templates/sandbox/", ""]]],
+] as const;
 
 const filesUnder = (root: string, prefix: string) =>
   Effect.gen(function* () {

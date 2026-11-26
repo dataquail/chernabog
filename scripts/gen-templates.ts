@@ -1,5 +1,6 @@
 // Writes src/platform/templates.ts: every file under templates/.chernabog/, as the text
-// `chernabog init` scaffolds.
+// `chernabog init` scaffolds, and under templates/sandbox/, which
+// `chernabog sandbox init` writes.
 // Run after changing a template: bun scripts/gen-templates.ts
 
 import { fileURLToPath } from "node:url";

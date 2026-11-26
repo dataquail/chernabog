@@ -78,6 +78,7 @@ import { progressCommand } from "./progress.main.ts";
 import { rehearseCommand } from "./rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { runInForeground } from "./run.main.ts";
+import { sandboxCommand } from "./sandbox.main.ts";
 import { openSession, startIssue } from "./start.main.ts";
 import { uiCommand } from "./ui.main.ts";
 
@@ -456,6 +457,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     machineEndpoints.setup,
     accountsCommand({ accounts: Effect.map(loadMachineConfig, (machine) => machine.accounts) }),
     initCommand(ciWorkflowAccess),
+    sandboxCommand,
     recipesEndpoints.recipes,
     enrollmentEndpoints.enroll,
     enrollmentEndpoints.unenroll,
