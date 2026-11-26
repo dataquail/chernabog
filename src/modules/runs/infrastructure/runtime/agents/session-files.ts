@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { Exec } from "../../../../../platform/exec.ts";
 import { homePaths } from "../../../../../platform/home.ts";
 
 export const sessionFilesIn = (dir: string) => ({
@@ -49,10 +50,11 @@ export const Done = Schema.fromJsonString(
 
 export type Done = typeof Done.Type;
 
-// The launcher and handle a session runs under, when it started, and whether
+// The launcher and handle a session runs under, when it started, whether
 // a person works in it (AgentRequest.withPerson): such a session is never
-// closed for a run that a stopped process left (ADR 23, #665). A record from
-// before it said says no person.
+// closed for a run that a stopped process left (ADR 23, #665), and the run
+// that launched it, which the hub's session API checks a route's run
+// against. A record from before it said says no person and no run.
 export const LaunchRecord = Schema.fromJsonString(
   Schema.toCodecJson(
     Schema.Struct({
@@ -60,6 +62,7 @@ export const LaunchRecord = Schema.fromJsonString(
       handle: Schema.String,
       at: Schema.String,
       withPerson: Schema.optionalKey(Schema.Boolean),
+      runId: Schema.optionalKey(Schema.String),
     }),
   ),
 );
@@ -90,3 +93,24 @@ export const readText = (file: string) =>
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
 export const knownLaunch = (files: SessionFiles) => readDecoded(LaunchRecord, files.launch);
+
+const Pid = Schema.fromJsonString(Schema.Int);
+
+// Whether the `chernabog __launch` process of this session still runs, whatever
+// its launcher says: a launcher can be wrong, and a second agent on one session
+// and worktree is worse than waiting. A pid since reused by another process
+// doesn't count, because only this session's launch runs with its spec.
+export const launchRuns = (files: SessionFiles) =>
+  Effect.gen(function* () {
+    const pid = Option.flatMap(yield* readText(files.pid), (text) =>
+      Schema.decodeOption(Pid)(text.trim()),
+    );
+
+    if (Option.isNone(pid)) {
+      return false;
+    }
+
+    const ps = yield* (yield* Exec).run("ps", ["-o", "command=", "-p", String(pid.value)]);
+
+    return ps.exitCode === 0 && ps.stdout.includes(files.spec);
+  }).pipe(Effect.orElseSucceed(() => false));

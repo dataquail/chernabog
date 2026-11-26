@@ -1,12 +1,14 @@
 // The hub's session API (ADR 24, #713): a TCP listener whose only routes are
 // one session's stop, question and answer, each reached with that session's
-// token alone, and only while the run that launched it is live. The stop
+// token alone, and only while the session's `__launch` runs and the run that
+// launched it is live. The stop
 // and question routes decide what the Stop and AskUserQuestion hooks decide
 // today, case for case.
 
 import { Hybrid, type Json, printJson } from "@chernabog/sdk";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -30,6 +32,7 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import { LaunchSpecJson } from "../src/modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
+import { spawnGroup, stopGroup } from "../src/platform/process-group.ts";
 import { sessionToken } from "../src/platform/session-token.ts";
 
 const effect = it.scopedLive.layer(
@@ -77,12 +80,33 @@ const hub = Effect.gen(function* () {
   return { root, api, end };
 });
 
-// A session in the home: a worktree with a commit, its spec, its schema, and
-// whether a person works in it.
+// A stand-in for a session's `chernabog __launch <spec>`: a process whose
+// command line names the spec, its pid in agent.pid, stopped with the scope.
+// Its `stop` ends it and waits until it has gone.
+const launch = (files: ReturnType<typeof sessionFiles>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    const group = yield* Effect.acquireRelease(
+      spawnGroup("sh", ["-c", "sleep 600; :", "launch", files.spec], {
+        cwd: files.dir,
+        env: { PATH: "/bin:/usr/bin" },
+      }),
+      (started) => started.signal("SIGKILL"),
+    );
+
+    yield* fs.writeFileString(files.pid, String(group.pid));
+
+    return { pid: group.pid, stop: Effect.asVoid(stopGroup(group, Duration.seconds(5))) };
+  });
+
+// A session in the home: a worktree with a commit, its spec, its schema,
+// whether a person works in it, the run that launched it, and its running
+// `__launch`.
 const session = (
   root: string,
   sessionId: string,
-  options: { schema?: Json; withPerson?: boolean } = {},
+  options: { schema?: Json; withPerson?: boolean; runId?: string } = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -102,11 +126,12 @@ const session = (
       handle: "chernabog:1",
       at: "2026-11-25T00:00:00.000Z",
       withPerson: options.withPerson ?? false,
+      runId: options.runId ?? RUN,
     };
 
     yield* fs.writeFileString(files.launch, yield* Schema.encodeEffect(LaunchRecord)(record));
 
-    return { files, worktree };
+    return { files, worktree, launched: yield* launch(files) };
   });
 
 const tokenFor = (api: SessionApi, runId: string, sessionId: string) =>
@@ -259,6 +284,97 @@ describe("the session API's token", () => {
       const fs = yield* FileSystem.FileSystem;
       expect(yield* fs.exists(files.answer)).toBe(false);
       expect(yield* fs.exists(files.blocks)).toBe(false);
+    }),
+  );
+
+  effect("reaches no session its run didn't launch, even minted with that run's key", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, root } = yield* hub;
+      const { files } = yield* session(root, OTHER_SESSION, { runId: OTHER_RUN });
+
+      // A token minted with RUN's key for a session OTHER_RUN launched.
+      const token = tokenFor(api, RUN, OTHER_SESSION);
+
+      const refused = yield* call(api, {
+        path: routeOf(RUN, OTHER_SESSION, "stop"),
+        token,
+        body: STOP_INPUT,
+      });
+
+      expect(refused.status).toBe(404);
+
+      const answered = yield* call(api, {
+        method: "PUT",
+        path: routeOf(RUN, OTHER_SESSION, "answer"),
+        token,
+        body: printJson({ status: "done" }),
+      });
+
+      expect(answered.status).toBe(404);
+      expect(yield* fs.exists(files.answer)).toBe(false);
+      expect(yield* fs.exists(files.blocks)).toBe(false);
+
+      // Its own run's token still reaches it.
+      const own = yield* call(api, {
+        path: routeOf(OTHER_RUN, OTHER_SESSION, "stop"),
+        token: tokenFor(api, OTHER_RUN, OTHER_SESSION),
+        body: STOP_INPUT,
+      });
+
+      expect(own.status).toBe(200);
+    }),
+  );
+
+  effect("stops working once its session's __launch exits, and again while a resume runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, root } = yield* hub;
+      const { files, launched } = yield* session(root, SESSION);
+      const token = tokenFor(api, RUN, SESSION);
+
+      const stopAt = () =>
+        Effect.map(
+          call(api, { path: routeOf(RUN, SESSION, "stop"), token, body: STOP_INPUT }),
+          (said) => said.status,
+        );
+
+      expect(yield* stopAt()).toBe(200);
+
+      // The launch exits but leaves agent.pid naming its dead pid.
+      yield* launched.stop;
+
+      for (const route of ["stop", "question"]) {
+        const refused = yield* call(api, {
+          path: routeOf(RUN, SESSION, route),
+          token,
+          body: STOP_INPUT,
+        });
+
+        expect([route, refused.status]).toEqual([route, 410]);
+      }
+
+      const answered = yield* call(api, {
+        method: "PUT",
+        path: routeOf(RUN, SESSION, "answer"),
+        token,
+        body: printJson({ status: "done" }),
+      });
+
+      expect(answered.status).toBe(410);
+      expect(yield* fs.exists(files.answer)).toBe(false);
+
+      // __launch removed agent.pid as it exited.
+      yield* fs.remove(files.pid);
+      expect(yield* stopAt()).toBe(410);
+
+      // A reused pid, a live process that isn't this session's launch, doesn't revive it.
+      yield* fs.writeFileString(files.pid, String(process.pid));
+      expect(yield* stopAt()).toBe(410);
+
+      // A resumed session, a new __launch, reaches its routes again.
+      yield* launch(files);
+      expect(yield* stopAt()).toBe(200);
     }),
   );
 
