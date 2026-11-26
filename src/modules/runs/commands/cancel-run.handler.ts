@@ -426,8 +426,10 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     // A run that lost its item leaves everything on it, worktree included, to
     // the run that took it over, and for a person to look at. One that ended at
     // a park leaves the same to the run that takes it up from its record, but
-    // lets go of its claim ref, so that run may be on any machine or in CI; so
-    // does one interrupted by its hub's stop, for the run that repeats its phase.
+    // lets go of its claim ref, so that run may be on any machine or in CI
+    // (and its ending's marker release lets go of any other claim ref it
+    // holds, such as an epic's, #709); so does one interrupted by its hub's
+    // stop, for the run that repeats its phase.
     if (
       cancelled.status === "lost" ||
       cancelled.status === "ended-at-park" ||
@@ -456,6 +458,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
         ...spokeExitOf(spoke),
       });
     }
+
+    // Its sessions are closed first (ADR 23, decision 4, step 5): an agent
+    // still working in a worktree as it is removed would go on spending in
+    // it, may write into its path after it's gone, where the next run on the
+    // item makes its worktree, and could commit after the check that keeps a
+    // worktree holding work. A session still starting would instead find its
+    // worktree gone and exit before it could be closed by its handle (#737).
+    const { closedSessions, openSessions } = yield* closeSessionsLeft(
+      yield* sessionsLeft(cancelled, spoke),
+      leftForPerson,
+    );
 
     // Worktrees another run in flight on the same issue or pull request may be
     // using stay, for the last run on it, or a person, to remove.
@@ -495,11 +508,6 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     // The claim ref goes first: it is what holds the issue or pull request.
     const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
     const released = yield* releaseIssueClaim(cancelled, leftForPerson);
-
-    const { closedSessions, openSessions } = yield* closeSessionsLeft(
-      yield* sessionsLeft(cancelled, spoke),
-      leftForPerson,
-    );
 
     yield* tellEnded(cancelled);
 

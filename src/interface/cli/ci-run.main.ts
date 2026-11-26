@@ -562,9 +562,10 @@ const followToBoundary = (
     }
   });
 
-// Lets go of the claims a run holds, which a run that ended has let go
-// already: those its records say it holds (heldClaims), which a spoke reads
-// from its own journal.
+// Lets go of the claims a run holds when its job stops short of a boundary
+// (out of time, a lost lease, an error), where no ending lets go of them: a
+// run that ended or parked has had them let go by its ending. Those its
+// records say it holds (heldClaims), which a spoke reads from its own journal.
 const releaseClaims = (runId: RunId, context: RepoContext) =>
   Effect.gen(function* () {
     for (const claim of yield* heldClaims(runId)) {
@@ -1029,11 +1030,19 @@ export const runInCi = <R>(
         // engine has cleaned up after it: its branches are left as they are.
         const ended = Exit.isSuccess(exit) && exit.value.kind === "ended";
 
+        // A run that parked has its claims let go by its ending, as any
+        // other marker it holds is (#709): this process's own when it is its
+        // own hub, its hub's after the fold when it is a spoke.
+        const parkedHere = Exit.isSuccess(exit) && exit.value.kind === "parked";
+
         for (const runId of Option.toArray(Option.filter(started, () => !ended))) {
           yield* pushWork(repo, context, `chernabog ci run ${runId} stopped`).pipe(
             Effect.catch((error) => Console.error(`could not push the work: ${String(error)}`)),
           );
-          yield* releaseClaims(runId, context);
+
+          if (!parkedHere) {
+            yield* releaseClaims(runId, context);
+          }
         }
 
         // A spoke's last report: how its run ended, which the hub ends the

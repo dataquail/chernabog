@@ -12,7 +12,6 @@ import {
   type CiChecks,
   type CiReport,
   type CiState,
-  Claims,
   type Comment,
   CurrentActivity,
   DEFAULT_LABELS,
@@ -105,7 +104,6 @@ import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/fl
 import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import {
-  heldClaims,
   RunFlowsQueries,
   RunsModule,
   RunsQueries,
@@ -1550,13 +1548,6 @@ const parksHere: OnParked = (runId) =>
     parkedRuns.add(runId);
   });
 
-// How a park lets go of a claim the run holds, on the repo the test's engine
-// runs: Claims.releaseFor, as a spoke's wrap-up does (ci-run.main.ts); onEngine
-// gives it the fake. Nothing where no fake is given.
-const ReleaseAtPark = Context.Reference<
-  (claim: { readonly item: string; readonly runId: string }) => Effect.Effect<void>
->("chernabog/test/ReleaseAtPark", { defaultValue: () => () => Effect.void });
-
 // The engine over one flow, as the composition roots build it: the modules a
 // process with an engine adds, from the one list every root merges, the
 // runs' buses, which a run's hub folds its journal through, and the flow,
@@ -1708,10 +1699,10 @@ const lookAt = (run: EngineRun) =>
   });
 
 // Ends a run that parked at its park, as the own hub ends one: what its
-// journal holds by then folded, its claims let go, as a spoke's are when its
-// run stops at a park (ci-run.main.ts's wrap-up), so the run that takes its
-// item up may claim it, and the run ended `ended-at-park` (ADR 23, decision
-// 2). The waits it parked on are kept for parkedOn.
+// journal holds by then folded, and the run ended `ended-at-park` (ADR 23,
+// decision 2), whose ending lets go of the claims it holds, so the run that
+// takes its item up may claim them (#709). The waits it parked on are kept
+// for parkedOn.
 const endAtPark = (run: EngineRun) =>
   Effect.gen(function* () {
     yield* foldRun(run.id);
@@ -1723,12 +1714,6 @@ const endAtPark = (run: EngineRun) =>
         deferred: wait.deferred,
       })),
     );
-
-    const release = yield* ReleaseAtPark;
-
-    for (const claim of yield* heldClaims(run.id)) {
-      yield* release(claim);
-    }
 
     yield* endAsSaid(run.id, endingAt({ kind: "parked" }), () => ({
       status: "failed",
@@ -1811,12 +1796,7 @@ export const onEngine = <A, E, R>(
       ),
     );
 
-    const letGo = (claim: { readonly item: string; readonly runId: string }) =>
-      Claims.releaseFor(claim.item, claim.runId).pipe(Effect.provide(fake.services), Effect.ignore);
-
-    return yield* Effect.provideContext(program, Context.merge(platform, engine)).pipe(
-      Effect.provideService(ReleaseAtPark, letGo),
-    );
+    return yield* Effect.provideContext(program, Context.merge(platform, engine));
   });
 
 // Starts a run of the flow for `work` in the test's engine (onEngine), and
