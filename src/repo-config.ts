@@ -5,7 +5,7 @@
 // when, and with which account. A repo's entry there is keyed by its slug, so
 // its settings follow the repo rather than the folder. Later layers override
 // earlier ones key by key, except that a repo can never raise machine limits,
-// and a person's launcher must be one the repo allows.
+// and a person's launcher and sandbox must be ones the repo allows.
 
 import {
   type Account,
@@ -20,6 +20,8 @@ import {
   type Limits,
   type RepoSettings,
   type ResolvedLauncher,
+  type ResolvedSandbox,
+  SANDBOXES,
   type Settings,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -300,6 +302,19 @@ export const RepoConfigFile = Schema.Struct({
   launcher: Schema.optionalKey(Schema.String),
   allowedLaunchers: Schema.optionalKey(Strings),
   launchers: MachineOnly,
+  // ADR 24, decision 1: where agent sessions run, chosen as the launcher is.
+  sandbox: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Where agent sessions run: none (on the host), docker or podman. The team's default; a person may choose another in machine config, within allowedSandboxes. A sandbox that can't start refuses the run and never falls back to none. Unset: none.",
+    }),
+  ),
+  allowedSandboxes: Schema.optionalKey(
+    Strings.annotate({
+      description:
+        "The sandboxes a person may choose in machine config, from none, docker and podman. A choice outside it fails the repo. Unset: any.",
+    }),
+  ),
   limits: Schema.optionalKey(LimitsFile),
   runners: Schema.optionalKey(Runners),
   announcePhases: Schema.optionalKey(
@@ -448,6 +463,8 @@ export const MachineConfigFile = Schema.Struct({
   // Your launcher for every repo, and launchers of your own. Only here, never in a repo.
   launcher: Schema.optionalKey(Schema.String),
   launchers: Schema.optionalKey(Schema.Record(Schema.String, LauncherFile)),
+  // Your sandbox for every repo (none, docker or podman), within each repo's allowedSandboxes.
+  sandbox: Schema.optionalKey(Schema.String),
   repos: Schema.optionalKey(Schema.Array(EnrolledRepoSchema)),
   spokes: Schema.optionalKey(SpokesFile),
 });
@@ -488,6 +505,7 @@ export type MachineConfig = {
   readonly agents: AgentsConfig;
   readonly launcher: Option.Option<string>;
   readonly launchers: LaunchersConfig;
+  readonly sandbox: Option.Option<string>;
   readonly usageGate: GateConfig;
   readonly concurrency: number;
   readonly quietHours: Option.Option<string>;
@@ -765,6 +783,7 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   agents: file.agents ?? {},
   launcher: Option.fromUndefinedOr(file.launcher),
   launchers: Record.map(file.launchers ?? {}, launcherCommandsOf),
+  sandbox: Option.fromUndefinedOr(file.sandbox),
   usageGate: file.usageGate ?? DEFAULT_GATE,
   concurrency: file.concurrency ?? 1,
   quietHours: Option.fromUndefinedOr(file.quietHours),
@@ -1101,6 +1120,52 @@ export const resolveLauncher = (
     return { name, from, custom } satisfies ResolvedLauncher;
   });
 
+// Where agent sessions run (ADR 24, decision 1), chosen as the launcher is:
+// the repo's entry in machine config (or its persona's), then machine
+// config's own, then the repo's default, then none. The team limits it with
+// allowedSandboxes, and a choice outside that list fails the repo rather than
+// running the agent somewhere the team didn't allow.
+export const resolveSandbox = (
+  machine: MachineConfig,
+  repoName: string,
+  files: { readonly repo: RepoConfigFile; readonly own: PersonaEntry },
+) =>
+  Effect.gen(function* () {
+    const chosen = Arr.findFirst(
+      [
+        { from: "repo entry", name: Option.fromUndefinedOr(files.own.sandbox) },
+        { from: "machine config", name: machine.sandbox },
+        { from: "repo config", name: Option.fromUndefinedOr(files.repo.sandbox) },
+      ],
+      (layer) => Option.isSome(layer.name),
+    );
+
+    const { from, name } = Option.getOrElse(
+      Option.flatMap(chosen, (layer) =>
+        Option.map(layer.name, (found) => ({ from: layer.from, name: found })),
+      ),
+      () => ({ from: "default", name: "none" }),
+    );
+
+    const known = Arr.findFirst(SANDBOXES, (sandbox) => sandbox === name);
+
+    if (Option.isNone(known)) {
+      return yield* new ConfigError({
+        message: `unknown sandbox "${name}" (from ${from}); known sandboxes: ${SANDBOXES.join(", ")}`,
+      });
+    }
+
+    const allowed = Option.fromUndefinedOr(files.repo.allowedSandboxes);
+
+    if (Option.isSome(allowed) && !allowed.value.includes(name)) {
+      return yield* new ConfigError({
+        message: `sandbox "${name}" (from ${from}) isn't allowed by ${repoName}'s config: allowedSandboxes is ${allowed.value.join(", ")}`,
+      });
+    }
+
+    return { name: known.value, from } satisfies ResolvedSandbox;
+  });
+
 // The personas that run a repo's flows. Without github:, only the implicit one.
 // With it, the repo's personas, each one of github:'s logins, defaulting to the
 // only login. Several logins and no choice is refused rather than guessed.
@@ -1417,6 +1482,7 @@ const mergePersona = (
     const roles = yield* otherAccounts(machine, own, account, failed);
     const agentAccounts = { ...accountsByAgent(machine, account), ...roles.accounts };
     const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), { repo, own });
+    const sandbox = yield* resolveSandbox(machine, repoNameOf(enrolled), { repo, own });
 
     const settings: RepoSettings = {
       name: repoNameOf(enrolled),
@@ -1428,6 +1494,7 @@ const mergePersona = (
       agent,
       agentAccounts,
       launcher,
+      sandbox,
       flowAgents: Object.fromEntries(
         Object.entries(flows).flatMap(([flow, chosen]) =>
           Option.toArray(

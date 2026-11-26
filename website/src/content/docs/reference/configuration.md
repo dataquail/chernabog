@@ -8,7 +8,7 @@ description: Every key in the repo and machine config layers.
 | Repo     | `.chernabog/config.yaml`          | yes       | what work gets done, and how               |
 | Machine  | `~/.config/chernabog/config.yaml` | —         | accounts, budget, limits, and for each enrolled repo which flows run as each persona, when, and with which account |
 
-Later layers override earlier ones key by key, with two exceptions: a repo can never raise machine limits, and the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`. `init` writes `config.schema.json` beside the YAML for editor autocomplete, and `rehearsal.schema.json` for [scenarios](/chernabog/flows/rehearsing/). Unknown keys fail the repo.
+Later layers override earlier ones key by key, with three exceptions: a repo can never raise machine limits, the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`, and the [sandbox](#sandbox) is a person's choice within the repo's `allowedSandboxes`. `init` writes `config.schema.json` beside the YAML for editor autocomplete, and `rehearsal.schema.json` for [scenarios](/chernabog/flows/rehearsing/). Unknown keys fail the repo.
 
 Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-HH:MM`, local time, and may wrap midnight.
 
@@ -22,6 +22,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
+| `sandbox`          | `none`                     | the team's default [sandbox](#sandbox): `none`, `docker` or `podman`      |
+| `allowedSandboxes` | any                        | sandboxes a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
 | `announcePhases`   | `true`                     | announce each [phase advance](/chernabog/operate/progress/#announcing-each-advance) with a `repository_dispatch` of `chernabog-phase`, which starts the repo's CI workflow; `false` sends none |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
@@ -39,6 +41,18 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `ci.schedule`      | `17 */3 * * *`             | when the sweep runs, as cron in UTC: it plans across every item, for what a dropped event missed. Pick an odd minute: GitHub drops scheduled runs under load, most on the hour |
 
 `launchers` is refused here: only machine config defines launcher commands.
+
+### Sandbox
+
+`sandbox` says where agent sessions run: `none` runs them on the host, as the person; `docker` and `podman` are meant to run each one in a container built from the repo's image ([ADR 24](https://github.com/dataquail/chernabog/blob/main/docs/adr/0024-local-sessions-run-in-a-sandbox.md)). It is chosen the way the [launcher](/chernabog/agents/launchers/#who-chooses) is, and independently of it: the repo's entry in machine config (or its persona's), then machine config's own `sandbox`, then the repo's, then `none`. A choice outside the repo's `allowedSandboxes` fails the repo with a config error naming the layer that chose it, and so does a name other than those three. So a team that requires a container writes `allowedSandboxes: [docker, podman]`, and each person picks the runtime they have.
+
+The chosen sandbox goes in each interactive session's launch spec. A session whose sandbox can't start is refused, saying why, and never falls back to running on the host. Container support hasn't landed yet: for now `docker` and `podman` refuse every agent session with `isn't supported yet`.
+
+```yaml
+# .chernabog/config.yaml
+sandbox: podman
+allowedSandboxes: [docker, podman]
+```
 
 ### Flow settings
 
@@ -213,6 +227,7 @@ limits: { reviewRounds: 2 }
 | `humanOnly`             | `[]`         | decisions every repo's agent must stop for                        |
 | `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent); `standIns`, `dir` and `exclusive` for [`rehearsal`](/chernabog/flows/rehearsing/#stand-ins) |
 | `launcher`              | —            | your launcher for every repo                                      |
+| `sandbox`               | —            | your [sandbox](#sandbox) for every repo, within each repo's `allowedSandboxes` |
 | `launchers.<name>`      | —            | `start`, `close`, `alive`, `attach`: [your own](/chernabog/agents/launchers/#your-own-launcher) |
 | `repos[]`               | —            | the enrolled repos, written by `enroll`; see [Enrolled repos](#enrolled-repos) |
 | `spokes`                | see [Spoke bounds](/chernabog/operate/daemon/#spoke-bounds) | `telemetry` (`256 MB`), `runLog` (`32 MB`), `phaseTime` (`4 hours`), `idle` (`30 minutes`), `memory` (`2 GB`): what the daemon ends a run's spoke past; `silentExits` (`3`): how many spokes of one item in a row may exit without saying how their run ended before the next such run ends `failed` |
@@ -263,6 +278,7 @@ Each entry in `repos` is one repo this machine runs, with each person's choices 
 | `schedule`     | —               | cron for every flow but manual ones, over every schedule the repo sets |
 | `activeHours`  | —               | start runs only within these hours                             |
 | `launcher`     | —               | your launcher for this repo; wins over every other layer       |
+| `sandbox`      | —               | your [sandbox](#sandbox) for this repo, within its `allowedSandboxes`; wins over every other layer |
 | `enabled`      | `true`          | `false` stops every flow in this repo                          |
 | `personas.<login>` | —           | each persona's own choices; see [GitHub personas](#github-personas) |
 
