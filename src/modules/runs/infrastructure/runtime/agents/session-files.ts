@@ -34,6 +34,9 @@ export const sessionFilesIn = (dir: string) => ({
   launch: `${dir}/launch.json`,
   // Written by `chernabog __launch`: its pid, while the agent runs.
   pid: `${dir}/agent.pid`,
+  // A sandboxed session's Claude config dir, mounted into its container
+  // (ADR 24, "The container"): its transcripts are here, not the account's.
+  claude: `${dir}/claude`,
 });
 
 export type SessionFiles = ReturnType<typeof sessionFilesIn>;

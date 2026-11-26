@@ -121,7 +121,11 @@ if (headless) {
 
 appendFileSync(transcript, `${JSON.stringify(working)}\n`);
 // The command the prompt gives to send the answer, its JSON in place of the placeholder line.
-const answerCommand = /```sh\n(curl [^\n]*<<'ANSWER')\n[^\n]*\nANSWER\n```/.exec(prompt)?.[1];
+// In a fake container (fakebin/docker), the container's names for the host are this machine's loopback.
+const gateway = process.env.FAKE_HOST_GATEWAY;
+const CONTAINER_HOSTS = ['host.docker.internal', 'host.containers.internal'];
+const viaGateway = (url: string) => (gateway ? CONTAINER_HOSTS.reduce((at, name) => at.replace(`//${name}:`, `//${gateway}:`), url) : url);
+const answerCommand = /```sh\n(curl [^\n]*<<'ANSWER')\n[^\n]*\nANSWER\n```/.exec(prompt)?.[1]?.replace(/^curl /, gateway ? `curl ${CONTAINER_HOSTS.map((name) => `--connect-to ${name}::${gateway}:`).join(' ')} ` : 'curl ');
 
 const settings = JSON.parse(readFileSync(flag('--settings')!, 'utf8'));
 const log = (line: string) => process.env.FAKE_CLAUDE_LOG && appendFileSync(process.env.FAKE_CLAUDE_LOG, `${line}\n`);
@@ -141,7 +145,7 @@ const callHook = async (hook: Hook, payload: object) => {
     ]),
   );
   try {
-    const response = await fetch(hook.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(payload) });
+    const response = await fetch(viaGateway(hook.url), { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(payload) });
     const text = await response.text();
     // A hook that fails doesn't block, as Claude treats a failed HTTP hook.
     return response.ok ? text : '';

@@ -15,7 +15,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import type * as FileSystem from "effect/FileSystem";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
@@ -30,6 +30,7 @@ import type { Exec } from "../../../../platform/exec.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { SessionApiAccess, sessionEndpoint } from "../../../../platform/session-api-access.ts";
+import { SESSION_API_LOOPBACK } from "../../../../platform/session-token.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
 import { commitsSince, headOf, recordAnswer, recordUnanswered } from "./agents/answers.ts";
 import { claudeAdapter } from "./agents/claude.ts";
@@ -47,8 +48,9 @@ import {
 } from "./agents/sessions.ts";
 import { recordingTokenUsage } from "./agents/token-usage.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
+import { sessionApiHostFor } from "./launchers/container.ts";
 import { RunRecords } from "./run-records.ts";
-import { sandboxRefusal } from "./sandboxes.ts";
+import { sandboxRefusal, sandboxUnavailable } from "./sandboxes.ts";
 
 export type AgentsConfig = Readonly<
   Record<
@@ -172,10 +174,32 @@ export const AgentLive = (
             // rehearsal runs no agent, so it has nothing to sandbox.
             const sandbox = settings.sandbox ?? NO_SANDBOX;
 
-            for (const refusal of Option.toArray(
-              Option.filter(sandboxRefusal(sandbox), () => name !== REHEARSAL),
-            )) {
-              return yield* new AgentError({ message: `${name}: ${refusal}` });
+            if (name !== REHEARSAL) {
+              const refusal = yield* Option.match(
+                sandboxRefusal(sandbox, {
+                  adapter: name,
+                  interactive: isInteractive(settings.launcher),
+                  platform: host.platform,
+                  host: host.variables,
+                }),
+                {
+                  onNone: () => sandboxUnavailable(sandbox),
+                  onSome: (said) => Effect.succeedSome(said),
+                },
+              );
+
+              for (const said of Option.toArray(refusal)) {
+                return yield* new AgentError({ message: `${name}: ${said}` });
+              }
+
+              // Its own config dir, where its transcripts are read from from the start.
+              if (sandbox.name !== "none") {
+                yield* (yield* FileSystem.FileSystem)
+                  .makeDirectory(sessionFiles((yield* Home).root, request.sessionId).claude, {
+                    recursive: true,
+                  })
+                  .pipe(Effect.mapError((error) => new AgentError({ message: error.message })));
+              }
             }
 
             // Each agent runs under its own account: a Codex reviewer on a Claude repo spends the Codex account.
@@ -238,7 +262,12 @@ export const AgentLive = (
 
             const sessionApi = Option.flatMap(run, (info) =>
               Option.flatMap(access, (given) =>
-                sessionEndpoint(given, info.runId, request.sessionId),
+                sessionEndpoint(
+                  given,
+                  info.runId,
+                  request.sessionId,
+                  sessionApiHostFor(sandbox.name, SESSION_API_LOOPBACK),
+                ),
               ),
             );
 

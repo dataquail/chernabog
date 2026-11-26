@@ -1,0 +1,3 @@
+#!/usr/bin/env bun
+// fakebin/docker, as podman: it names itself by the name it was run as.
+await import("./docker");

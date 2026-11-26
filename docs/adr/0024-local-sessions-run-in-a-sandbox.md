@@ -267,21 +267,44 @@ nothing waits on it any more.
 
 - **Mounts.** The worktree and the common git dir, read-write, at their
   host paths. On top of the common git dir, its `config` and `hooks/`
-  read-only **(settled here)** (below). One session directory under the
-  chernabog home, read-write at its host path, set as Claude's
+  read-only **(settled here)** (below), each where it exists. A Claude
+  config dir of the session's own, `claude/` in its session directory under
+  the chernabog home, read-write at its host path, set as Claude's
   `CLAUDE_CONFIG_DIR` **(settled here)**: Claude writes its transcripts
   there, where the hub's idle bound and the adapter's token usage (ADR 18,
-  ADR 23 decision 4) read them on the host, and its settings file is in it.
-  Nothing else of the home.
-- **Env.** Exactly the spec's env, as `__launch` gives it today, passed by
-  name.
+  ADR 23 decision 4) read them on the host. Its settings file, read-only at
+  its host path. **(#717 amends:** only the `claude/` dir and the settings
+  file, not the whole session directory, so the agent can't write `done` or
+  `answer.json` past the answer route's check, nor read its spec. The
+  config dir is seeded with onboarding done and the worktree trusted, as a
+  runner's `~/.claude.json` is.**)** Nothing else of the home.
+- **Env.** Exactly the spec's env, passed by name (`--env NAME`), the
+  values in the runtime CLI's own environment. **(#717 amends:** a
+  sandboxed session's spec env holds none of the host's variables: its
+  PATH and HOME name nothing in the image. It holds the repo's and
+  persona's (less the PATH a repo pins), the account's token, the session
+  API's URL and token, and `GIT_AUTHOR_*`/`GIT_COMMITTER_*` from the host's
+  git config in the worktree, since the person's `~/.gitconfig` isn't
+  mounted. #720 narrows it to what decision 7 allows.**)**
 - **User.** Commits come out owned by the person: `--userns=keep-id` for
   rootless Podman, and the image's uid/gid build arguments for Docker.
+  **(#717 amends:** Docker also runs with `--user <uid>:<gid>`, so an image
+  built without them still writes as the person; as root, neither maps.**)**
+- **The hub's address.** Docker on Linux gets
+  `--add-host=host.docker.internal:host-gateway`, and the hub binds the
+  bridge's address as well (#713). Docker Desktop and Podman name the host
+  themselves. Rootless Podman on Linux reaching the hub's loopback depends
+  on its network mode, and is for #729 to verify on Linux.
+- **A hangup.** The runtime's CLI dies with the terminal, but a container
+  outlives its client, so `__launch` catches SIGHUP and SIGTERM and removes
+  the session's containers by its label before it exits.
 - **Image.** Built from `.chernabog/sandbox/` in the tree the hub trusted
   (ADR 23's `--tree`), never from the worktree, so an agent that edits the
   Dockerfile doesn't change its own sandbox until the change is merged and
   trusted **(settled here)**. Cached under a tag named for the repo and a
   hash of the directory's contents, and rebuilt when that hash changes.
+  Until #719 builds it, the image is the one `CHERNABOG_SANDBOX_IMAGE`
+  names in the hub's environment, and a session is refused without one.
 
 ## Threat model
 

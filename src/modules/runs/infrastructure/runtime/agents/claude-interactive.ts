@@ -44,6 +44,7 @@ import {
   transcriptExists,
   transcriptFile,
 } from "./claude-events.ts";
+import { sandboxedLaunch } from "./claude-sandbox.ts";
 import {
   Done,
   knownLaunch,
@@ -349,14 +350,30 @@ const start = (
     });
     yield* fs.writeFileString(files.settings, sessionSettings(endpoint.url, withPerson));
 
+    // In a container, the session's environment and mounts are its own (ADR 24).
+    let inContainer = Option.none<Effect.Success<ReturnType<typeof sandboxedLaunch>>>();
+
+    if (context.sandbox.name !== "none") {
+      inContainer = Option.some(yield* sandboxedLaunch(request, context, files));
+    }
+
+    const env = Option.match(inContainer, {
+      onNone: () => claudeEnvironment(context),
+      onSome: (launch) => launch.env,
+    });
+
     const spec = yield* Schema.encodeEffect(LaunchSpecJson)({
       command: "claude",
       args: interactiveClaudeArgs(request, resuming, files.settings),
       cwd: request.cwd,
-      env: { ...claudeEnvironment(context), ...sessionEnv(files, endpoint, withPerson) },
+      env: { ...env, ...sessionEnv(files, endpoint, withPerson) },
       promptFile: files.prompt,
       pidFile: files.pid,
       sandbox: context.sandbox.name,
+      ...Option.match(inContainer, {
+        onNone: () => ({}),
+        onSome: (launch) => ({ container: launch.container }),
+      }),
     });
 
     // The spec carries the session's environment, a token among it, so only its owner may read it;
@@ -437,7 +454,13 @@ export const runInteractiveClaude = (
     );
 
     const files = sessionFiles(home.root, request.sessionId);
-    const configDir = claudeHomeOf(context.account, home.user);
+
+    // A sandboxed session keeps its transcripts in its own config dir, mounted into its container.
+    const configDir = Option.match(
+      Option.liftPredicate(context.sandbox, ({ name }) => name !== "none"),
+      { onNone: () => claudeHomeOf(context.account, home.user), onSome: () => files.claude },
+    );
+
     yield* fs.makeDirectory(files.dir, { recursive: true });
     const call = callOf(request);
 
