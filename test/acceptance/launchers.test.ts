@@ -340,6 +340,45 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     expect(args).toContain(USER_MAPPING[provider]);
   }, 60_000);
 
+  // A machine with no github: personas: the session acts as the implicit
+  // one, whose gh login a container can't reach, so it gets that login's token.
+  test("signs a session as the implicit persona in to gh with its login's token", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], `${CLAUDE_TOKEN}\n`);
+
+    const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
+      ...runtimeEnv(sandbox),
+      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+      GH_TOKEN: "token-implicit",
+      GITHUB_TOKEN: "host-github-token",
+    });
+
+    expect(output).toContain("done: #1:");
+    expect(code).toBe(0);
+
+    const [specFile = ""] = [
+      ...new Bun.Glob("*/spec.json").scanSync(join(sandbox.home, "sessions/interactive")),
+    ];
+
+    const spec = Schema.decodeSync(SandboxedSpec)(
+      readFileSync(join(sandbox.home, "sessions/interactive", specFile), "utf8"),
+    );
+
+    expect(spec.env.GH_TOKEN).toBe("token-implicit");
+    expect(spec.env.GIT_CONFIG_VALUE_2).toContain("$GH_TOKEN");
+    expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(CLAUDE_TOKEN);
+    expect(Object.keys(spec.env)).not.toContain("GITHUB_TOKEN");
+    expect(Object.keys(spec.env).filter((name) => !SANDBOXED_VARIABLE.test(name))).toEqual([]);
+
+    const runs = runtimeCalls(sandbox).filter((call) => call.startsWith(`${provider} run `));
+
+    expect(runs).toHaveLength(1);
+    expect(runs.join(" ")).not.toContain("token-implicit");
+    expect(runs.join(" ")).not.toContain(CLAUDE_TOKEN);
+  }, 60_000);
+
   test("refuses the session when the repo's account has no Claude token, saying how to set one", async () => {
     const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
     sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
