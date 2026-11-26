@@ -525,23 +525,12 @@ const claimedByThisRun = (claim: Option.Option<ClaimMarker>) =>
 export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const board = yield* Settings.board;
-    const also = options.keepOn ?? [];
+    const board = yield* Resume.holdClaimMarkers(issue, options);
 
-    if (Option.isSome(board)) {
-      yield* Markers.hold(
-        Markers.boardStatus,
-        { number: issue, status: board.value.readyStatus },
-        { keepOn: ["done", ...also] },
-      );
-      yield* github.moveToStatus(issue, board.value.inProgressStatus);
+    for (const found of Option.toArray(board)) {
+      yield* github.moveToStatus(issue, found.inProgressStatus);
     }
 
-    yield* Markers.hold(
-      Markers.assignment,
-      { number: issue, login: yield* github.login },
-      { keepOn: ["done", ...also] },
-    );
     yield* github.assignSelf(issue);
   });
 

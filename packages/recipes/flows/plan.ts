@@ -22,6 +22,7 @@ import {
   NeedsHuman,
   Plan,
   reportAs,
+  Resume,
   Routing,
   Settings,
   Skip,
@@ -73,7 +74,18 @@ const planUntilApproved = (spec: number, resumed: Option.Option<Plan.Resumed>) =
     let first = 1;
 
     if (Option.isSome(resumed)) {
-      const { answer, round } = resumed.value;
+      const { round } = resumed.value;
+
+      // The answer as the spec's record has it now; none yet, as for a run
+      // started before a person answered, which waits again.
+      const answer = yield* Plan.answerNow(spec, round, ANSWER_WITHIN).pipe(
+        Effect.flatMap(
+          Option.match({
+            onSome: Effect.succeed,
+            onNone: () => Plan.awaitAnswer(spec, round, ANSWER_WITHIN),
+          }),
+        ),
+      );
 
       if (answer === "timeout") {
         return yield* unanswered;
@@ -116,7 +128,15 @@ const planUntilApproved = (spec: number, resumed: Option.Option<Plan.Resumed>) =
 
 const work = (spec: number, item: WorkItem) =>
   Effect.gen(function* () {
-    yield* Implement.claim(spec, yield* Implement.queuedBy(item));
+    const resumed = Plan.resuming(item);
+
+    // A run that takes up a plan an earlier run posted claims the spec again
+    // as that run held it, saying nothing new on it; a new spec is claimed.
+    if (Option.isSome(resumed)) {
+      yield* Resume.claimAgainOn(Claims.issue(spec));
+    } else {
+      yield* Implement.claim(spec, yield* Implement.queuedBy(item));
+    }
 
     // Each ending removes the plan's checkout first.
     const toPerson = (reason: string) =>
@@ -125,7 +145,7 @@ const work = (spec: number, item: WorkItem) =>
         Effect.flatMap(Implement.endForPerson),
       );
 
-    const outcome = yield* planUntilApproved(spec, Plan.resuming(item)).pipe(
+    const outcome = yield* planUntilApproved(spec, resumed).pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
         // Any other failure once the spec is claimed hands it to a person,

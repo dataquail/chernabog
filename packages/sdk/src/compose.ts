@@ -1998,7 +1998,9 @@ type ResumeNode = {
   readonly park: ParkSite;
   readonly frames: ReadonlyArray<Frame>;
   readonly loop: Option.Option<Loop>;
-  readonly claims: boolean;
+  // The block that claimed the item before it, if one did, which the run
+  // that takes the park up claims it again as (Resume.claimAgain).
+  readonly claims: Option.Option<string>;
 };
 
 // Whether a sequence's last step leaves it: an end, or a next, which goes on
@@ -2400,9 +2402,9 @@ const resumesOf = (document: FlowDocument) => {
       park,
       frames: candidate.frames,
       loop: candidate.loop,
-      claims: [...candidate.bound.values()].some((block) =>
+      claims: Arr.findFirst([...candidate.bound.values()], (block) =>
         Option.exists(block, (name) => CLAIMING.includes(name)),
-      ),
+      ).pipe(Option.flatten),
     });
   }
 
@@ -3152,6 +3154,16 @@ const emitResumeLoop = (emitting: Emitting, node: ResumeNode, loop: Loop, indent
   ];
 };
 
+// How a run that takes a park up claims the item again, for the block that
+// claimed it: as hybrid.claim, it keeps the claim's markers on failed too.
+const claimAgainOf = (claim: string) => {
+  if (claim === "hybrid.claim") {
+    return `Resume.claimAgainKeeping(["failed"])`;
+  }
+
+  return "Resume.claimAgain";
+};
+
 // Where a run whose item came from a record parked on the node's phase
 // starts: it claims the item again, if the steps before held a claim, and
 // remembers the pull request a failure tells a person of, then takes the
@@ -3176,7 +3188,7 @@ const emitResume = (
   return [
     `${indent}// A run that takes up an item parked on ${node.park.site} starts at ${node.step.id}.`,
     `${indent}if (Option.contains(${RESUMED}, ${printJson(node.park.site)})) {`,
-    ...Arr.filter([`${inner}yield* Resume.claimAgain;`], () => node.claims),
+    ...Option.toArray(Option.map(node.claims, (claim) => `${inner}yield* ${claimAgainOf(claim)};`)),
     ...Arr.filter(
       [`${inner}failureContext.pr = Resume.pullRequestOf(${block}, item);`],
       () => tellsPullRequest && node.park.pullRequest,
