@@ -7,6 +7,7 @@
 
 import { SandboxName } from "@chernabog/core";
 import * as Console from "effect/Console";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -53,23 +54,35 @@ const SIGNAL_EXIT: Readonly<Record<(typeof ENDING_SIGNALS)[number], number>> = {
   SIGTERM: 143,
 };
 
-// The first of ENDING_SIGNALS this process gets, while it waits.
-const endingSignal = Effect.callback<(typeof ENDING_SIGNALS)[number]>((resume) => {
-  const handlers = ENDING_SIGNALS.map((signal) => {
-    const handler = () => {
-      resume(Effect.succeed(signal));
-    };
+type EndingSignal = (typeof ENDING_SIGNALS)[number];
 
-    process.once(signal, handler);
+// Listens for ENDING_SIGNALS from now until the scope closes, completing
+// the Deferred it gives with the first. Listening starts before the agent does, so a hangup
+// that comes as soon as it is up is never missed.
+const listenForEndingSignal = Effect.gen(function* () {
+  const signalled = yield* Deferred.make<EndingSignal>();
 
-    return [signal, handler] as const;
-  });
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      ENDING_SIGNALS.map((signal) => {
+        const handler = () => {
+          Deferred.doneUnsafe(signalled, Effect.succeed(signal));
+        };
 
-  return Effect.sync(() => {
-    for (const [signal, handler] of handlers) {
-      process.off(signal, handler);
-    }
-  });
+        process.once(signal, handler);
+
+        return [signal, handler] as const;
+      }),
+    ),
+    (handlers) =>
+      Effect.sync(() => {
+        for (const [signal, handler] of handlers) {
+          process.off(signal, handler);
+        }
+      }),
+  );
+
+  return signalled;
 });
 
 // Removes the session's containers, by its label, never by name: the runtime
@@ -193,9 +206,14 @@ export const runLaunch = (specFile: string) =>
       {
         onNone: () => exited,
         onSome: (removed) =>
-          Effect.raceFirst(
-            Effect.map(exited, (code) => ({ code, ended: false })),
-            Effect.map(endingSignal, (signal) => ({ code: SIGNAL_EXIT[signal], ended: true })),
+          Effect.flatMap(listenForEndingSignal, (signalled) =>
+            Effect.raceFirst(
+              Effect.map(exited, (code) => ({ code, ended: false })),
+              Effect.map(Deferred.await(signalled), (signal) => ({
+                code: SIGNAL_EXIT[signal],
+                ended: true,
+              })),
+            ),
           ).pipe(
             Effect.tap((outcome) => Effect.when(removed, Effect.succeed(outcome.ended))),
             Effect.map((outcome) => outcome.code),
