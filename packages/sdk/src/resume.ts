@@ -19,7 +19,9 @@ import {
   activity,
   Claims,
   type FlowError,
+  GitHub,
   type Json,
+  Markers,
   type ReportedError,
   Skip,
   StepFailed,
@@ -32,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Phases from "./phases.ts";
+import * as Settings from "./settings.ts";
 import * as StatusLabels from "./status-labels.ts";
 
 // Whether a block runs at a node its document can take its park up at: none
@@ -132,26 +135,75 @@ export const pullRequestOf = <N>(
 ): Option.Option<N> =>
   Option.flatMap(block.parks, (parks) => Option.flatMap(parks.pullRequest, (named) => named(item)));
 
-// A run that takes an item up claims it again, as the run that parked held it
-// until it ended: on the item it records on, which for an issue is its claim's.
-export const claimAgain = Effect.gen(function* () {
-  const on = yield* Phases.RecordedOn;
+// Holds what claiming issue `issue` puts on it, as markers the run releases
+// however it ends: the board Status to move back to, if the repo has a board,
+// and the persona's assignment. Kept when the run is done, when the pull
+// request carries on, and on `keepOn` too. Implement.markClaimed holds them
+// before putting them on; a run that takes the issue up holds them again,
+// as its own, for what the run that parked put on (claimAgain).
+export const holdClaimMarkers = (issue: number, options: Markers.HoldOptions = {}) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const board = yield* Settings.board;
+    const keepOn: ReadonlyArray<Markers.Ending> = ["done", ...(options.keepOn ?? [])];
 
-  for (const item of Option.toArray(on)) {
-    yield* activity(
-      "claim-again",
-      Effect.gen(function* () {
-        const claimed = yield* StatusLabels.acquire(item);
+    for (const found of Option.toArray(board)) {
+      yield* Markers.hold(
+        Markers.boardStatus,
+        { number: issue, status: found.readyStatus },
+        { keepOn },
+      );
+    }
 
-        if (!claimed.acquired) {
-          return yield* new Skip({
-            reason: `${item} is already claimed (${Claims.describeHolder(item, claimed.holder)})`,
-          });
-        }
-      }),
+    yield* Markers.hold(
+      Markers.assignment,
+      { number: issue, login: yield* github.login },
+      { keepOn },
     );
-  }
-});
+
+    return board;
+  });
+
+// The issue `item` names, if it names one.
+const issueNumber = (item: string) =>
+  Option.map(Option.fromNullOr(/^issue-(\d+)$/.exec(item)), (found) => Number(found[1]));
+
+// A run that takes `item` up claims it again, as the run that parked held it
+// until it ended: it takes the claim ref back, and says nothing on the item,
+// which the parked run's claim did already. What that claim put on an issue,
+// the persona's assignment and the board Status, the parked run kept for this
+// one; this run holds them again (holdClaimMarkers, with `keepOn` as the claim
+// gave it), so its ending lets them go as the parked run's would have.
+export const claimAgainOn = (item: string, options: Markers.HoldOptions = {}) =>
+  activity(
+    "claim-again",
+    Effect.gen(function* () {
+      const claimed = yield* StatusLabels.acquire(item);
+
+      if (!claimed.acquired) {
+        return yield* new Skip({
+          reason: `${item} is already claimed (${Claims.describeHolder(item, claimed.holder)})`,
+        });
+      }
+
+      for (const issue of Option.toArray(issueNumber(item))) {
+        yield* holdClaimMarkers(issue, options);
+      }
+    }),
+  );
+
+// claimAgainOn the item a document's run records on, which for an issue is
+// its claim's, for a claim that kept its markers on `keepOn` too, as
+// hybrid.claim does on failed.
+export const claimAgainKeeping = (keepOn: ReadonlyArray<Markers.Ending>) =>
+  Effect.gen(function* () {
+    for (const item of Option.toArray(yield* Phases.RecordedOn)) {
+      yield* claimAgainOn(item, { keepOn });
+    }
+  });
+
+// claimAgainOn the item a document's run records on, for issue.claim's claim.
+export const claimAgain = claimAgainKeeping([]);
 
 // The source a document whose nodes park gets: for each phase one of them
 // parks on, the items its block offers, as work a run may start, never only

@@ -12,6 +12,7 @@ import {
   type Flow,
   Markers,
   NeedsHuman,
+  Resume,
   Run,
   RunLog,
   StepFailed,
@@ -391,6 +392,43 @@ describe("the SDK's markers", () => {
       expect(fake.based.compared).toEqual(["develop", "main"]);
     }),
   );
+
+  // A run that takes up an issue a parked run claimed (#710): the parked run
+  // assigned the persona and kept the marker, and this run claims it again.
+  const takingUp = (end: "done" | "needs-human") =>
+    defineFlow({
+      trigger: Effect.succeed([]),
+      workflow: () =>
+        Effect.gen(function* () {
+          yield* Resume.claimAgainOn(`issue-${ISSUE}`);
+
+          if (end === "needs-human") {
+            return yield* new NeedsHuman({ reason: "a person decides" });
+          }
+
+          return "taken up";
+        }),
+    });
+
+  for (const [end, does, left] of [
+    ["needs-human", "lets go of", (_me: string) => []],
+    ["done", "keeps", (me: string) => [me]],
+  ] as const) {
+    effect(`a run that takes an issue up and ends ${end} ${does} the persona's assignment`, () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.people.assigned = [fake.people.me];
+        const handle = flowHandle(repo, "take-up", takingUp(end));
+
+        const finished = yield* runToEnd(handle, fake, item(`issue-${ISSUE}`, { issue: ISSUE }));
+
+        expect(finished.status).toBe(end);
+        expect(fake.people.assigned).toEqual(left(fake.people.me));
+        // It said nothing on the issue: the parked run's claim did.
+        expect(fake.comments).toEqual([]);
+      }),
+    );
+  }
 
   effect(
     "an implement run that's done keeps its assignment and lets the in-progress label go",
