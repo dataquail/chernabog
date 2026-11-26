@@ -33,23 +33,22 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import epic from "../packages/recipes/flows/epic.ts";
-import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
-import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { type FlowHandle, flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { listActiveRunsHandler } from "../src/modules/runs/queries/list-active-runs.handler.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import { documentOf, EPIC_DOCUMENT, loadFlow } from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 import {
-  deliverSignals,
-  type EngineRun,
   type Fake,
   flowTriggered,
+  follow,
   item,
   makeFake,
+  onEngine,
   onFake,
   repo,
   runToEnd,
-  runUntil,
   summaryOf,
   triggered,
 } from "./sdk-fakes.ts";
@@ -111,21 +110,29 @@ const kept = (fake: Fake) =>
 const sorted = (pairs: ReadonlyArray<readonly [number, number]>) =>
   pairs.toSorted(([left], [right]) => left - right);
 
-// Whether the run is parked on the epic's round `round`.
-const parkedAt = (round: number) => (run: EngineRun) =>
-  Effect.map(listRunWaitsHandler({ runId: run.id, signal: Epic.LAYER_CHANGED }), ({ waits }) =>
-    waits.some((wait) => wait.deferred === `${Epic.LAYER_CHANGED}:epic-${round}`),
-  );
-
-// Runs the epic from `work` until it parks at `round`, then lets go of every
-// claim, as a run ending at its park does.
-const runToPark = (fake: Fake, work: ReturnType<typeof item>, round: number) =>
+// Follows a run of the epic from `work`, in the test's engine, to its park,
+// which ends the run (ADR 23, decision 2) and lets go of its claims, as a
+// spoke's does, and checks it parked in round `round`: the last wait it
+// recorded is that round's.
+const followToPark = (handle: FlowHandle, work: WorkItem, round: number) =>
   Effect.gen(function* () {
-    const run = yield* runUntil(working, fake, work, parkedAt(round));
-    fake.refs.clear();
+    const run = yield* follow(handle, work);
+    const { steps } = yield* readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie);
+
+    const waited = steps
+      .map((step) => step.step)
+      .filter((step) => step.startsWith("epic-waiting-"));
+
+    expect([run.status, waited.at(-1)]).toEqual(["ended-at-park", `epic-waiting-${round}`]);
 
     return run;
   });
+
+// followToPark, in an engine of its own.
+const parkIn = (handle: FlowHandle, fake: Fake, work: WorkItem, round: number) =>
+  onEngine(handle, fake, followToPark(handle, work, round));
+
+const runToPark = (fake: Fake, work: WorkItem, round: number) => parkIn(working, fake, work, round);
 
 const fresh = item(`issue-${EPIC}`, { issue: EPIC });
 
@@ -150,7 +157,7 @@ describe("an epic parked in a CI job", () => {
         const fake = epicFake();
         const run = yield* runToPark(fake, fresh, LAST_ROUND);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
 
         const waiting = kept(fake);
@@ -162,7 +169,7 @@ describe("an epic parked in a CI job", () => {
           ]),
         );
 
-        // Nothing changed since it parked: nothing to start, and nothing to wake.
+        // Nothing changed since it parked: nothing to start.
         expect(yield* offered(fake)).toEqual([]);
 
         // A push to #10's pull request: work a new run may start, from the record.
@@ -221,50 +228,47 @@ describe("an epic parked in a CI job", () => {
   );
 
   effect(
-    "a run a signal woke before it ended parks again with its new round's record",
+    "nothing wakes a parked run: the change is offered to a new run, which parks again with its new round's record",
     () =>
       Effect.gen(function* () {
         const fake = epicFake();
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
-        let first = Option.none<string>();
 
-        // The run parks; a person hands #12 back, and the trigger's signal
-        // wakes the run before it ends at its park. It works on, and parks
-        // again in a later round.
-        const run = yield* runUntil(working, fake, fresh, (current) =>
+        const { active, changed, later, parked } = yield* onEngine(
+          working,
+          fake,
           Effect.gen(function* () {
-            const { waits } = yield* listRunWaitsHandler({
-              runId: current.id,
-              signal: Epic.LAYER_CHANGED,
-            });
+            const first = yield* followToPark(working, fresh, LAST_ROUND);
 
-            const parked = Arr.head(waits.map((wait) => wait.deferred));
+            // A person hands #12 back. The run that parked ended there: no run
+            // of the epic is left to signal, and the change is work a new run
+            // may start, from the epic's record.
+            fake.setLabels(12, [DEFAULT_LABELS.eligible]);
+            const offer = yield* onlyOffered(fake);
 
-            if (Option.isNone(first)) {
-              if (Option.isNone(parked)) {
-                return false;
-              }
+            const running = yield* listActiveRunsHandler({
+              repo: Option.none(),
+              persona: Option.none(),
+              flow: Option.none(),
+            }).pipe(Effect.orDie);
 
-              fake.setLabels(12, [DEFAULT_LABELS.eligible]);
-              const found = yield* offered(fake);
-
-              if ((yield* deliverSignals(working, IMPLICIT, found)) > 0) {
-                first = parked;
-              }
-
-              return false;
-            }
-
-            return Option.isSome(parked) && !Option.contains(first, parked.value);
+            // The new run works on, and parks in a later round.
+            return {
+              parked: first,
+              changed: offer,
+              active: running.runs,
+              later: yield* followToPark(working, offer, 2),
+            };
           }),
         );
 
-        const woken = Option.isSome(first);
-        expect([woken, run.status]).toEqual([true, "running"]);
+        expect(active).toEqual([]);
+        expect(mayStart(changed)).toBe(true);
+        expect(later.id).not.toBe(parked.id);
         expect(fake.steps.flatMap(Option.toArray)).toContain("implement#task-12-2");
 
-        // The record is the later park's: the epic as the run last read it,
+        // The record is the later park's: the epic as the new run last read it,
         // and #12's second attempt.
         const now = yield* onFake(fake, Epic.fingerprint(EPIC)).pipe(Effect.orDie);
         expect(Option.map(kept(fake), (found) => found.fingerprint)).toEqual(Option.some(now));
@@ -276,7 +280,7 @@ describe("an epic parked in a CI job", () => {
           ]),
         );
 
-        // Nothing changed since its last park: nothing to wake it again.
+        // Nothing changed since its last park: nothing to offer again.
         expect(yield* offered(fake)).toEqual([]);
       }),
     ENGINE_TIMEOUT,
@@ -438,12 +442,7 @@ for (const [form, loading] of forms) {
     );
 
   const parkAt = (fake: Fake, work: WorkItem, round: number) =>
-    Effect.gen(function* () {
-      const run = yield* runUntil(yield* handle, fake, work, parkedAt(round));
-      fake.refs.clear();
-
-      return run;
-    });
+    Effect.flatMap(handle, (loaded) => parkIn(loaded, fake, work, round));
 
   // The epic whose run left #11's refresh on pending CI and parked, with CI
   // now `ci`.
@@ -474,7 +473,7 @@ for (const [form, loading] of forms) {
           const fake = stackFake(PENDING);
           const run = yield* parkAt(fake, fresh, 2);
 
-          expect(run.status).toBe("running");
+          expect(run.status).toBe("ended-at-park");
           expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
 
           const [left] = refreshesLeft(fake);
@@ -744,8 +743,7 @@ describe("an epic with more pending task and layer CI than fit in 4 KB", () => {
             task(fake, issue);
           }
 
-          yield* runUntil(yield* handle, fake, fresh, parkedAt(2));
-          fake.refs.clear();
+          yield* parkIn(yield* handle, fake, fresh, 2);
 
           expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
           expect(TASKS.map((issue) => fake.phases()[Claims.issue(issue)])).toEqual(
@@ -758,8 +756,7 @@ describe("an epic with more pending task and layer CI than fit in 4 KB", () => {
           // CI settles on every one: the next run hands each off.
           fake.merge.ci = { state: "green" };
           const taken = Option.getOrThrow(Arr.head(yield* flowTriggered(fake, yield* loading)));
-          yield* runUntil(yield* handle, fake, taken, parkedAt(2));
-          fake.refs.clear();
+          yield* parkIn(yield* handle, fake, taken, 2);
 
           expect(TASKS.map((issue) => fake.phases()[Claims.issue(issue)])).toEqual(
             TASKS.map(() => Phases.PHASES.issue.handedOff),

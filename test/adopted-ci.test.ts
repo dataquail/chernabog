@@ -197,7 +197,7 @@ for (const [form, loading] of forms) {
             }),
           );
 
-          expect([run.status, parked]).toEqual(["running", true]);
+          expect([run.status, parked]).toEqual(["ended-at-park", true]);
 
           const recorded = Option.getOrThrow(recordNow(fake));
           expect(recorded.phase).toBe("awaiting-adopted-ci");

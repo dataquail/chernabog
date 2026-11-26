@@ -12,6 +12,7 @@ import {
   type CiChecks,
   type CiReport,
   type CiState,
+  Claims,
   type Comment,
   CurrentActivity,
   DEFAULT_LABELS,
@@ -67,6 +68,7 @@ import * as Schema from "effect/Schema";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
 import { busesOver } from "../src/interface/application-runtime.ts";
+import { endingAt } from "../src/interface/cli/own-hub.main.ts";
 import { endAsSaid, foldReport, foldSpoke } from "../src/interface/daemon/report-fold.server.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { type RunId } from "../src/kernel/run-id.id.ts";
@@ -74,6 +76,7 @@ import { executeRunHandler } from "../src/modules/runs/commands/execute-run.hand
 import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
 import { startSpokeRunHandler } from "../src/modules/runs/commands/start-spoke-run.handler.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
+import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
@@ -102,6 +105,7 @@ import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/fl
 import { noHooks } from "../src/modules/runs/infrastructure/runtime/runlog.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import {
+  heldClaims,
   RunFlowsQueries,
   RunsModule,
   RunsQueries,
@@ -111,7 +115,6 @@ import { Home } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 import { TestTimeout } from "./effect-test.ts";
 import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
-import { wakeParkedRuns } from "./wake-signals.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -1524,17 +1527,48 @@ export const StateAt = (home: string, engine: EngineOptions = {}) =>
 
 export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 
+// The runs an engine of the tests' parked, as it tells them: what a process
+// that is its own hub keeps (run.main.ts's `parked`), so pollRun ends each
+// at its park.
+const parkedRuns = new Set<RunId>();
+
+// The waits each parked run had recorded when a poll last looked (lookAt).
+const seenParked = new Map<RunId, string>();
+
+// What each run that ended at its park was waiting on then, by run: its waits
+// go with it, and a test may ask which signal it parked on (parkedOn).
+const waitsAtPark = new Map<
+  RunId,
+  ReadonlyArray<{ readonly signal: string; readonly deferred: string }>
+>();
+
+// The waits a run that ended at its park was parked on; none for any other run.
+export const parkedOn = (runId: RunId) => waitsAtPark.get(runId) ?? [];
+
+const parksHere: OnParked = (runId) =>
+  Effect.sync(() => {
+    parkedRuns.add(runId);
+  });
+
+// How a park lets go of a claim the run holds, on the repo the test's engine
+// runs: Claims.releaseFor, as a spoke's wrap-up does (ci-run.main.ts); onEngine
+// gives it the fake. Nothing where no fake is given.
+const ReleaseAtPark = Context.Reference<
+  (claim: { readonly item: string; readonly runId: string }) => Effect.Effect<void>
+>("chernabog/test/ReleaseAtPark", { defaultValue: () => () => Effect.void });
+
 // The engine over one flow, as the composition roots build it: the modules a
 // process with an engine adds, from the one list every root merges, the
 // runs' buses, which a run's hub folds its journal through, and the flow,
 // which keeps its runs' records in their journals, over the test's runtime
-// and a state.db in `home`.
+// and a state.db in `home`. Its runs' parks are told to pollRun, unless a
+// test listens for them itself.
 export const engineOver = <R>(
   handle: FlowHandle,
   registry: FlowRegistry,
   servicesFor: ServicesFor<R>,
   home: string,
-  onParked: OnParked = () => Effect.void,
+  onParked: OnParked = parksHere,
   engine: EngineOptions = {},
 ) =>
   Layer.mergeAll(
@@ -1548,7 +1582,7 @@ export const engineOver = <R>(
     Layer.provideMerge(StateAt(home, engine)),
   );
 
-// What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
+// What a test's `until` can use while a run goes: the runs module and its runtime.
 export type RuntimeServices = Layer.Success<ReturnType<typeof engineOver>>;
 
 const isRunning = (run: EngineRun) => run.status === "running";
@@ -1609,20 +1643,36 @@ export const foldRun = (runId: RunId) =>
     );
   });
 
-// Folds a run's journal, and ends the run once its workflow has: a park keeps
-// it running here, for a test to wake (wake-signals.ts).
-export const pollRun = (run: EngineRun) =>
+// A run as it now stands in state.db; `run` itself if it's gone.
+const current = (run: EngineRun) =>
+  Effect.map(
+    RunsQueries.use((runs) => runs.FindRunQuery({ runId: run.id })),
+    (found) =>
+      Option.getOrElse(
+        Option.map(found.run, (one): EngineRun => one),
+        () => run,
+      ),
+  );
+
+// Folds a run's journal and looks at it, as a process that is its own hub
+// does each poll (own-hub.main.ts): a workflow that ended ends the run, as it
+// said. Whether it parked, which the hub ends next (endAtPark): until then,
+// its waits are still recorded, for anyone reading it.
+const lookAt = (run: EngineRun) =>
   Effect.gen(function* () {
     yield* foldRun(run.id);
 
-    const found = (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run;
-
-    for (const current of Option.toArray(Option.filter(found, (one) => one.status === "running"))) {
-      for (const executionId of Option.toArray(current.executionId)) {
+    for (const running of Option.toArray(
+      Option.filter(
+        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
+        (one) => one.status === "running",
+      ),
+    )) {
+      for (const executionId of Option.toArray(running.executionId)) {
         const outcome = yield* (yield* RunFlowsQueries).PollExecutionQuery({
           runId: run.id,
           executionId,
-          flow: { repo: current.repo, flow: current.flow, persona: current.persona },
+          flow: { repo: running.repo, flow: running.flow, persona: running.persona },
         });
 
         for (const ended of Option.toArray(outcome.ended)) {
@@ -1634,35 +1684,74 @@ export const pollRun = (run: EngineRun) =>
       }
     }
 
-    return Option.getOrElse(
-      Option.map(
-        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
-        (current): EngineRun => current,
-      ),
-      () => run,
-    );
-  }).pipe(Effect.orDie);
+    const now = yield* current(run);
 
-// Wakes the runs parked on the signals `items` carry, in the test's engine,
-// once their journals are folded: a test-only wake (wake-signals.ts).
-export const deliverSignals = (
-  handle: FlowHandle,
-  persona: Persona,
-  items: ReadonlyArray<WorkItem>,
-) =>
-  Effect.gen(function* () {
-    const running = yield* (yield* RunsQueries).ListActiveRunsQuery({
-      repo: Option.none(),
-      persona: Option.none(),
-      flow: Option.none(),
-    });
+    // A park is ended once its recorded waits are the same two polls running,
+    // as the own hub, which looks at its parked set between polls a second
+    // apart, ends one: an awaitSignal on several signals records its waits
+    // one at a time, and its engine tells the park at the first.
+    const told = now.status === "running" && parkedRuns.has(run.id);
 
-    for (const run of running.runs) {
-      yield* foldRun(run.id);
+    if (!told) {
+      return { run: now, told, parked: false };
     }
 
-    return yield* wakeParkedRuns(refOf(handle, persona), items);
+    const waits = (yield* readRunHistoryHandler({ runId: run.id })).waits
+      .map((wait) => wait.deferred)
+      .toSorted()
+      .join(" ");
+
+    const parked = Option.contains(Option.fromUndefinedOr(seenParked.get(run.id)), waits);
+    seenParked.set(run.id, waits);
+
+    return { run: now, told, parked };
   });
+
+// Ends a run that parked at its park, as the own hub ends one: what its
+// journal holds by then folded, its claims let go, as a spoke's are when its
+// run stops at a park (ci-run.main.ts's wrap-up), so the run that takes its
+// item up may claim it, and the run ended `ended-at-park` (ADR 23, decision
+// 2). The waits it parked on are kept for parkedOn.
+const endAtPark = (run: EngineRun) =>
+  Effect.gen(function* () {
+    yield* foldRun(run.id);
+
+    waitsAtPark.set(
+      run.id,
+      (yield* readRunHistoryHandler({ runId: run.id })).waits.map((wait) => ({
+        signal: wait.signal,
+        deferred: wait.deferred,
+      })),
+    );
+
+    const release = yield* ReleaseAtPark;
+
+    for (const claim of yield* heldClaims(run.id)) {
+      yield* release(claim);
+    }
+
+    yield* endAsSaid(run.id, endingAt({ kind: "parked" }), () => ({
+      status: "failed",
+      summary: "it parked without saying how",
+    }));
+
+    return yield* current(run);
+  });
+
+// Folds a run's journal, and ends the run once it reaches its boundary, as a
+// process that is its own hub does: its workflow ended, or it parked, which
+// ends it `ended-at-park` (ADR 23, decision 2). Nothing wakes a parked run: a
+// later run takes its item up from its record.
+export const pollRun = (run: EngineRun) =>
+  Effect.gen(function* () {
+    const looked = yield* lookAt(run);
+
+    if (looked.parked) {
+      return yield* endAtPark(looked.run);
+    }
+
+    return looked.run;
+  }).pipe(Effect.orDie);
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(
@@ -1689,19 +1778,17 @@ const notThereYet = (handle: FlowHandle, work: WorkItem, last: Option.Option<Eng
       `summary ${Option.getOrElse(run.summary, () => "none")}`,
   });
 
-// Starts a run of the flow on the fake, and polls it 25ms apart until `until` says it has
-// got far enough or it ended, and fails the test if it ended short of it, rather than handing
-// back wherever it had got to. No count of polls bounds it: a count is a wall-clock budget
-// that a loaded machine runs past, and it handed back a run still on its way as if it had
-// got there. The test's own timeout bounds it instead: a second before it, the wait fails
-// with the run as it last stood.
-export const runUntil = (
+// What a test's program runs against while its runs go: the engine, its
+// runtime and the platform.
+export type OnEngine = RuntimeServices | BunServices.BunServices;
+
+// One engine over the fake for as long as `program` runs, with a state.db of
+// its own: one machine, whose runs (`follow`, `takeUp`) share its records, as
+// a run that ended at its park and the run that takes its item up do.
+export const onEngine = <A, E, R>(
   handle: FlowHandle,
   fake: Fake,
-  work: WorkItem,
-  until: (
-    run: EngineRun,
-  ) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>,
+  program: Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1724,19 +1811,58 @@ export const runUntil = (
       ),
     );
 
+    const letGo = (claim: { readonly item: string; readonly runId: string }) =>
+      Claims.releaseFor(claim.item, claim.runId).pipe(Effect.provide(fake.services), Effect.ignore);
+
+    return yield* Effect.provideContext(program, Context.merge(platform, engine)).pipe(
+      Effect.provideService(ReleaseAtPark, letGo),
+    );
+  });
+
+// Starts a run of the flow for `work` in the test's engine (onEngine), and
+// polls it 25ms apart until `until` says it has got far enough or it reached
+// its boundary (it ended, or it parked, which ends it), and fails the test if
+// it ended short of it, rather than handing back wherever it had got to. No
+// count of polls bounds it: a count is a wall-clock budget that a loaded
+// machine runs past, and it handed back a run still on its way as if it had
+// got there. The test's own timeout bounds it instead: a second before it,
+// the wait fails with the run as it last stood.
+export const follow = (
+  handle: FlowHandle,
+  work: WorkItem,
+  until: (run: EngineRun) => Effect.Effect<boolean, never, OnEngine> = (run) =>
+    Effect.succeed(!isRunning(run)),
+) =>
+  Effect.gen(function* () {
     const timeout = yield* TestTimeout;
     let last = Option.none<EngineRun>();
 
-    const run = startRun(handle, IMPLICIT, work).pipe(
+    return yield* startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
       Effect.flatMap((started) =>
-        pollRun(started).pipe(
-          Effect.tap((polled) =>
-            Effect.sync(() => {
-              last = Option.some(polled);
+        lookAt(started).pipe(
+          // A run that parked is read as it stood at its park, its waits still
+          // recorded, before it is ended there, and again once it has ended.
+          Effect.flatMap((looked) =>
+            Effect.gen(function* () {
+              const atPark = yield* until(looked.run);
+
+              // A test that got what it waits for at the park has the run
+              // ended there at once; otherwise it ends a poll later.
+              if (!looked.parked && !(looked.told && atPark)) {
+                return { polled: looked.run, done: atPark };
+              }
+
+              const ended = yield* endAtPark(looked.run);
+
+              return { polled: ended, done: atPark || (yield* until(ended)) };
             }),
           ),
-          Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
+          Effect.tap((step) =>
+            Effect.sync(() => {
+              last = Option.some(step.polled);
+            }),
+          ),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: (step) => step.done || !isRunning(step.polled),
@@ -1777,10 +1903,33 @@ export const runUntil = (
       ),
       Effect.orDie,
     );
-
-    return yield* Effect.provideContext(run, Context.merge(platform, engine));
   });
 
+// What a hub's tick does with what a trigger reported (`found`): the first
+// item a run may start (mayStart: not wake-only, held or waiting on someone)
+// starts a run, which `follow` follows; none when no item may start. So a
+// parked item is taken up again from its record by a new run, as in
+// production: nothing wakes the run that parked.
+export const takeUp = (
+  handle: FlowHandle,
+  found: ReadonlyArray<WorkItem>,
+  until?: (run: EngineRun) => Effect.Effect<boolean, never, OnEngine>,
+) =>
+  Effect.forEach(Option.toArray(Arr.findFirst(found, mayStart)), (work) =>
+    follow(handle, work, until),
+  ).pipe(Effect.map(Arr.head));
+
+// Starts a run of the flow on the fake, in an engine of its own, and follows
+// it until `until` says it has got far enough or it reached its boundary
+// (`follow`).
+export const runUntil = (
+  handle: FlowHandle,
+  fake: Fake,
+  work: WorkItem,
+  until: (run: EngineRun) => Effect.Effect<boolean, never, OnEngine>,
+) => onEngine(handle, fake, follow(handle, work, until));
+
+// A run to its boundary: its end, or its park, which ends it `ended-at-park`.
 export const runToEnd = (handle: FlowHandle, fake: Fake, work: WorkItem) =>
   runUntil(handle, fake, work, (run) => Effect.succeed(!isRunning(run)));
 

@@ -814,12 +814,12 @@ export const resumingMerge = (item: WorkItem) =>
 
 // For a recipe's trigger: the held merges its own runs held, by their work
 // items' keys (`owns`, given the key and the pull request), as work a run may
-// start (ADR 0021, decision 4): a CI job that held the merge ended at the
-// park, and a new run takes the merge up. One whose base is no longer red
-// also signals BASE_GREEN, which wakes a daemon's run still parked on it; that
-// run holds the work item, so no second one starts. One held past the
-// mergeHoldTimeout setting, by its record's `at`, is offered too, and the run
-// that takes it up finds its time is up and hands it to a person.
+// start (ADR 0021, decision 4): the run that held the merge ended at its park
+// (ADR 23, decision 2), and a new run takes the merge up from its merge-held
+// record. One is offered once its base is no longer red, saying so with
+// BASE_GREEN, or once held past the mergeHoldTimeout setting, by its record's
+// `at`, when the run that takes it up finds its time is up and hands it to a
+// person.
 export const heldMerges = (owns: (key: string, pullRequest: number) => boolean) =>
   Effect.gen(function* () {
     const hold = yield* Settings.mergeHold;

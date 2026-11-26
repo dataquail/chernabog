@@ -1,7 +1,10 @@
 // Holding a merge while CI on the base branch is red (#147): an approved pull
-// request on the automated path waits, parked, rather than going to a
-// person, and merges once the base is green again. A follow-up's fix merges
-// while the base is red, and with the setting off nothing changes.
+// request on the automated path is held rather than going to a person. The
+// hold is the pull request's merge-held record, and the park ends the run
+// (ADR 23, decision 2); once the base is green again, the flow's trigger
+// offers it from the record (PullRequest.heldMerges) and a new run merges.
+// A follow-up's fix merges while the base is red, and with the setting off
+// nothing changes.
 
 import {
   type CiState,
@@ -15,28 +18,28 @@ import {
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
-  deliverSignals,
-  type EngineRun,
   type Fake,
+  follow,
   HEAD,
   item,
   makeFake,
+  onEngine,
   PULL,
   repo,
   runToEnd,
-  runUntil,
   summaryOf,
+  takeUp,
   triggered,
 } from "./sdk-fakes.ts";
 
-const IMPLICIT = Option.none<string>();
 const SHIP = "auto:ship";
 const WORK = item("hold");
 
@@ -96,18 +99,17 @@ const approved = (base: CiState) => {
 
 const HOLDING = { holdMergesOnBrokenBase: true };
 
-// What baseTurnedGreen reports, with merges held.
-const woken = (fake: Fake) =>
+// What heldMerges offers, with merges held: the held merges of this flow's
+// runs, from their records, as the flow's trigger would.
+const offered = (fake: Fake) =>
   triggered(
     fake,
-    Effect.provideService(PullRequest.baseTurnedGreen, Settings.FlowSettings, { input: HOLDING }),
+    Effect.provideService(
+      PullRequest.heldMerges(() => true),
+      Settings.FlowSettings,
+      { input: HOLDING },
+    ),
   ).pipe(Effect.orDie);
-
-const parkedOnBase = (run: EngineRun) =>
-  listRunWaitsHandler({ runId: run.id, signal: PullRequest.BASE_GREEN }).pipe(
-    Effect.map(({ waits }) => waits.length > 0),
-    Effect.orDie,
-  );
 
 describe("holding a merge on a red base branch", () => {
   effect("with the setting off, merges an approved pull request while the base is red", () =>
@@ -120,58 +122,70 @@ describe("holding a merge on a red base branch", () => {
   );
 
   effect(
-    "parks the run, with its record, rather than merging or handing it to a person, and merges once the base is green",
+    "holds the merge in its record and ends the run at the park, rather than merging or handing it to a person, and a new run merges once the base is green",
     () =>
       Effect.gen(function* () {
         const fake = approved(RED);
-        let held = false;
 
-        const finished = yield* runUntil(holding, fake, WORK, (run) =>
+        const { atPark, finished, found, parked, stillRed } = yield* onEngine(
+          holding,
+          fake,
           Effect.gen(function* () {
-            if (run.status !== "running") {
-              return true;
-            }
+            const ended = yield* follow(holding, WORK);
+            const state = { merges: [...fake.merge.requests], labels: fake.labelsOf(PULL) };
+            // Still red: nothing offers it, so no run takes it up.
+            const red = yield* takeUp(holding, yield* offered(fake));
+            fake.merge.baseCi = Option.some(GREEN);
+            const green = yield* offered(fake);
 
-            if (!(yield* parkedOnBase(run))) {
-              return false;
-            }
-
-            if (!held) {
-              held = true;
-              expect(fake.merge.requests).toEqual([]);
-              expect(fake.labelsOf(PULL)).toEqual([SHIP]);
-              expect(
-                fake.comments.some((found) =>
-                  found.body.startsWith("Holding the merge: CI is failing on `main`."),
-                ),
-              ).toBe(true);
-              // The hold is the pull request's record, naming the work item that holds it.
-              expect(fake.phases()[`pr-${PULL}`]).toBe("merge-held");
-              expect(
-                Option.flatMap(Option.fromUndefinedOr(fake.records().get(`pr-${PULL}`)), (record) =>
-                  Option.map(record.data, (data) => data.key),
-                ),
-              ).toEqual(Option.some("hold"));
-              // Still red: nothing wakes it.
-              expect(yield* woken(fake)).toEqual([]);
-              fake.merge.baseCi = Option.some(GREEN);
-            }
-
-            const found = yield* woken(fake);
-            expect(found.map((work) => [work.key, work.signals, work.wakeOnly])).toEqual([
-              ["hold", [PullRequest.BASE_GREEN], true],
-            ]);
-            yield* deliverSignals(holding, IMPLICIT, found);
-
-            return false;
+            return {
+              parked: ended,
+              atPark: state,
+              stillRed: red,
+              found: green,
+              finished: yield* takeUp(holding, green),
+            };
           }),
         );
 
-        expect(held).toBe(true);
-        expect(finished.status).toBe("done");
-        expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+        // The park ended the run; nothing was merged or handed to a person.
+        expect(parked.status).toBe("ended-at-park");
+        expect(atPark).toEqual({ merges: [], labels: [SHIP] });
+        expect(
+          fake.comments.filter((comment) =>
+            comment.body.startsWith("Holding the merge: CI is failing on `main`."),
+          ),
+        ).toHaveLength(1);
+        expect(stillRed).toEqual(Option.none());
+        // Green: work a run may start, from the pull request's merge-held record.
+        expect(found.map((work) => [work.key, work.signals, mayStart(work)])).toEqual([
+          ["hold", [PullRequest.BASE_GREEN], true],
+        ]);
+
+        const merged = yield* Effect.fromOption(finished).pipe(Effect.orDie);
+        expect(merged.status).toBe("done");
+        expect(merged.id).not.toBe(parked.id);
+        expect(summaryOf(merged)).toBe(`#${PULL} merged (squash) as \`merged9\``);
         expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+        expect(fake.labelsOf(PULL)).toEqual([SHIP]);
       }),
+  );
+
+  effect("holds the merge with the run's record, naming the work item that holds it", () =>
+    Effect.gen(function* () {
+      const fake = approved(RED);
+      const parked = yield* runToEnd(holding, fake, WORK);
+
+      expect(parked.status).toBe("ended-at-park");
+      expect(fake.merge.requests).toEqual([]);
+      expect(fake.labelsOf(PULL)).toEqual([SHIP]);
+      expect(fake.phases()[`pr-${PULL}`]).toBe("merge-held");
+      expect(
+        Option.flatMap(Option.fromUndefinedOr(fake.records().get(`pr-${PULL}`)), (record) =>
+          Option.map(record.data, (data) => data.key),
+        ),
+      ).toEqual(Option.some("hold"));
+    }),
   );
 
   effect("merges at once while the base is green, or has no completed run yet", () =>
@@ -197,43 +211,59 @@ describe("holding a merge on a red base branch", () => {
     }),
   );
 
-  effect("hands the pull request to a person when woken still red past mergeHoldTimeout", () =>
-    Effect.gen(function* () {
-      const fake = approved(RED);
+  effect(
+    "hands the pull request to a person when a new run takes the hold up still red past mergeHoldTimeout",
+    () =>
+      Effect.gen(function* () {
+        const fake = approved(RED);
 
-      const capped = withSettings({
-        holdMergesOnBrokenBase: true,
-        mergeHoldTimeout: "10 millis",
-      });
+        const capped = withSettings({
+          holdMergesOnBrokenBase: true,
+          mergeHoldTimeout: "10 minutes",
+        });
 
-      // Woken while the base is still red, as a flapping base can, a poll
-      // (25ms) after it parked, once the cap has passed.
-      let polls = 0;
+        const { finished, found, parked } = yield* onEngine(
+          capped,
+          fake,
+          Effect.gen(function* () {
+            const ended = yield* follow(capped, WORK);
 
-      const finished = yield* runUntil(capped, fake, WORK, (run) =>
-        Effect.gen(function* () {
-          if (run.status !== "running") {
-            return true;
-          }
+            // The hold began past the cap: its record says it began an hour ago.
+            const record = yield* Effect.fromOption(
+              Option.fromUndefinedOr(fake.records().get(`pr-${PULL}`)),
+            ).pipe(Effect.orDie);
 
-          if (yield* parkedOnBase(run)) {
-            polls += 1;
-          }
+            fake.recordPhase(`pr-${PULL}`, record.phase, {
+              at: DateTime.subtract(record.at, { hours: 1 }),
+              data: Option.getOrElse(record.data, () => ({})),
+            });
 
-          if (polls > 1) {
-            yield* deliverSignals(capped, IMPLICIT, [
-              { ...WORK, signals: [PullRequest.BASE_GREEN], wakeOnly: true },
-            ]);
-          }
+            // Still red, but due: heldMerges offers the hold without a signal.
+            const due = yield* triggered(
+              fake,
+              Effect.provideService(
+                PullRequest.heldMerges(() => true),
+                Settings.FlowSettings,
+                {
+                  input: { ...HOLDING, mergeHoldTimeout: "10 minutes" },
+                },
+              ),
+            ).pipe(Effect.orDie);
 
-          return false;
-        }),
-      );
+            return { parked: ended, found: due, finished: yield* takeUp(capped, due) };
+          }),
+        );
 
-      expect(finished.status).toBe("needs-human");
-      expect(summaryOf(finished)).toContain("CI on main stayed red for 10ms");
-      expect(fake.merge.requests).toEqual([]);
-    }),
+        expect(parked.status).toBe("ended-at-park");
+        expect(
+          found.map((work) => [work.key, Option.fromUndefinedOr(work.signals), mayStart(work)]),
+        ).toEqual([["hold", Option.none(), true]]);
+
+        const handed = yield* Effect.fromOption(finished).pipe(Effect.orDie);
+        expect(handed.status).toBe("needs-human");
+        expect(summaryOf(handed)).toContain("CI on main stayed red for 10m");
+        expect(fake.merge.requests).toEqual([]);
+      }),
   );
 
   effect(
@@ -256,27 +286,31 @@ describe("holding a merge on a red base branch", () => {
         // The hold sees it green, merge sees it red, and the next hold red again.
         fake.merge.baseCiReads.push(GREEN, RED, RED);
         const work = item("merge-holding");
-        let held = false;
 
-        const finished = yield* runUntil(holding, fake, work, (run) =>
+        const { atPark, finished, parked } = yield* onEngine(
+          holding,
+          fake,
           Effect.gen(function* () {
-            if (run.status !== "running") {
-              return true;
-            }
+            const ended = yield* follow(holding, work);
+            const merges = [...fake.merge.requests];
+            const phase = fake.phases()[`pr-${PULL}`];
 
-            if (yield* parkedOnBase(run)) {
-              held = true;
-              expect(fake.merge.requests).toEqual([]);
-              yield* deliverSignals(holding, IMPLICIT, yield* woken(fake));
-            }
-
-            return false;
+            return {
+              parked: ended,
+              atPark: { merges, phase },
+              finished: yield* takeUp(holding, yield* offered(fake)),
+            };
           }),
         );
 
-        expect(held).toBe(true);
-        expect(finished.status).toBe("done");
-        expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+        // Held again, not handed to a person: the run ended at its park, with
+        // the hold in its record and nothing merged.
+        expect(parked.status).toBe("ended-at-park");
+        expect(atPark).toEqual({ merges: [], phase: "merge-held" });
+
+        const merged = yield* Effect.fromOption(finished).pipe(Effect.orDie);
+        expect(merged.status).toBe("done");
+        expect(summaryOf(merged)).toBe(`#${PULL} merged (squash) as \`merged9\``);
         expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
       }),
   );
