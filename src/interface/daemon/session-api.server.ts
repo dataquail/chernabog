@@ -14,9 +14,12 @@
 // Every request carries its session's token as `Authorization: Bearer`. The
 // listener derives the token from the run and session the path names, with
 // the key it drew as it opened (session-token.ts), and refuses any other; so
-// a token reaches its own session's routes alone. It refuses every route of
-// a run that isn't live, which is how a token is revoked: its run ending.
-// A request with an Origin header, a browser's, is refused.
+// a token reaches its own session's routes alone. The session must also be
+// one its run launched, as its launch record says, so a run's key reaches
+// none of another run's sessions. A token is revoked once its session ends
+// (its `chernabog __launch` no longer runs, by agent.pid) or its run does:
+// every route of either is refused with a 410. A request with an Origin
+// header, a browser's, is refused.
 //
 // The routes act on the session dir in the chernabog home, as the hooks do:
 // stop and question decide exactly what `__stop-hook` and `__question-hook`
@@ -41,6 +44,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   checkAnswer,
   knownLaunch,
+  launchRuns,
   questionHook,
   readText,
   sessionFiles,
@@ -126,9 +130,19 @@ export const openSessionApi = (options: SessionApiOptions) =>
     const hubKey = yield* newHubKey;
     const keyOf = (runId: string) => runKey(hubKey, runId);
 
-    // The routes change a session's files a step at a time; one at a time
-    // keeps two calls from interleaving their reads and writes.
-    const lock = yield* Semaphore.make(1);
+    // The routes change a session's files a step at a time; one call at a
+    // time per session keeps two from interleaving their reads and writes,
+    // while one session's slow git check holds up no other session. A lock
+    // is a few bytes, and a hub sees few sessions before it restarts.
+    const locks = new Map<string, Semaphore.Semaphore>();
+
+    const lockOf = (sessionId: string) =>
+      Option.getOrElse(Option.fromUndefinedOr(locks.get(sessionId)), () => {
+        const made = Semaphore.makeUnsafe(1);
+        locks.set(sessionId, made);
+
+        return made;
+      });
 
     const stop = (dir: string, files: ReturnType<typeof sessionFiles>) =>
       Effect.gen(function* () {
@@ -212,20 +226,27 @@ export const openSessionApi = (options: SessionApiOptions) =>
 
       const files = sessionFiles(options.root, sessionId);
 
-      if (!(yield* fs.exists(files.dir))) {
-        return yield* refuse(404, `no session ${sessionId}`);
-      }
+      return yield* Effect.gen(function* () {
+        const launch = yield* knownLaunch(files);
 
-      switch (name) {
-        case "stop":
-          return yield* stop(files.dir, files);
-        case "question":
-          return yield* question(files.dir);
-        case "answer":
-          return yield* answer(files);
-      }
+        if (!Option.exists(launch, (record) => record.runId === runId)) {
+          return yield* refuse(404, `no session ${sessionId} in run ${runId}`);
+        }
+
+        if (!(yield* launchRuns(files))) {
+          return yield* refuse(410, `session ${sessionId} has ended; nothing waits on it`);
+        }
+
+        switch (name) {
+          case "stop":
+            return yield* stop(files.dir, files);
+          case "question":
+            return yield* question(files.dir);
+          case "answer":
+            return yield* answer(files);
+        }
+      }).pipe(lockOf(sessionId).withPermits(1));
     }).pipe(
-      lock.withPermits(1),
       Effect.catchCause((cause) =>
         options
           .log(`session API: ${describe(cause)}`)

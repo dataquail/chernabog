@@ -222,18 +222,21 @@ token from the path's run and session ids and comparing it in constant time.
 That way:
 
 - a token reaches only its own session's routes, because a token for one
-  session id is never another's, and the listener has no other routes;
+  session id is never another's, and the listener has no other routes. The
+  session's launch record also names the run that launched it, and the hub
+  checks it against the path's run, so a run's key reaches no other run's
+  sessions;
 - the spoke mints a token without telling the hub, which ADR 23 forbids,
   and the hub needs no store of tokens;
 - **a token is revoked when its session ends** (decision 8), checked on
   disk on every request, so the hub still stores no tokens. A session has
   ended once the `__launch` that runs it has: its `agent.pid` is gone
-  (`__launch` removes it as it exits) or names no live process. The file
-  holds the PID and, once #713 adds it, the process's start time, and the
-  hub checks both, as
-  ADR 23's `processIdentity` does, so a reused PID doesn't keep a session
-  alive. Closing a session by its launcher handle, a hangup on its terminal
-  and the agent exiting all end its `__launch`, so each revokes the token.
+  (`__launch` removes it as it exits) or names no live process. The hub
+  checks that the PID's command line names the session's own launch spec,
+  as the agent adapter already does before it trusts a launcher, so a
+  reused PID doesn't keep a session alive. Closing a session by its
+  launcher handle, a hangup on its terminal and the agent exiting all end
+  its `__launch`, so each revokes the token.
   A new call that resumes the same session starts a new `__launch`, and
   the session's token works again while it runs: it is the same session.
 - **the run ending revokes too.** The hub also refuses every route of a run

@@ -13,6 +13,7 @@ import {
   type Json,
   parseJson,
   printJson,
+  Run,
 } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -24,7 +25,6 @@ import * as Schema from "effect/Schema";
 
 import { claudeHomeOf } from "../../../../../platform/agent-accounts.ts";
 import { type Environment } from "../../../../../platform/environment.ts";
-import { Exec } from "../../../../../platform/exec.ts";
 import { Home } from "../../../../../platform/home.ts";
 import { selfCommand } from "../../../../../platform/self.ts";
 import { type Launcher, launcherFor } from "../launchers.ts";
@@ -41,6 +41,7 @@ import {
   Done,
   knownLaunch,
   LaunchRecord,
+  launchRuns,
   readDecoded,
   readText,
   SESSION_ENV,
@@ -143,27 +144,6 @@ const callOf = (request: AgentRequest) =>
 
 type Running = { readonly launcher: Launcher; readonly handle: string };
 
-const Pid = Schema.fromJsonString(Schema.Int);
-
-// Whether the `chernabog __launch` process of this session still runs, whatever
-// its launcher says: a launcher can be wrong, and a second agent on one session
-// and worktree is worse than waiting. A pid since reused by another process
-// doesn't count, because only this session's launch runs with its spec.
-const agentProcessRuns = (files: SessionFiles) =>
-  Effect.gen(function* () {
-    const pid = Option.flatMap(yield* readText(files.pid), (text) =>
-      Schema.decodeOption(Pid)(text.trim()),
-    );
-
-    if (Option.isNone(pid)) {
-      return false;
-    }
-
-    const ps = yield* (yield* Exec).run("ps", ["-o", "command=", "-p", String(pid.value)]);
-
-    return ps.exitCode === 0 && ps.stdout.includes(files.spec);
-  }).pipe(Effect.orElseSucceed(() => false));
-
 // The recorded session, if its launcher says it still runs.
 const liveSession = (files: SessionFiles) =>
   Effect.gen(function* () {
@@ -181,7 +161,7 @@ const liveSession = (files: SessionFiles) =>
 
     const alive =
       (yield* launcher.value.alive(record.value.handle).pipe(Effect.orElseSucceed(() => false))) ||
-      (yield* agentProcessRuns(files));
+      (yield* launchRuns(files));
 
     return Option.liftPredicate(
       { launcher: launcher.value, handle: record.value.handle },
@@ -290,12 +270,12 @@ const waitForEnd = (
           yield* log(`claude: ${running.launcher.name} isn't answering: ${alive.failure.message}`);
         }
 
-        if (unanswered >= MAX_UNANSWERED && !(yield* agentProcessRuns(files))) {
+        if (unanswered >= MAX_UNANSWERED && !(yield* launchRuns(files))) {
           return;
         }
       } else if (alive.success || (yield* comingUp)) {
         unanswered = 0;
-      } else if (yield* agentProcessRuns(files)) {
+      } else if (yield* launchRuns(files)) {
         if (!disagreed) {
           yield* log(
             `claude: ${running.launcher.name} says the session ended, but its process still runs; waiting on it`,
@@ -366,6 +346,7 @@ const start = (
     });
 
     const at = DateTime.formatIso(yield* DateTime.now);
+    const run = yield* Effect.serviceOption(Run);
     yield* fs.writeFileString(
       files.launch,
       yield* Schema.encodeEffect(LaunchRecord)({
@@ -373,6 +354,7 @@ const start = (
         handle,
         at,
         withPerson: request.withPerson === true,
+        ...Option.match(run, { onNone: () => ({}), onSome: ({ runId }) => ({ runId }) }),
       }),
     );
 

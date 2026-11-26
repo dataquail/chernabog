@@ -119,6 +119,7 @@ export {
 export { REHEARSAL } from "./infrastructure/runtime/agents/rehearsal.ts";
 export {
   knownLaunch,
+  launchRuns,
   readDecoded,
   readText,
   SESSION_ENV,
