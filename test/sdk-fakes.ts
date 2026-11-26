@@ -1640,22 +1640,36 @@ export const foldRun = (runId: RunId) =>
     );
   });
 
-// Folds a run's journal, and ends the run once it reaches its boundary, as a
-// process that is its own hub does (own-hub.main.ts): its workflow ended, or
-// it parked, which ends it `ended-at-park` (ADR 23, decision 2). Nothing
-// wakes a parked run: a later run takes its item up from its record.
-export const pollRun = (run: EngineRun) =>
+// A run as it now stands in state.db; `run` itself if it's gone.
+const current = (run: EngineRun) =>
+  Effect.map(
+    RunsQueries.use((runs) => runs.FindRunQuery({ runId: run.id })),
+    (found) =>
+      Option.getOrElse(
+        Option.map(found.run, (one): EngineRun => one),
+        () => run,
+      ),
+  );
+
+// Folds a run's journal and looks at it, as a process that is its own hub
+// does each poll (own-hub.main.ts): a workflow that ended ends the run, as it
+// said. Whether it parked, which the hub ends next (endAtPark): until then,
+// its waits are still recorded, for anyone reading it.
+const lookAt = (run: EngineRun) =>
   Effect.gen(function* () {
     yield* foldRun(run.id);
 
-    const found = (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run;
-
-    for (const current of Option.toArray(Option.filter(found, (one) => one.status === "running"))) {
-      for (const executionId of Option.toArray(current.executionId)) {
+    for (const running of Option.toArray(
+      Option.filter(
+        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
+        (one) => one.status === "running",
+      ),
+    )) {
+      for (const executionId of Option.toArray(running.executionId)) {
         const outcome = yield* (yield* RunFlowsQueries).PollExecutionQuery({
           runId: run.id,
           executionId,
-          flow: { repo: current.repo, flow: current.flow, persona: current.persona },
+          flow: { repo: running.repo, flow: running.flow, persona: running.persona },
         });
 
         for (const ended of Option.toArray(outcome.ended)) {
@@ -1664,42 +1678,58 @@ export const pollRun = (run: EngineRun) =>
             summary: ended.summary,
           }));
         }
-
-        if (Option.isNone(outcome.ended) && parkedRuns.has(run.id)) {
-          // What its journal holds by its park first, as the own hub folds before it ends one.
-          yield* foldRun(run.id);
-
-          waitsAtPark.set(
-            run.id,
-            (yield* readRunHistoryHandler({ runId: run.id })).waits.map((wait) => ({
-              signal: wait.signal,
-              deferred: wait.deferred,
-            })),
-          );
-
-          // Its claims go, as a spoke's do when its run stops at a park, so the
-          // run that takes its item up may claim it (ci-run.main.ts's wrap-up).
-          const release = yield* ReleaseAtPark;
-
-          for (const claim of yield* heldClaims(run.id)) {
-            yield* release(claim);
-          }
-
-          yield* endAsSaid(run.id, endingAt({ kind: "parked" }), () => ({
-            status: "failed",
-            summary: "it parked without saying how",
-          }));
-        }
       }
     }
 
-    return Option.getOrElse(
-      Option.map(
-        (yield* (yield* RunsQueries).FindRunQuery({ runId: run.id })).run,
-        (current): EngineRun => current,
-      ),
-      () => run,
+    const now = yield* current(run);
+
+    return { run: now, parked: now.status === "running" && parkedRuns.has(run.id) };
+  });
+
+// Ends a run that parked at its park, as the own hub ends one: what its
+// journal holds by then folded, its claims let go, as a spoke's are when its
+// run stops at a park (ci-run.main.ts's wrap-up), so the run that takes its
+// item up may claim it, and the run ended `ended-at-park` (ADR 23, decision
+// 2). The waits it parked on are kept for parkedOn.
+const endAtPark = (run: EngineRun) =>
+  Effect.gen(function* () {
+    yield* foldRun(run.id);
+
+    waitsAtPark.set(
+      run.id,
+      (yield* readRunHistoryHandler({ runId: run.id })).waits.map((wait) => ({
+        signal: wait.signal,
+        deferred: wait.deferred,
+      })),
     );
+
+    const release = yield* ReleaseAtPark;
+
+    for (const claim of yield* heldClaims(run.id)) {
+      yield* release(claim);
+    }
+
+    yield* endAsSaid(run.id, endingAt({ kind: "parked" }), () => ({
+      status: "failed",
+      summary: "it parked without saying how",
+    }));
+
+    return yield* current(run);
+  });
+
+// Folds a run's journal, and ends the run once it reaches its boundary, as a
+// process that is its own hub does: its workflow ended, or it parked, which
+// ends it `ended-at-park` (ADR 23, decision 2). Nothing wakes a parked run: a
+// later run takes its item up from its record.
+export const pollRun = (run: EngineRun) =>
+  Effect.gen(function* () {
+    const looked = yield* lookAt(run);
+
+    if (looked.parked) {
+      return yield* endAtPark(looked.run);
+    }
+
+    return looked.run;
   }).pipe(Effect.orDie);
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
@@ -1789,13 +1819,24 @@ export const follow = (
     return yield* startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
       Effect.flatMap((started) =>
-        pollRun(started).pipe(
-          Effect.tap((polled) =>
+        lookAt(started).pipe(
+          // A run that parked is read as it stood at its park, its waits still
+          // recorded, before it is ended there.
+          Effect.flatMap((looked) =>
+            until(looked.run).pipe(
+              Effect.flatMap((done) =>
+                Effect.map(
+                  Effect.when(endAtPark(looked.run), Effect.succeed(looked.parked)),
+                  (ended) => ({ polled: Option.getOrElse(ended, () => looked.run), done }),
+                ),
+              ),
+            ),
+          ),
+          Effect.tap((step) =>
             Effect.sync(() => {
-              last = Option.some(polled);
+              last = Option.some(step.polled);
             }),
           ),
-          Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: (step) => step.done || !isRunning(step.polled),

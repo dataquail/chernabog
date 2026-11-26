@@ -146,7 +146,7 @@ describe("the plan document in a CI job", () => {
         const flow = yield* loaded;
         const { fake, run } = yield* parked(flow);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.phases()[SPEC_ITEM]).toBe("proposed");
 
         const data = rawData(fake, SPEC_ITEM);
@@ -211,7 +211,7 @@ describe("the plan document in a CI job", () => {
           waitsOn("approved", "plan-3"),
         );
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         // One draft, round 3's, with what the person asked for.
         expect(fake.requests).toHaveLength(1);
         expect(fake.requests[0]?.prompt).toContain("Split the API in two.");
@@ -308,7 +308,7 @@ describe("pr.land's merge hold in a CI job", () => {
         const flow = yield* loaded;
         const { fake, run } = yield* parked(flow);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.phases()[PR_ITEM]).toBe("merge-held");
 
         const data = rawData(fake, PR_ITEM);
