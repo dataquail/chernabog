@@ -457,6 +457,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       });
     }
 
+    // Its sessions are closed first (ADR 23, decision 4, step 5): an agent
+    // still working in a worktree as it is removed would go on spending in
+    // it, may write into its path after it's gone, where the next run on the
+    // item makes its worktree, and could commit after the check that keeps a
+    // worktree holding work. A session still starting would instead find its
+    // worktree gone and exit before it could be closed by its handle (#737).
+    const { closedSessions, openSessions } = yield* closeSessionsLeft(
+      yield* sessionsLeft(cancelled, spoke),
+      leftForPerson,
+    );
+
     // Worktrees another run in flight on the same issue or pull request may be
     // using stay, for the last run on it, or a person, to remove.
     const sharing = RunRootOps.sharingTarget(
@@ -495,11 +506,6 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     // The claim ref goes first: it is what holds the issue or pull request.
     const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
     const released = yield* releaseIssueClaim(cancelled, leftForPerson);
-
-    const { closedSessions, openSessions } = yield* closeSessionsLeft(
-      yield* sessionsLeft(cancelled, spoke),
-      leftForPerson,
-    );
 
     yield* tellEnded(cancelled);
 

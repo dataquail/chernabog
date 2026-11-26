@@ -360,8 +360,9 @@ takes up its phase again from the ledger, and every other run carries on.
       its last steps and markers land and its ending releases them;
    4. deletes the journal (`WorkflowsClient.discard`);
    5. records the run `cancelled` and clears its waits;
-   6. cleans up: the run's worktrees, its claim ref, the issue's claim, and
-      its agent sessions (below);
+   6. cleans up: its agent sessions (below) first, so no agent still works
+      in a worktree as it's removed (#737), then the run's worktrees, its
+      claim ref and the issue's claim;
    7. dispatches `RunFinished`, which releases the markers the ending
       releases, and only then answers, saying how the spoke exited
       (`CancelledRun.spokeExited`).
@@ -652,6 +653,8 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
 - **5.** **Open:** sessions close only with `--close-session` (#688), for
   the owner. The ending is recorded before cleanup (#688). An ending asked
   before the spoke's record exists is written to it once it does (#667).
+  Cleanup closes the sessions before it removes the worktrees, as decision
+  4 has it (#737).
 - **6.** The hub folds before checking leases (#688). `lost` and
   `superseded` take the cancel path (#688).
 - **7.** Stdin closing signals the whole group, and any stop on a signal

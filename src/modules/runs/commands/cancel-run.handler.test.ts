@@ -964,6 +964,9 @@ describe("cancelRunHandler", () => {
         expect(yield* statusOf("a")).toEqual(Option.some("failed"));
         expect(boundHoldings.closed).toEqual(["term-1"]);
         expect(failed.openSessions).toEqual([]);
+        // Its sessions closed before its worktrees went, so a session still
+        // starting can't find its worktree gone and exit unclosed (#737).
+        expect(boundHoldings.steps).toEqual(["closed term-1", "removed the worktrees of a"]);
         expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RunFinished"]);
       }).pipe(Effect.provide(inSpoke(boundEngine, boundHoldings, boundSeen))),
   );
