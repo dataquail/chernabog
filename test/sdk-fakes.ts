@@ -1532,8 +1532,8 @@ export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 // at its park.
 const parkedRuns = new Set<RunId>();
 
-// The parked runs a poll has seen parked already (lookAt).
-const seenParked = new Set<RunId>();
+// The waits each parked run had recorded when a poll last looked (lookAt).
+const seenParked = new Map<RunId, string>();
 
 // What each run that ended at its park was waiting on then, by run: its waits
 // go with it, and a test may ask which signal it parked on (parkedOn).
@@ -1686,16 +1686,23 @@ const lookAt = (run: EngineRun) =>
 
     const now = yield* current(run);
 
-    // A park is ended a poll after it was first seen, as the own hub, which
-    // looks at its parked set between polls a second apart, ends one: an
-    // awaitSignal on several signals records its waits one at a time, and
-    // its engine tells the park at the first.
+    // A park is ended once its recorded waits are the same two polls running,
+    // as the own hub, which looks at its parked set between polls a second
+    // apart, ends one: an awaitSignal on several signals records its waits
+    // one at a time, and its engine tells the park at the first.
     const told = now.status === "running" && parkedRuns.has(run.id);
-    const parked = told && seenParked.has(run.id);
 
-    if (told) {
-      seenParked.add(run.id);
+    if (!told) {
+      return { run: now, told, parked: false };
     }
+
+    const waits = (yield* readRunHistoryHandler({ runId: run.id })).waits
+      .map((wait) => wait.deferred)
+      .toSorted()
+      .join(" ");
+
+    const parked = Option.contains(Option.fromUndefinedOr(seenParked.get(run.id)), waits);
+    seenParked.set(run.id, waits);
 
     return { run: now, told, parked };
   });
