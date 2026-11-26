@@ -149,6 +149,24 @@ launcher terminal (Orca tab, tmux pane)
    `ps -a --filter label=chernabog.run=<id>`), never by name. The sweep
    removes any labelled container whose run has ended (#721).
 
+   **(#721 amends:** cancel, and so a bound's ending and the reap, which end
+   a run through it, removes the run's containers on the runtime the run's
+   repo's sandbox names for its persona, after closing the sessions it was
+   asked to and before it records the ending, **except those of the
+   sessions it leaves open**: a person's that the reap spares, or any
+   without `--close-session`. Such a session's own `__launch` removes its
+   container as it exits, as on a hangup, and removing it here would close
+   a session cancel says it left open. A container cancel can't remove is
+   left for a person, and the sweep tries it again. The sweep is the
+   daemon's, at its start and every minute: on each runtime its repos'
+   personas resolved, it lists every container with a `chernabog.run`
+   label and reads both labels with `inspect`, and removes those whose run
+   isn't running in state.db and whose session's `__launch` isn't running
+   (checked as the session API checks it, by `agent.pid` and that the
+   process's command line names the session's spec). A runtime that
+   doesn't answer is logged when what it says changes, and keeps no other
+   runtime from its sweep.**)**
+
 10. **The local gate runs in the repo's image** when the repo has a
     sandbox, with the worktree and common git dir mounted as for the agent
     and no credentials or session mounts (#722). **So does the repo's
