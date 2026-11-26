@@ -27,7 +27,7 @@ import type { StandIns } from "../../../../kernel/stand-in.value-object.ts";
 import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
 import type { Exec } from "../../../../platform/exec.ts";
-import { GitHubTokens } from "../../../../platform/github-auth.ts";
+import { gitCredentialEnv, GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { SessionApiAccess, sessionEndpoint } from "../../../../platform/session-api-access.ts";
 import { SESSION_API_LOOPBACK } from "../../../../platform/session-token.ts";
@@ -114,6 +114,21 @@ export const adaptersFor = (agents: AgentsConfig): ReadonlyArray<Adapter> => {
     ...custom,
   ];
 };
+
+// What the agent's gh and git run as: the persona's token. On the host the
+// implicit persona is gh's own login; a sandboxed session can't reach it, so
+// it gets that login's token as GH_TOKEN, as a named persona does (ADR 24,
+// decision 7).
+const personaEnvironment = (persona: Persona, sandboxed: boolean) =>
+  Effect.gen(function* () {
+    const tokens = yield* GitHubTokens;
+
+    if (Option.isSome(persona) || !sandboxed) {
+      return yield* tokens.env(persona);
+    }
+
+    return { GH_TOKEN: yield* tokens.token(persona), ...gitCredentialEnv } satisfies Environment;
+  });
 
 const logOf = Effect.serviceOption(RunLog).pipe(
   Effect.map(
@@ -241,9 +256,10 @@ export const AgentLive = (
 
             const env = {
               ...settings.env,
-              ...(yield* tokens
-                .env(persona)
-                .pipe(Effect.mapError((error) => new AgentError({ message: error.message })))),
+              ...(yield* personaEnvironment(persona, sandbox.name !== "none").pipe(
+                Effect.provideService(GitHubTokens, tokens),
+                Effect.mapError((error) => new AgentError({ message: error.message })),
+              )),
             };
 
             const activity = yield* CurrentActivity;

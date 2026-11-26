@@ -67,6 +67,7 @@ import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
 import { runTui } from "../tui/app.ts";
 import { showStatus, statusCommand } from "../tui/status.ts";
+import { accountsCommand } from "./accounts.main.ts";
 import { Asker } from "./asker.prompt.ts";
 import { cancelRun } from "./cancel.main.ts";
 import { ciCommand } from "./ci.main.ts";
@@ -453,6 +454,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     }),
     doctorCommand,
     machineEndpoints.setup,
+    accountsCommand({ accounts: Effect.map(loadMachineConfig, (machine) => machine.accounts) }),
     initCommand(ciWorkflowAccess),
     recipesEndpoints.recipes,
     enrollmentEndpoints.enroll,

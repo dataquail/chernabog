@@ -62,6 +62,10 @@ export const homePaths = (root: string) => ({
   dashboardToken: `${root}/dashboard.token`,
   // Each GitHub App's private key (#481), which only the person may read.
   appKey: (slug: string) => `${root}/keys/${slug}.pem`,
+  // Each Claude account's `claude setup-token` token, which a sandboxed
+  // session signs in with (ADR 24, decision 7), only the person may read.
+  claudeTokens: `${root}/keys/claude`,
+  claudeToken: (account: string) => `${root}/keys/claude/${account}.token`,
   runs: `${root}/runs`,
   runLog: (runId: string) => `${root}/runs/${runId}.log`,
   sessions: `${root}/sessions`,

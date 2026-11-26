@@ -9,10 +9,13 @@ import { AgentError, type AgentRequest, printJson, Run } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 
-import { claudeTokenVariables } from "../../../../../platform/agent-accounts.ts";
-import { type Environment, withVariables } from "../../../../../platform/environment.ts";
+import { CLAUDE_OAUTH_TOKEN } from "../../../../../platform/agent-accounts.ts";
+import { setTokenCommand, storedClaudeToken } from "../../../../../platform/claude-tokens.ts";
+import { type Environment } from "../../../../../platform/environment.ts";
 import { Exec } from "../../../../../platform/exec.ts";
+import { gitCredentialEnv } from "../../../../../platform/github-auth.ts";
 import {
   type ContainerMount,
   type ContainerSpec,
@@ -21,7 +24,7 @@ import {
   unmountable,
 } from "../launchers/container.ts";
 import { sandboxImage } from "../sandboxes.ts";
-import { type AdapterContext, API_KEYS } from "./adapter.ts";
+import { type AdapterContext } from "./adapter.ts";
 import { type SessionFiles } from "./session-files.ts";
 
 // The repo's common git dir, by absolute path, as git names it from the worktree.
@@ -83,15 +86,35 @@ export const sandboxClaudeSeed = (cwd: string) =>
     projects: { [cwd]: { hasTrustDialogAccepted: true } },
   });
 
-// The session's own variables, the persona's (context.env, less the PATH a
-// repo pins for the host) and the account's token, and nothing of the host's.
+// Of the persona's variables, its GH_TOKEN and the git config that answers
+// github.com with it: the one credential a session gets besides Claude's
+// (ADR 24, decision 7). Not GITHUB_TOKEN, the same token by another name.
+const PERSONA_VARIABLES: ReadonlyArray<string> = ["GH_TOKEN", ...Object.keys(gitCredentialEnv)];
+
+// The session's own config dir, the account's Claude token and the persona's
+// GH_TOKEN, and nothing else: none of the host's variables, nor anything
+// else the repo or persona adds (the PATH a repo pins names nothing in the image).
 export const sandboxedClaudeEnvironment = (
   context: AdapterContext,
   configDir: string,
+  claudeToken: string,
 ): Environment => ({
-  ...withVariables(context.env, { CLAUDE_CONFIG_DIR: configDir }, [...API_KEYS, "PATH", "HOME"]),
-  ...claudeTokenVariables(context.account, context.host),
+  ...Record.filter(context.env, (_, name) => PERSONA_VARIABLES.includes(name)),
+  CLAUDE_CONFIG_DIR: configDir,
+  [CLAUDE_OAUTH_TOKEN]: claudeToken,
 });
+
+// A sandboxed session can't read the macOS Keychain, so it signs in with the
+// token stored for its account, and is refused without one (decision 2).
+const accountToken = (context: AdapterContext) =>
+  Effect.flatMap(storedClaudeToken(context.account.name), Effect.fromOption).pipe(
+    Effect.mapError(
+      () =>
+        new AgentError({
+          message: `claude: sandbox ${context.sandbox.name}: account ${context.account.name} has no Claude token for a sandboxed session, which can't read the login on this machine: run \`claude setup-token\` as that account, then pipe or paste the token it prints into \`${setTokenCommand(context.account.name)}\``,
+        }),
+    ),
+  );
 
 export const sandboxedLaunch = (
   request: AgentRequest,
@@ -107,6 +130,7 @@ export const sandboxedLaunch = (
       ),
     );
 
+    const claudeToken = yield* accountToken(context);
     const common = yield* commonGitDir(request.cwd);
     yield* fs.makeDirectory(files.claude, { recursive: true });
 
@@ -149,7 +173,7 @@ export const sandboxedLaunch = (
     };
 
     const env = {
-      ...sandboxedClaudeEnvironment(context, files.claude),
+      ...sandboxedClaudeEnvironment(context, files.claude, claudeToken),
       ...(yield* gitIdentity(request.cwd)),
     };
 
