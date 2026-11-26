@@ -26,7 +26,7 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // which phase the ledger had for the item, then records its phase. An issue
 // titled "hold ..." with no phase yet holds the run in a long step, so a test
 // can stop the daemon under it; one titled "slow ..." takes a few seconds,
-// saying when it started and ended. One titled "park ..." parks on `go`,
+// saying when it started and ended. One titled "park ..." also claims a group (`group-<item>`), parks on `go`,
 // recording `waiting`: its trigger holds it there until the issue is
 // labelled `go`, and then offers it, for a run that takes it up from that
 // record. One titled "lanes ..." with no phase yet holds the run in two lanes
@@ -59,6 +59,10 @@ export default defineFlow({
       const issue = yield* Implement.issueOf(item);
       const title = item.title ?? "";
       yield* activity("claim", Claims.acquire(item.key).pipe(Effect.asVoid));
+
+      if (title.startsWith("park")) {
+        yield* activity("claim-group", Claims.acquire(\`group-\${item.key}\`).pipe(Effect.asVoid));
+      }
 
       const pid = yield* activity("pid", Effect.sync(() => String(process.pid)), Schema.String);
 
@@ -455,10 +459,13 @@ describe("the daemon as a hub of spokes", () => {
 
     expect(parked.before).toBe("none");
     expect(phasesOf(issue)).toEqual(["working", "waiting"]);
-    // Its claim went with its run, so a run anywhere may take the item up.
+    // Its claims went with its run, its item's and the other it took (as an
+    // epic's run takes `epic-<n>`), so a run anywhere may take the item up.
     await waitFor(
-      () => Option.isNone(sandbox.github.refSha(claimRef(issue))),
-      "the parked run's claim to be released",
+      () =>
+        Option.isNone(sandbox.github.refSha(claimRef(issue))) &&
+        Option.isNone(sandbox.github.refSha(`refs/chernabog/claims/group-issue-${issue}`)),
+      "the parked run's claims to be released",
     );
 
     // Nothing runs for the item while it waits: its trigger holds it.

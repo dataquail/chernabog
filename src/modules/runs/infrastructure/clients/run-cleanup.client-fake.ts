@@ -14,8 +14,9 @@ import { CleanupFailed } from "../../domain/run/run.errors.ts";
 // What a test's runs hold, by run id, and what cleaning up did: the
 // worktrees each run's cleanup finds, the claim it releases, if any, the claim
 // refs that name it (`issue-<n>`, `pr-<n>`), the sessions it has open, and the
-// runs and issues cleaned up, the refs deleted, and sessions closed. A run
-// listed in `failing` fails every cleanup with its message.
+// runs and issues cleaned up, the refs deleted, and sessions closed, and the
+// order worktrees were removed and sessions closed in (`steps`). A run listed
+// in `failing` fails every cleanup with its message.
 export type FakeHoldings = {
   readonly worktrees: Record<string, WorktreeCleanup>;
   readonly claims: Record<string, ReleasedClaim>;
@@ -26,6 +27,7 @@ export type FakeHoldings = {
   readonly released: Array<number>;
   readonly deletedRefs: Array<string>;
   readonly closed: Array<string>;
+  readonly steps: Array<string>;
 };
 
 export const fakeHoldings = (held: Partial<FakeHoldings> = {}): FakeHoldings => ({
@@ -38,6 +40,7 @@ export const fakeHoldings = (held: Partial<FakeHoldings> = {}): FakeHoldings => 
   released: [],
   deletedRefs: [],
   closed: [],
+  steps: [],
   ...held,
 });
 
@@ -56,6 +59,7 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
           Effect.andThen(
             Effect.sync(() => {
               holdings.cleaned.push(run.id);
+              holdings.steps.push(`removed the worktrees of ${run.id}`);
 
               return Option.getOrElse(
                 Record.get(holdings.worktrees, run.id),
@@ -104,6 +108,7 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
       closeSession: (session) =>
         Effect.sync(() => {
           holdings.closed.push(session.handle);
+          holdings.steps.push(`closed ${session.handle}`);
         }),
     }),
   );

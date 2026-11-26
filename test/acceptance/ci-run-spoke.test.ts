@@ -3,7 +3,7 @@
 // state.db, and hands it over with `--run` and the run as recorded, with its
 // item. The spoke runs it in the machine's own home, in a journal of the
 // run's own, to its next phase boundary: it takes the item's claim, records
-// the phase, lets the claim go, and reports its steps and how its run ended
+// the phase, lets the claim go (at a park, its hub's ending does), and reports its steps and how its run ended
 // in its journal, for the hub to fold into state.db (#661) and end the run
 // with once it has exited (#659). It writes nothing to state.db. Its stdin
 // is a pipe the hub holds, and it stops when that closes.
@@ -234,7 +234,9 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(existsSync(join(sandbox.home, "state.db.lock"))).toBe(false);
   }, 120_000);
 
-  test("a run that parks reports its park, letting go of its claim", async () => {
+  // Its claims are let go by the ending its hub gives the run, after the
+  // fold, as its other markers are (#709): the spoke doesn't let go of them.
+  test("a run that parks reports its park, leaving its claim to its hub's ending", async () => {
     const { issue, runId, spoke } = await startSpoke("park on go");
     const { code, output } = await spoke.exited;
 
@@ -244,7 +246,8 @@ describe("chernabog ci run as a spoke on a machine", () => {
     expect(Option.map(reportedOf(runId), (said) => said.status)).toEqual(
       Option.some("ended-at-park"),
     );
-    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+    expect(output).not.toContain("let go of the claim");
+    expect(Option.isSome(sandbox.github.refSha(claimRef(issue)))).toBe(true);
   }, 120_000);
 
   test("writes nothing to state.db: its records are reports in its journal, for the hub", async () => {

@@ -17,8 +17,9 @@ import * as Schema from "effect/Schema";
 
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
-// Takes the issue's claim and records its phase; an issue titled "park ..."
-// parks on `go`, recording `waiting`, the first time.
+// Takes the issue's claim, and one on a group the issue is in (as an epic's
+// run claims `epic-<n>`, not its issue's), and records its phase; an issue
+// titled "park ..." parks on `go`, recording `waiting`, the first time.
 const PARKING = `import { activity, Claims, defineFlow, GitHub, Implement, Phases, reportAs } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -33,6 +34,7 @@ export default defineFlow({
   workflow: (item) =>
     Effect.gen(function* () {
       yield* activity("claim", Claims.acquire(item.key).pipe(Effect.asVoid));
+      yield* activity("claim-group", Claims.acquire(\`group-\${item.key}\`).pipe(Effect.asVoid));
 
       const before = yield* Phases.current(item.key);
 
@@ -45,6 +47,8 @@ export default defineFlow({
     }),
 });
 `;
+
+const claimRef = (item: string) => `refs/chernabog/claims/${item}`;
 
 // The run statuses state.db holds, oldest first.
 const statuses = (sandbox: Sandbox) => {
@@ -103,6 +107,27 @@ describe("the foreground run as its own hub", () => {
     expect(output).toContain("started ");
     expect(statuses(sandbox)).toEqual(["ended-at-park"]);
   }, 60_000);
+
+  // #709: the claims its records hold are let go at its park, not only its
+  // item's own, so the next run takes the item up at once rather than skip it
+  // until their lease runs out.
+  test("a run that parks lets go of every claim it holds, and the next run takes its item up", async () => {
+    const sandbox = sandboxFor();
+    sandbox.github.addIssue("park until go", ["fg"]);
+
+    const parked = await sandbox.runCli(["run", "fg", "--repo", "demo"]);
+
+    expect(parked.code).toBe(0);
+    expect(statuses(sandbox)).toEqual(["ended-at-park"]);
+    expect(sandbox.github.refSha(claimRef("issue-1"))).toEqual(Option.none());
+    expect(sandbox.github.refSha(claimRef("group-issue-1"))).toEqual(Option.none());
+
+    const taken = await sandbox.runCli(["run", "fg", "--repo", "demo"]);
+
+    expect(taken.code).toBe(0);
+    expect(taken.output).not.toContain("already claimed");
+    expect(statuses(sandbox)).toEqual(["ended-at-park", "done"]);
+  }, 90_000);
 
   test("a run a live process still owns is refused, and one whose process stopped ends as interrupted", async () => {
     const sandbox = sandboxFor();

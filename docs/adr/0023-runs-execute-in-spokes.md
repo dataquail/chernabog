@@ -108,7 +108,11 @@ takes up its phase again from the ledger, and every other run carries on.
       a `RunEnded` row: a park as `ended-at-park`, running out of time as
       `failed`), and it exits. It ends nothing in `state.db`. The markers
       its ending releases are the hub's to release, after the fold
-      (`ReleaseMarkersCommand`).
+      (`ReleaseMarkersCommand`). A park keeps the run's markers for the run
+      that takes the item up, except its claim refs (`Claims.refMarker`):
+      the park lets go of every claim the run holds, its item's and any
+      other, such as an epic's (#709). A spoke that stops short of a
+      boundary (out of time, a lost lease) lets go of its claims itself.
    4. The hub sees the exit, stops tailing, folds what is left of the
       journal into `state.db` (decision 3), reads the ending
       (`ReadSpokeEndingQuery`) and ends the run with it: `FinishRunCommand`,
@@ -360,8 +364,9 @@ takes up its phase again from the ledger, and every other run carries on.
       its last steps and markers land and its ending releases them;
    4. deletes the journal (`WorkflowsClient.discard`);
    5. records the run `cancelled` and clears its waits;
-   6. cleans up: the run's worktrees, its claim ref, the issue's claim, and
-      its agent sessions (below);
+   6. cleans up: its agent sessions (below) first, so no agent still works
+      in a worktree as it's removed (#737), then the run's worktrees, its
+      claim ref and the issue's claim;
    7. dispatches `RunFinished`, which releases the markers the ending
       releases, and only then answers, saying how the spoke exited
       (`CancelledRun.spokeExited`).
@@ -554,8 +559,8 @@ run` under Actions, which has no hub, renews its own lease.
    process. A hub that starts after one of these died folds the rest of its
    journal exactly once. The SDK's block tests take that path too: a park
    ends the run in their engine as a spoke's does (`ended-at-park`, its
-   claims let go through `heldClaims`), and a new run takes the item up
-   from what the flow's trigger offers from its record (#695).
+   claims let go by its ending), and a new run takes the item up from what
+   the flow's trigger offers from its record (#695).
 
 ## Rejected
 
@@ -652,6 +657,8 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
 - **5.** **Open:** sessions close only with `--close-session` (#688), for
   the owner. The ending is recorded before cleanup (#688). An ending asked
   before the spoke's record exists is written to it once it does (#667).
+  Cleanup closes the sessions before it removes the worktrees, as decision
+  4 has it (#737).
 - **6.** The hub folds before checking leases (#688). `lost` and
   `superseded` take the cancel path (#688).
 - **7.** Stdin closing signals the whole group, and any stop on a signal
@@ -663,5 +670,7 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   their own hub (#696). `hub-runs-no-flow` keeps the hub from executing a
   flow (#696). The block tests' test-only wake, and `only-tests-wake-runs`,
   are gone: a park ends the run there too, and a new run takes it up
-  (#695). A foreground run that parks still keeps claims other than its
-  item's own (#709).
+  (#695). A park lets go of every claim ref the run holds by its ending's
+  marker release, not only its item's, so a foreground run's epic claim no
+  longer outlasts it; `ci run`'s wrap-up lets go of claims only when the job
+  stops short of a boundary (#709).
