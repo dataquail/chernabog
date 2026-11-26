@@ -108,7 +108,11 @@ takes up its phase again from the ledger, and every other run carries on.
       a `RunEnded` row: a park as `ended-at-park`, running out of time as
       `failed`), and it exits. It ends nothing in `state.db`. The markers
       its ending releases are the hub's to release, after the fold
-      (`ReleaseMarkersCommand`).
+      (`ReleaseMarkersCommand`). A park keeps the run's markers for the run
+      that takes the item up, except its claim refs (`Claims.refMarker`):
+      the park lets go of every claim the run holds, its item's and any
+      other, such as an epic's (#709). A spoke that stops short of a
+      boundary (out of time, a lost lease) lets go of its claims itself.
    4. The hub sees the exit, stops tailing, folds what is left of the
       journal into `state.db` (decision 3), reads the ending
       (`ReadSpokeEndingQuery`) and ends the run with it: `FinishRunCommand`,
@@ -554,8 +558,8 @@ run` under Actions, which has no hub, renews its own lease.
    process. A hub that starts after one of these died folds the rest of its
    journal exactly once. The SDK's block tests take that path too: a park
    ends the run in their engine as a spoke's does (`ended-at-park`, its
-   claims let go through `heldClaims`), and a new run takes the item up
-   from what the flow's trigger offers from its record (#695).
+   claims let go by its ending), and a new run takes the item up from what
+   the flow's trigger offers from its record (#695).
 
 ## Rejected
 
@@ -663,5 +667,7 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   their own hub (#696). `hub-runs-no-flow` keeps the hub from executing a
   flow (#696). The block tests' test-only wake, and `only-tests-wake-runs`,
   are gone: a park ends the run there too, and a new run takes it up
-  (#695). A foreground run that parks still keeps claims other than its
-  item's own (#709).
+  (#695). A park lets go of every claim ref the run holds by its ending's
+  marker release, not only its item's, so a foreground run's epic claim no
+  longer outlasts it; `ci run`'s wrap-up lets go of claims only when the job
+  stops short of a boundary (#709).

@@ -68,6 +68,27 @@ describe("RunMarkerRootOps", () => {
     }
   });
 
+  test("a park lets go of every claim ref its run holds, and keeps its other markers", () => {
+    const label = RunMarkerRootOps.hold(holding(), AT);
+
+    const claims = [
+      { item: "issue-40", runId: "a" },
+      { item: "epic-40", runId: "a" },
+    ].map((args) => RunMarkerRootOps.hold({ ...holding(args), name: "chernabog/claim-ref" }, AT));
+
+    expect(RunMarkerRootOps.keptOn(label, "ended-at-park")).toBe(true);
+
+    for (const claim of claims) {
+      expect(RunMarkerRootOps.keptOn(claim, "ended-at-park")).toBe(false);
+
+      // A run that lost its item leaves its claims to the new holder, and an
+      // interrupted one to the run that repeats its phase.
+      expect(RunMarkerRootOps.keptOn(claim, "lost")).toBe(true);
+      expect(RunMarkerRootOps.keptOn(claim, "interrupted")).toBe(true);
+      expect(RunMarkerRootOps.keptOn(claim, "done")).toBe(false);
+    }
+  });
+
   test("a release that fails is tried again after a backoff that doubles, up to an hour", () => {
     const once = RunMarkerRootOps.failed(RunMarkerRootOps.hold(holding(), AT), "boom", NOW);
 

@@ -426,8 +426,10 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
     // A run that lost its item leaves everything on it, worktree included, to
     // the run that took it over, and for a person to look at. One that ended at
     // a park leaves the same to the run that takes it up from its record, but
-    // lets go of its claim ref, so that run may be on any machine or in CI; so
-    // does one interrupted by its hub's stop, for the run that repeats its phase.
+    // lets go of its claim ref, so that run may be on any machine or in CI
+    // (and its ending's marker release lets go of any other claim ref it
+    // holds, such as an epic's, #709); so does one interrupted by its hub's
+    // stop, for the run that repeats its phase.
     if (
       cancelled.status === "lost" ||
       cancelled.status === "ended-at-park" ||
