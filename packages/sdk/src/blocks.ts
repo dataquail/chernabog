@@ -966,6 +966,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
     },
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
+      // Wakes nothing, and starts nothing: parks.offers takes the merge up.
+      // Kept, deprecated (#694), so a document's pr.land still validates.
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
       wakeEvents: [Events.ciCompleted],
       wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.mergeHeld] }],

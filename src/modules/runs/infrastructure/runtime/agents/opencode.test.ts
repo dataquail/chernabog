@@ -1,4 +1,4 @@
-import { type AgentRequest, HEADLESS } from "@chernabog/core";
+import { type AgentRequest, HEADLESS, NO_SANDBOX } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,6 +41,7 @@ const contextFor = (fake: Fake, fixture: string, exit = 0): AdapterContext => ({
   host: { PATH: `${fake.bin}:/usr/bin:/bin` },
   env: { OPENCODE_FIXTURE: `${fake.fixtures}/${fixture}`, OPENCODE_EXIT: String(exit) },
   launcher: HEADLESS,
+  sandbox: NO_SANDBOX,
   log: () => Effect.void,
 });
 

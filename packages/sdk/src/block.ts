@@ -184,13 +184,18 @@ export type Contribution = {
   // Labels named by the flow's settings, as a repo may rename them.
   readonly namedLabels?: ReadonlyArray<Effect.Effect<FlowLabel, never, FlowSettings | Repo>>;
   readonly doctor?: ReadonlyArray<DoctorCheck>;
-  // Finds runs of this flow parked in the block, to wake them.
+  // A source added to the flow's trigger for the block's waits. A park ends
+  // its run (ADR 23, decision 2), so nothing wakes a parked run: what counts
+  // is a source that offers the item from its parked phase record, so a new
+  // run takes it up, as implement.awaitReady's Implement.readied does. A
+  // wake-only source here (its items `wakeOnly`), as pr.land's and
+  // plan.awaitAnswer's are, starts nothing; they're kept, deprecated (#694),
+  // so a document that uses those blocks still validates.
   readonly wakes?: TriggeredFlow["trigger"];
-  // The phases its wakes find parked runs by, as a source declares what it
-  // reads.
+  // The phases its wakes read, as a source declares what it reads.
   readonly wakeReads?: ReadonlyArray<Reading>;
-  // The GitHub events that settle the wait its wakes look for, so a run parked
-  // in it wakes in CI (events.ts).
+  // The GitHub events that settle the wait its wakes look for, so the flow
+  // runs on them in CI (events.ts).
   readonly wakeEvents?: ReadonlyArray<WakingEvent>;
   readonly ownWork?: boolean;
 };

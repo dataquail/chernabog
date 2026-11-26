@@ -14,10 +14,12 @@
 // replaces each claim commit: GitHub checks no fast-forward outside
 // refs/heads/, and a create is the one write it refuses a second writer. The
 // winner then checks the claim ref still points at the commit it replaces,
-// points it at its own and deletes the lease ref; a reader that finds a lease
-// ref follows it, since a writer may have stopped in between. A writer that
-// read the claim ref before another moved it, and makes the lease ref only
-// after that one let it go, finds the claim ref moved and leaves it.
+// points it at its own and deletes the lease ref. A reader that finds a lease
+// ref follows it, since a writer may not have moved the claim ref yet, or may
+// have stopped in between, but moves nothing: only the writer holding the
+// next lease ref finishes a stopped writer's move. A writer that read the
+// claim ref before another moved it, and makes the lease ref only after that
+// one let it go, finds the claim ref moved and leaves it.
 
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -138,11 +140,19 @@ export const holderOf = (message: string): Option.Option<Holder> => {
 // A claim as it stands: its commit, and whose run it names.
 export type Claim = { readonly sha: string; readonly holder: Holder };
 
-// Lease refs a reader follows before it takes the claim commit it has as current.
-const MAX_HOPS = 8;
+// Lease refs a reader follows before it takes the claim commit it has as
+// current. Each is a writer that stopped before moving the claim ref on.
+const MAX_HOPS = 32;
 
-// The claim commit that replaced `at`, and the ones after it: a writer that
-// won a lease ref but stopped before moving the claim ref is finished for.
+// The claim commit that replaced `at`, and the ones after it, by the lease
+// refs their writers made: a writer that won a lease ref may not have moved
+// the claim ref on yet, or may have stopped before it did. It only reads.
+// GitHub checks no fast-forward outside refs/heads/, so a reader that moved
+// the claim ref on for a writer could move it back over a claim made since:
+// one that read the lease ref just before its writer moved the claim ref and
+// let the lease ref go, while another machine took the claim over (#703).
+// The writer that next replaces the claim commit finishes a stopped writer's
+// move (replace).
 const follow = (
   github: GitHub["Service"],
   item: string,
@@ -154,17 +164,12 @@ const follow = (
   }
 
   return github.ref(leaseRefFor(item, at.sha)).pipe(
+    // A lease ref on the commit it names replaces nothing yet.
+    Effect.map(Option.filter((next) => next.sha !== at.sha)),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.succeed(at),
-        onSome: (next) =>
-          github
-            .updateRef(refFor(item), next.sha)
-            .pipe(
-              Effect.andThen(github.deleteRef(leaseRefFor(item, at.sha))),
-              Effect.ignore,
-              Effect.andThen(follow(github, item, next, hops + 1)),
-            ),
+        onSome: (next) => follow(github, item, next, hops + 1),
       }),
     ),
   );
@@ -212,6 +217,73 @@ export const liveHolder = (item: string) =>
 const leaseEnd = (now: DateTime.Utc, ttl: Duration.Duration) =>
   DateTime.formatIso(DateTime.addDuration(now, ttl));
 
+// Whether the lease refs from the claim commit `at` lead to the claim commit `to`.
+const leadsTo = (
+  github: GitHub["Service"],
+  item: string,
+  at: RefCommit,
+  to: string,
+  hops: number,
+): Effect.Effect<boolean, GitHubError> => {
+  if (at.sha === to) {
+    return Effect.succeed(true);
+  }
+
+  if (hops >= MAX_HOPS) {
+    return Effect.succeed(false);
+  }
+
+  return github.ref(leaseRefFor(item, at.sha)).pipe(
+    Effect.map(Option.filter((next) => next.sha !== at.sha)),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(false),
+        onSome: (next) => leadsTo(github, item, next, to, hops + 1),
+      }),
+    ),
+  );
+};
+
+// The claim ref's commit `head`, when it is behind the claim commit `to`: the
+// writers that replaced the commits after it, `to`'s own included, haven't
+// moved the claim ref on yet, or stopped before they did, and their lease
+// refs lead from it to `to`. None when it is `to`, or ahead of it.
+const behindOf = (github: GitHub["Service"], item: string, head: RefCommit, to: string) =>
+  Effect.gen(function* () {
+    if (head.sha === to) {
+      return Option.none<RefCommit>();
+    }
+
+    const behind = yield* leadsTo(github, item, head, to, 0);
+
+    return Option.liftPredicate(head, () => behind);
+  });
+
+// Deletes the lease refs that lead from `at` to the claim commit `until`.
+const deleteLeasesUntil = (
+  github: GitHub["Service"],
+  item: string,
+  at: RefCommit,
+  until: string,
+  hops: number,
+): Effect.Effect<void, GitHubError> => {
+  if (hops >= MAX_HOPS || at.sha === until) {
+    return Effect.void;
+  }
+
+  return github.ref(leaseRefFor(item, at.sha)).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (next) =>
+          github
+            .deleteRef(leaseRefFor(item, at.sha))
+            .pipe(Effect.andThen(deleteLeasesUntil(github, item, next, until, hops + 1))),
+      }),
+    ),
+  );
+};
+
 // Replaces the claim commit `from` with one naming `next`, if no other writer
 // replaced it first; whether this one did.
 const replace = (item: string, from: Claim, next: Holder) =>
@@ -228,11 +300,22 @@ const replace = (item: string, from: Claim, next: Holder) =>
       return false;
     }
 
-    // A writer that replaced `from` and let go of its lease ref before this
-    // one made it has moved the claim ref on: leave it there.
     const head = yield* github.ref(refFor(item));
 
-    if (!Option.exists(head, (at) => at.sha === from.sha)) {
+    // A claim ref behind `from` is one whose writers haven't moved it on
+    // yet, or stopped before they did. This writer, holding the lease ref on
+    // `from`, finishes their moves with its own. No one else may move the
+    // claim off `from` while it holds that lease ref, so this can't move the
+    // claim back over a later one, as a reader finishing their moves for them
+    // could.
+    const behind = yield* Option.match(head, {
+      onNone: () => Effect.succeed(Option.none<RefCommit>()),
+      onSome: (at) => behindOf(github, item, at, from.sha),
+    });
+
+    // A writer that replaced `from` and let go of its lease ref before this
+    // one made it has moved the claim ref on: leave it there.
+    if (!Option.exists(head, (at) => at.sha === from.sha) && Option.isNone(behind)) {
       yield* github.deleteRef(leaseRefFor(item, from.sha));
 
       return false;
@@ -240,6 +323,12 @@ const replace = (item: string, from: Claim, next: Holder) =>
 
     yield* github.updateRef(refFor(item), sha);
     yield* github.deleteRef(leaseRefFor(item, from.sha));
+
+    // The lease refs of the moves it finished, which their writers would
+    // have let go of.
+    if (Option.isSome(behind)) {
+      yield* deleteLeasesUntil(github, item, behind.value, from.sha, 0);
+    }
 
     return true;
   });

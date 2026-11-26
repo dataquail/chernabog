@@ -156,7 +156,7 @@ for (const [form, loading] of forms) {
           fake.merge.ci = PENDING;
           const run = yield* runToPark(fake, fresh, 2);
 
-          expect(run.status).toBe("running");
+          expect(run.status).toBe("ended-at-park");
           expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
           expect(fake.phases()[TASK_ITEM]).toBe(Phases.PHASES.issue.awaitingTaskCi);
 

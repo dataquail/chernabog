@@ -153,9 +153,10 @@ takes up its phase again from the ledger, and every other run carries on.
    skips a run with a live spoke when it ends parked runs (`endParked`).
    Waits are still recorded (`om_waits`, `ParkRunCommand`) for `status` and
    `endParked`. The SDK's wake-only sources (`Plan.answers`,
-   `PullRequest.baseTurnedGreen`, and `pr.land`'s wakes) are still
-   exported, and wake nothing; whether to remove them, a breaking change to
-   `@chernabog/sdk`, is #694, for the owner.
+   `PullRequest.baseTurnedGreen`, and `pr.land`'s and `plan.awaitAnswer`'s
+   wakes) wake nothing, and are deprecated, not removed, since removing them
+   would break `@chernabog/sdk` (#694): what replaces each is a source that
+   offers the item from its parked phase record.
 
    A durable `sleep` inside a phase (a CI poll between readings, a backoff)
    stays inside the spoke and counts against the phase's wall-clock bound
@@ -551,10 +552,10 @@ run` under Actions, which has no hub, renews its own lease.
    spoke's (`endAsSaid`). So a park ends a foreground run too
    (`ended-at-park`), and the command returns rather than wait in the
    process. A hub that starts after one of these died folds the rest of its
-   journal exactly once. The SDK's block tests still wake a parked run in
-   their own engine, through a test-only wake (`test/wake-signals.ts`) that
-   `only-tests-wake-runs` keeps out of `src/`, `packages/` and `scripts/`;
-   #695 rewrites them so a park ends the run and a new run takes it up.
+   journal exactly once. The SDK's block tests take that path too: a park
+   ends the run in their engine as a spoke's does (`ended-at-park`, its
+   claims let go through `heldClaims`), and a new run takes the item up
+   from what the flow's trigger offers from its record (#695).
 
 ## Rejected
 
@@ -638,7 +639,7 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   (#667). The spoke is `ci run --run` with a hand-over file (#685, #687).
   The hub records the run and attaches its execution in one unit of work
   (`StartSpokeRunCommand`, #685). Signal delivery is gone, and the SDK's
-  wake-only sources wake nothing (#696, #694).
+  wake-only sources wake nothing and are deprecated (#696, #694).
 - **3.** A spoke reads `state.db` once at most, read-only and `query_only`,
   for a session's token cursor (#687). `AgentSessionOpened` names
   transcripts only for Claude (#688, #689). Steps carry the spoke's time
@@ -659,6 +660,8 @@ silentExits` (3) of its item in a row have, and that one ends `failed`
   reap and the foreground takeover close a left run's agent sessions but
   never a person's (#696). `interrupted` re-queues the issue (#696).
 - **9.** The foreground `run`, `rehearse` and `ci run` under Actions are
-  their own hub (#696). `hub-runs-no-flow` and `only-tests-wake-runs` keep
-  the hub and production code from executing or waking a flow (#696). The
-  block tests' wake is #695.
+  their own hub (#696). `hub-runs-no-flow` keeps the hub from executing a
+  flow (#696). The block tests' test-only wake, and `only-tests-wake-runs`,
+  are gone: a park ends the run there too, and a new run takes it up
+  (#695). A foreground run that parks still keeps claims other than its
+  item's own (#709).

@@ -635,6 +635,84 @@ describe("config layers", () => {
     });
   });
 
+  // ADR 24, decision 1: resolved as the launcher is, but an unset sandbox is none.
+  describe("the sandbox", () => {
+    const resolve = (
+      repo: typeof RepoConfigFile.Encoded,
+      own: Own,
+      extra: Partial<typeof MachineConfigFile.Encoded> = {},
+    ) =>
+      Effect.map(
+        mergeAll(
+          repo,
+          own,
+          { path: "/Users/dev/code/demo", repo: "dataquail/demo" },
+          normalizeMachineConfig(
+            Schema.decodeSync(MachineConfigFile)({
+              repos: [{ path: "~/code/demo", repo: "dataquail/demo" }],
+              ...extra,
+            }),
+            "/Users/dev",
+          ),
+        ),
+        (merged) => merged.settings.sandbox,
+      );
+
+    const chosen = (
+      repo: typeof RepoConfigFile.Encoded,
+      own: Own,
+      extra: Partial<typeof MachineConfigFile.Encoded> = {},
+    ) =>
+      Effect.map(resolve(repo, own, extra), (sandbox) =>
+        Option.match(Option.fromUndefinedOr(sandbox), {
+          onNone: () => "unresolved",
+          onSome: (found) => `${found.name} (${found.from})`,
+        }),
+      );
+
+    effect(
+      "comes from the repo's entry in machine config, then machine config's own, then the repo's default, then none",
+      () =>
+        Effect.gen(function* () {
+          expect(
+            yield* chosen({ sandbox: "docker" }, { sandbox: "podman" }, { sandbox: "docker" }),
+          ).toBe("podman (repo entry)");
+          expect(yield* chosen({ sandbox: "docker" }, {}, { sandbox: "podman" })).toBe(
+            "podman (machine config)",
+          );
+          expect(yield* chosen({ sandbox: "docker" }, {})).toBe("docker (repo config)");
+          expect(yield* chosen({}, {})).toBe("none (default)");
+        }),
+    );
+
+    effect("fails closed outside the repo's allowedSandboxes, naming the layer that chose it", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          resolve({ allowedSandboxes: ["docker", "podman"] }, {}, { sandbox: "none" }),
+        );
+
+        expect(error.message).toBe(
+          `sandbox "none" (from machine config) isn't allowed by demo's config: allowedSandboxes is docker, podman`,
+        );
+
+        const unset = yield* Effect.flip(resolve({ allowedSandboxes: ["podman"] }, {}));
+        expect(unset.message).toContain('sandbox "none" (from default)');
+        expect(
+          yield* chosen({ allowedSandboxes: ["docker", "podman"] }, { sandbox: "podman" }),
+        ).toBe("podman (repo entry)");
+      }),
+    );
+
+    effect("an unknown sandbox is refused, listing the known ones", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(resolve({}, { sandbox: "firejail" }));
+        expect(error.message).toBe(
+          'unknown sandbox "firejail" (from repo entry); known sandboxes: none, docker, podman',
+        );
+      }),
+    );
+  });
+
   test("the scaffolded config.yaml is valid repo config", () => {
     expect(
       Result.isSuccess(

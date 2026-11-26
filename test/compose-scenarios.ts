@@ -32,24 +32,24 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import {
-  deliverSignals,
   type EngineRun,
   type Fake,
   flowTriggered,
+  follow,
   HEAD,
   ISSUE,
   item,
+  onEngine,
+  parkedOn,
   PULL,
   repo,
   repoFake,
   type RuntimeServices,
-  runUntil,
   stackOn,
+  takeUp,
 } from "./sdk-fakes.ts";
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
@@ -97,17 +97,18 @@ const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
 // A comment's step is named by a hash of its text, which can say the run's id.
 const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
 
-// What a parked run is waiting for: a change to make, and the signal that
-// tells the run, which the flow's own trigger must find.
+// What a run that parks is waiting for: a change to make, and the signal its
+// park waits on, which the flow's own trigger must then offer, so a new run
+// takes the item up from its record.
 export type Wake = {
   readonly signal: string;
   readonly change: (fake: Fake) => void;
 };
 
-// What a run that parks round after round, as an epic's does, meets at each
-// park in turn: the next change, and the signal that tells the run, each park
-// told apart by the wait it parks on. At the park after the last change, the
-// run is followed no further.
+// What a flow that parks round after round, as an epic's does, meets at each
+// park in turn: the next change, and the signal its parks wait on. Each park
+// ends its run, and a new run takes the item up. At the park after the last
+// change, no run follows.
 export type Parks = {
   readonly signal: string;
   readonly changes: ReadonlyArray<(fake: Fake) => void>;
@@ -123,17 +124,23 @@ const inRepo = (shared: FlowInput) => ({
   personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared })),
 });
 
-// What a test reads of a run as it stops being followed, beside what observe
-// compares: its history and its log, say. Nothing, unless a test asks.
+// What a test reads of each run as it stops being followed, in order, beside
+// what observe compares: its history and its log, say. Nothing, unless a test
+// asks.
 export type Inspect = (
   run: EngineRun,
 ) => Effect.Effect<void, never, RuntimeServices | BunServices.BunServices>;
 
-// How many polls running a run parks on the same unanswered waits, without
-// entering a step, before observe takes it as parked there for good: half a
-// second, as long as a step can take on a slow runner.
-const SETTLED_POLLS = 20;
+// How many runs observe follows at most: a scenario whose change never lets
+// the flow past its park would otherwise take its item up for ever.
+const MOST_RUNS = 12;
 
+// Runs the flow on a fake as `setup` makes it, from `work`, as one machine
+// would: each run to its end or its park, which ends it (ADR 23, decision 2).
+// At a park on the scenario's signal, it makes the next change, and a new run
+// takes the item up from what the flow's own trigger then offers, as a tick
+// would; a park on any other wait, a change too many, or nothing offered ends
+// the scenario there. What the runs did, together, is what it compares.
 export const observe = (
   flow: Flow,
   name: string,
@@ -146,113 +153,63 @@ export const observe = (
   Effect.gen(function* () {
     const fake = setup();
     const handle = flowHandle(inRepo(settings), name, flow);
-    let steps: ReadonlyArray<string> = [];
-    let lanes: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [];
-    // The parks already woken, by their waits, and the changes made so far.
-    const answered = new Set<string>();
-    let changed = 0;
-    // How many polls running the run has been parked on the same waits, which
-    // no wake of the scenario answers, without entering a step.
-    let stuck = 0;
-    let stuckOn = "";
+    const steps = new Set<string>();
+    const lanes: Array<readonly [string, ReadonlyArray<string>]> = [];
 
-    // Delivers what the flow's own trigger then reports as a signal: how many runs it woke.
-    const signal = Effect.gen(function* () {
-      const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
-
-      return yield* deliverSignals(
-        handle,
-        IMPLICIT,
-        found.filter((each) => (each.signals ?? []).length > 0),
-      );
-    });
-
-    const finished: EngineRun = yield* runUntil(handle, fake, work, (run) =>
+    const finished: EngineRun = yield* onEngine(
+      handle,
+      fake,
       Effect.gen(function* () {
-        // Read as the run stops being followed, so a step it just entered is in it.
-        const readSteps = readRunHistoryHandler({ runId: run.id }).pipe(
-          Effect.orDie,
-          Effect.map((history) => {
-            steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
-            lanes = (history.lanes ?? []).map((lane) => [lane.lane, lane.needs] as const);
-          }),
-          Effect.andThen(inspect(run)),
-        );
+        let run = yield* follow(handle, work);
 
-        if (run.status !== "running") {
-          yield* readSteps;
+        for (let changed = 0; ; changed += 1) {
+          const history = yield* readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie);
 
-          return true;
-        }
+          for (const step of history.steps) {
+            steps.add(stepNamed(step.step));
+          }
 
-        // A run parked on waits the scenario never answers stays there, and
-        // that is where it got to: a flow that asks a person for what the
-        // recipe doesn't ask parks rather than ends. The waits and the steps
-        // are the same a few polls running, as a wait on several signals
-        // registers them one at a time, and a wait the run has passed can stay
-        // listed while it goes on through its steps.
-        const { steps: entered, waits: parkedOn } = yield* readRunHistoryHandler({
-          runId: run.id,
-        }).pipe(Effect.orDie);
+          for (const lane of history.lanes ?? []) {
+            lanes.push([lane.lane, lane.needs] as const);
+          }
 
-        const answerable = Option.match(Option.fromUndefinedOr(wake), {
-          onNone: () => false,
-          onSome: (waking) => parkedOn.some((wait) => wait.signal === waking.signal),
-        });
+          yield* inspect(run);
 
-        const unanswered = `${parkedOn.map((wait) => wait.deferred).join(" ")} after ${entered.length} steps`;
+          const waking = Option.filter(
+            Option.fromUndefinedOr(wake),
+            (scenario) =>
+              run.status === "ended-at-park" &&
+              changed < MOST_RUNS &&
+              parkedOn(run.id).some((wait) => wait.signal === scenario.signal),
+          );
 
-        if (parkedOn.length > 0 && !answerable && unanswered === stuckOn) {
-          stuck += 1;
-        } else {
-          stuck = 0;
-        }
-
-        stuckOn = unanswered;
-
-        if (stuck >= SETTLED_POLLS) {
-          yield* readSteps;
-
-          return true;
-        }
-
-        for (const waking of Option.toArray(Option.fromUndefinedOr(wake))) {
-          const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: waking.signal });
-
-          if (!isParks(waking)) {
-            if (waits.length > 0) {
-              waking.change(fake);
-              yield* signal;
+          // A Parks' change for this park in turn; a Wake's one change, at each.
+          const change = Option.flatMap(waking, (scenario) => {
+            if (isParks(scenario)) {
+              return Arr.get(scenario.changes, changed);
             }
 
-            continue;
-          }
-
-          const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
-
-          if (Option.isNone(parked)) {
-            continue;
-          }
-
-          const change = Arr.get(waking.changes, answered.size);
+            return Option.some(scenario.change);
+          });
 
           if (Option.isNone(change)) {
-            yield* readSteps;
-
-            return true;
+            return run;
           }
 
-          if (changed === answered.size) {
-            change.value(fake);
-            changed += 1;
+          change.value(fake);
+
+          const offered = (yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie)).filter(
+            (found) => found.key === work.key,
+          );
+
+          const next = yield* takeUp(handle, offered);
+
+          if (Option.isNone(next)) {
+            return run;
           }
 
-          if ((yield* signal) > 0) {
-            answered.add(parked.value.deferred);
-          }
+          run = next.value;
         }
-
-        return false;
       }),
     );
 
@@ -260,8 +217,8 @@ export const observe = (
       status: finished.status,
       summary: unsaid(Option.getOrElse(finished.summary, () => "")),
       subjects: finished.subjects,
-      steps,
-      // The lanes an epic declared, and the lanes each waited on.
+      steps: [...steps],
+      // The lanes an epic's runs declared, and the lanes each waited on.
       lanes,
       issueLabels: fake.labelsOf(ISSUE),
       pullLabels: fake.labelsOf(PULL),
@@ -560,8 +517,10 @@ export const IMPLEMENT_SCENARIOS = scenarios((scenario) => {
 
   scenario("when the adopted draft is marked ready", () => closedByPull(true), "done", {
     signal: "ready",
+    // GitHub says it's ready wherever the pull request is read.
     change: (fake) => {
       fake.authored.draft = false;
+      fake.closing.splice(0, fake.closing.length, closing({ isDraft: false }));
     },
   });
 });
@@ -655,7 +614,8 @@ export const REVIEW_SCENARIOS = scenarios((scenario) => {
     "done",
   );
 
-  // The one wake pr.land contributes: it must find the run, or the run stays parked.
+  // pr.land's park: a new run must take the held merge up from its record, or
+  // the merge stays held.
   scenario(
     "when the merge holds on a red base, and the base turns green",
     () => {
@@ -2385,11 +2345,18 @@ export const EPIC_SCENARIOS = scenarios((define) => {
     define(title, setup, ends, { signal: Epic.LAYER_CHANGED, changes }, oneAtATime(shared), did);
   };
 
-  scenario("when it opens every ready task's pull request and parks", epicFake, "running", []);
+  scenario(
+    "when it opens every ready task's pull request and parks",
+    epicFake,
+    "ended-at-park",
+    [],
+  );
 
-  scenario("when its layers ship", epicFake, "running", [], { ship: true });
+  scenario("when its layers ship", epicFake, "ended-at-park", [], { ship: true });
 
-  scenario("when every task merges, and the run wakes and ends", epicFake, "done", [mergeAll]);
+  scenario("when every task merges, and a new run takes the epic up and ends", epicFake, "done", [
+    mergeAll,
+  ]);
 
   scenario(
     "when a task's agent has questions",
@@ -2399,7 +2366,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [],
   );
 
@@ -2412,7 +2379,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [],
   );
 
@@ -2426,7 +2393,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [],
   );
 
@@ -2441,7 +2408,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [
       (fake) => {
         handBack(fake, 12);
@@ -2470,7 +2437,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [],
     {},
     (recipe) => {
@@ -2508,7 +2475,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
   scenario(
     "when a fix pushed on a layer is carried up to the layer above",
     twoStacked,
-    "running",
+    "ended-at-park",
     [fixBelow],
     {},
     (recipe) => {
@@ -2522,7 +2489,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
   scenario(
     "when carrying a fix up goes to a person, who hands the layer back",
     twoStacked,
-    "running",
+    "ended-at-park",
     [
       (fake) => {
         fixBelow(fake);
@@ -2548,7 +2515,11 @@ export const EPIC_SCENARIOS = scenarios((define) => {
     {},
     (recipe) => {
       expect(tookStep(recipe, "needs-human#refresh-201-fix1000000")).toBe(true);
-      expect(tookStep(recipe, "push-refresh-201-fix1000000-2")).toBe(true);
+      // Handed back, a new run takes the layer up from its record: its CI on
+      // the person's head, then its review. (The woken run used to push its
+      // second attempt, push-refresh-…-2, in the same run.)
+      expect(tookStep(recipe, "ci-1-1#refresh-201-fix1000000")).toBe(true);
+      expect(tookStep(recipe, "refresh-review-201-fix1000000")).toBe(true);
     },
   );
 
@@ -2605,7 +2576,7 @@ export const EPIC_SCENARIOS = scenarios((define) => {
 
       return fake;
     },
-    "running",
+    "ended-at-park",
     [],
     { ship: true },
     (recipe) => {

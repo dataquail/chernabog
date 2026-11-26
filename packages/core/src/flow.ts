@@ -373,10 +373,18 @@ const outcomeOfExit = <A, E>(exit: Exit.Exit<A, E>): Option.Option<StepOutcome> 
 // reads its saved result. The engine marks the run suspended before it
 // interrupts it; any other interrupt (the run stopped, its claim lost, a
 // sibling failed) still ends the step.
+//
+// The step starts at once, so it counts as in flight before a sibling can
+// look: a lane that goes to sleep then waits for it before the run is marked
+// suspended. Forked lazily, a lane asleep from its start found nothing in
+// flight and marked the run suspended at once. The step then ran on through
+// the suspension: a cancel or a lost claim waited for a step that might
+// never end, and its failure came out only when the sleeper's clock fired
+// (#675).
 const finishingThroughSuspension = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   WorkflowEngine.WorkflowInstance.use((instance) =>
     Effect.uninterruptibleMask((restore) =>
-      Effect.flatMap(Effect.forkChild(restore(call)), (fiber) =>
+      Effect.flatMap(Effect.forkChild(restore(call), { startImmediately: true }), (fiber) =>
         restore(Fiber.join(fiber)).pipe(
           Effect.onInterrupt(() => {
             if (instance.suspended) {

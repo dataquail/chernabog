@@ -10,6 +10,7 @@ import {
   parseJson,
   printJson,
   type ResolvedLauncher,
+  type ResolvedSandbox,
 } from "@chernabog/core";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -31,6 +32,8 @@ export type AdapterContext = {
   readonly env: Environment;
   // Where an interactive session runs; headless for none. Only Claude has an interactive mode so far.
   readonly launcher: ResolvedLauncher;
+  // Where its sessions run (ADR 24); written to an interactive session's launch spec.
+  readonly sandbox: ResolvedSandbox;
   readonly log: (line: string) => Effect.Effect<void>;
 };
 
