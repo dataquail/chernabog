@@ -4,9 +4,12 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import { LaunchRecord } from "../../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 const sandboxes: Array<Sandbox> = [];
@@ -102,6 +105,22 @@ describe.each(["tmux", "orca", "mine", "headless"])(
           (spec) => statSync(join(sandbox.home, "sessions/interactive", spec)).mode & 0o777,
         ),
       ).toEqual([0o600]);
+
+      // The launch record names the run that launched the session, which the
+      // hub's session API checks a route's run against.
+      const db = new Database(join(sandbox.home, "state.db"), { readonly: true });
+      const runs = db.query<{ id: string }, []>("SELECT id FROM om_runs").all();
+      db.close();
+
+      const recorded = [
+        ...new Bun.Glob("*/launch.json").scanSync(join(sandbox.home, "sessions/interactive")),
+      ].map((file) =>
+        Schema.decodeSync(LaunchRecord)(
+          readFileSync(join(sandbox.home, "sessions/interactive", file), "utf8"),
+        ),
+      );
+
+      expect(recorded.map((record) => record.runId)).toEqual(runs.map((run) => run.id));
 
       // It carries the repo's sandbox to __launch: none, when nothing sets one.
       for (const spec of specs) {

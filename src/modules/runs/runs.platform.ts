@@ -119,8 +119,12 @@ export {
 } from "./infrastructure/runtime/agents/open-pr-question.ts";
 export { REHEARSAL } from "./infrastructure/runtime/agents/rehearsal.ts";
 export {
+  knownLaunch,
+  launchRuns,
   readDecoded,
+  readText,
   SESSION_ENV,
+  sessionFiles,
   sessionFilesIn,
 } from "./infrastructure/runtime/agents/session-files.ts";
 export { checkAnswer, stopHook } from "./infrastructure/runtime/agents/stop-hook.ts";

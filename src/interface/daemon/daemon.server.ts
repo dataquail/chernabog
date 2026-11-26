@@ -90,6 +90,7 @@ import {
 import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
+import { containerGateways } from "../../platform/container-gateways.ts";
 import { dailyLogWriting } from "../../platform/daily-log.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { describeSource, flowPlanOf, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
@@ -149,6 +150,7 @@ import {
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { endAsSaid, foldInStateDb, noteInRun } from "./report-fold.server.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
+import { openSessionApi } from "./session-api.server.ts";
 import { boundRetryAfter, hubSpokes, type Spokes } from "./spokes.server.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -2383,6 +2385,17 @@ export const runDaemon = Effect.gen(function* () {
       // The dashboard's 127.0.0.1 listener, which only the socket's
       // /dashboard routes open and close (a browser never reaches them).
       const dashboardListener = yield* openDashboardListener((yield* Home).root, log);
+
+      // The session API (ADR 24): a run's agent sessions reach its routes
+      // while the run's spoke lives. Nothing hands out its run keys yet
+      // (#714), so no session holds a token for it; a hub that can't open it
+      // says why and carries on.
+      yield* openSessionApi({
+        root: (yield* Home).root,
+        isLive: (runId) => Effect.sync(() => spokes.has(RunId.make(runId))),
+        log,
+        gateways: containerGateways(),
+      }).pipe(Effect.catch((refused) => log(`session API: ${refused.message}`)));
 
       const dashboardStart = Effect.gen(function* () {
         const body = yield* HttpServerRequest.schemaBodyJson(DashboardStart);
