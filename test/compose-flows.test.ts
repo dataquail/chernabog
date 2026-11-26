@@ -337,8 +337,10 @@ describe("the plan document runs as the recipe does", () => {
 });
 
 // The recipe waits 14 days for a person's answer, which no run here can, so
-// the document's own wait is shortened to see where its timeout goes: to a
-// person, with the checkout removed and the claim let go, as the recipe's does.
+// the document's own wait is shortened to see where its timeout goes. The
+// park ends the run; once the time is up, the document's trigger offers the
+// spec to a new run, which hands it to a person, with the checkout removed and
+// the claim let go, as the recipe's does.
 describe("the plan document's wait for a person", () => {
   effect(
     "hands the spec to a person once nobody answers within its time",
@@ -352,6 +354,8 @@ describe("the plan document's wait for a person", () => {
           "plan",
           approved.setup,
           PLAN_WORK_ITEM,
+          // Nobody answers: nothing changes at the park, and time is up at once.
+          { signal: "approved", change: () => void 0 },
         );
 
         expect(observed.status).toBe("needs-human");

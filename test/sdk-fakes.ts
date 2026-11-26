@@ -1532,6 +1532,9 @@ export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
 // at its park.
 const parkedRuns = new Set<RunId>();
 
+// The parked runs a poll has seen parked already (lookAt).
+const seenParked = new Set<RunId>();
+
 // What each run that ended at its park was waiting on then, by run: its waits
 // go with it, and a test may ask which signal it parked on (parkedOn).
 const waitsAtPark = new Map<
@@ -1683,7 +1686,18 @@ const lookAt = (run: EngineRun) =>
 
     const now = yield* current(run);
 
-    return { run: now, parked: now.status === "running" && parkedRuns.has(run.id) };
+    // A park is ended a poll after it was first seen, as the own hub, which
+    // looks at its parked set between polls a second apart, ends one: an
+    // awaitSignal on several signals records its waits one at a time, and
+    // its engine tells the park at the first.
+    const told = now.status === "running" && parkedRuns.has(run.id);
+    const parked = told && seenParked.has(run.id);
+
+    if (told) {
+      seenParked.add(run.id);
+    }
+
+    return { run: now, told, parked };
   });
 
 // Ends a run that parked at its park, as the own hub ends one: what its
@@ -1821,16 +1835,21 @@ export const follow = (
       Effect.flatMap((started) =>
         lookAt(started).pipe(
           // A run that parked is read as it stood at its park, its waits still
-          // recorded, before it is ended there.
+          // recorded, before it is ended there, and again once it has ended.
           Effect.flatMap((looked) =>
-            until(looked.run).pipe(
-              Effect.flatMap((done) =>
-                Effect.map(
-                  Effect.when(endAtPark(looked.run), Effect.succeed(looked.parked)),
-                  (ended) => ({ polled: Option.getOrElse(ended, () => looked.run), done }),
-                ),
-              ),
-            ),
+            Effect.gen(function* () {
+              const atPark = yield* until(looked.run);
+
+              // A test that got what it waits for at the park has the run
+              // ended there at once; otherwise it ends a poll later.
+              if (!looked.parked && !(looked.told && atPark)) {
+                return { polled: looked.run, done: atPark };
+              }
+
+              const ended = yield* endAtPark(looked.run);
+
+              return { polled: ended, done: atPark || (yield* until(ended)) };
+            }),
           ),
           Effect.tap((step) =>
             Effect.sync(() => {
