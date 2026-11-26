@@ -335,13 +335,24 @@ const stopBoth = (
       fromRoute.push(normalized(answered.text, routed.files.dir));
     }
 
-    const left = (files: typeof hooked.files) =>
-      Effect.forEach([files.done, files.blocks, files.reminded], (file) =>
-        fs.readFileString(file).pipe(Effect.orElseSucceed(() => "<absent>")),
-      );
+    // The twins' commits are made apart, so their hashes can differ: the
+    // HEAD `reminded` records is compared as each twin's own.
+    const left = (setUp: typeof hooked) =>
+      Effect.gen(function* () {
+        const head = (yield* git(setUp.worktree, "rev-parse", "HEAD")).trim();
 
-    const hookLeft = yield* left(hooked.files);
-    const routeLeft = yield* left(routed.files);
+        return yield* Effect.forEach(
+          [setUp.files.done, setUp.files.blocks, setUp.files.reminded],
+          (file) =>
+            fs.readFileString(file).pipe(
+              Effect.map((text) => text.replaceAll(head, "<head>")),
+              Effect.orElseSucceed(() => "<absent>"),
+            ),
+        );
+      });
+
+    const hookLeft = yield* left(hooked);
+    const routeLeft = yield* left(routed);
 
     return { fromHook, fromRoute, hookLeft, routeLeft };
   });
