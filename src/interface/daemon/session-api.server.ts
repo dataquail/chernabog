@@ -61,6 +61,9 @@ import {
 } from "../../platform/session-token.ts";
 import { Refusal } from "./daemon.protocol.ts";
 
+// What an agent session may ask of chernabog (#715). Nothing yet.
+export const SESSION_COMMANDS: ReadonlyArray<string> = [];
+
 // More than any answer or hook input, far less than Bun's default.
 const MAX_BODY_BYTES = 1024 * 1024;
 
