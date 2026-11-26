@@ -145,7 +145,20 @@ describe("processIdentity", () => {
   effect("says when a live process started and its command line, the same each time", () =>
     Effect.gen(function* () {
       const group = yield* sh("sleep 60; : --run run-1");
-      const first = Option.getOrThrow(yield* processIdentity(group.pid));
+
+      // Read once the child has exec'd sh: between fork and exec, ps still
+      // shows the parent's command line.
+      const first = Option.getOrThrow(
+        yield* processIdentity(group.pid).pipe(
+          Effect.repeat({
+            while: (found) =>
+              !Option.exists(found, (identity) => identity.command.includes("--run run-1")),
+            schedule: Schedule.spaced("20 millis"),
+            times: 100,
+          }),
+        ),
+      );
+
       const again = Option.getOrThrow(yield* processIdentity(group.pid));
 
       expect(first.command).toContain("--run run-1");
