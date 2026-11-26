@@ -1,11 +1,13 @@
 // Claude as an interactive session under each launcher, end to end: the answer
-// file and the Stop hook decide when it is done, and nothing runs `claude -p`.
+// it sends and the Stop hook, both through the hub's session API, decide when
+// it is done, and nothing runs `claude -p`.
 
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
@@ -57,6 +59,25 @@ const launchRecorded = (sandbox: Sandbox) =>
   [...new Bun.Glob("*/launch.json").scanSync(join(sandbox.home, "sessions/interactive"))].length >
   0;
 
+// The Stop hook in a session's settings file.
+const StopHookOf = Schema.fromJsonString(
+  Schema.Struct({
+    hooks: Schema.Struct({
+      Stop: Schema.Array(
+        Schema.Struct({
+          hooks: Schema.Array(
+            Schema.Struct({
+              type: Schema.String,
+              url: Schema.String,
+              headers: Schema.Record(Schema.String, Schema.String),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
 const CUSTOM = {
   start: ["tmux", "new-session", "-d", "-s", "{title}", "-c", "{cwd}", "sh", "-c", "{command}"],
   close: ["tmux", "kill-session", "-t", "{handle}"],
@@ -84,6 +105,27 @@ describe.each(["tmux", "orca", "mine", "headless"])(
       expect(headlessCalls(sandbox)).toHaveLength(0);
       expect(sandbox.hookCalls().map((call) => call.split(" ")[2])).toEqual(["allow"]);
 
+      // It sent its answer to the session API, and its Stop hook is an HTTP
+      // hook there: no hook runs the chernabog binary.
+      expect(sandbox.answerCalls().map((call) => call.split(" ").slice(2).join(" "))).toEqual([
+        "exited 0",
+      ]);
+
+      const sessions = join(sandbox.home, "sessions/interactive");
+
+      for (const file of new Bun.Glob("*/settings.json").scanSync(sessions)) {
+        const settings = readFileSync(join(sessions, file), "utf8");
+
+        const stop = Schema.decodeSync(StopHookOf)(settings).hooks.Stop[0]?.hooks[0];
+
+        expect(stop.type).toBe("http");
+        expect(stop.url).toMatch(
+          /^http:\/\/127\.0\.0\.1:\d+\/runs\/[\da-f-]+\/sessions\/[\da-f-]+\/stop$/,
+        );
+        expect(stop.headers).toEqual({ Authorization: "Bearer $CHERNABOG_SESSION_TOKEN" });
+        expect(settings).not.toContain("__stop-hook");
+      }
+
       // The session is closed once it has answered.
       const closes = [
         ...sandbox.tmuxCalls().filter((call) => call.startsWith("kill-session")),
@@ -106,8 +148,8 @@ describe.each(["tmux", "orca", "mine", "headless"])(
   },
 );
 
-describe("the answer file", () => {
-  test("a session that stops without its answer is sent back to write it", async () => {
+describe("the answer", () => {
+  test("a session that stops without its answer is sent back to send it", async () => {
     const sandbox = sandboxFor({}, { launcher: "tmux" });
     sandbox.github.addIssue("Forget the answer once", ["auto:eligible"]);
     const skip = join(sandbox.root, "skip-once");

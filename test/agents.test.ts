@@ -27,7 +27,7 @@ describe("agent output", () => {
     );
   });
 
-  test("an interactive session's answer file is checked against the schema", () => {
+  test("an interactive session's answer is checked against the schema", () => {
     const schema = Option.some({
       type: "object",
       properties: { verdict: { type: "string", enum: ["approve", "request-changes"] } },
@@ -38,10 +38,10 @@ describe("agent output", () => {
       Result.succeed({ verdict: "approve" }),
     );
     expect(Result.getFailure(checkAnswer(schema, Option.none()))).toEqual(
-      Option.some("There is no answer file yet."),
+      Option.some("There is no answer yet."),
     );
     expect(Result.getFailure(checkAnswer(schema, Option.some('{"verdict":')))).toEqual(
-      Option.some("The answer file is not valid JSON."),
+      Option.some("The answer is not valid JSON."),
     );
     expect(Result.getFailure(checkAnswer(schema, Option.some('{"verdict":"maybe"}')))).toEqual(
       Option.some(expect.stringContaining('"approve" | "request-changes"')),

@@ -593,9 +593,15 @@ process.stdout.write(Schema.encodeSync(SpokeHandOverJson)({ run, item }));
     };
   };
 
-  // Agent starts and resumes; the Stop hook's runs are in hookCalls.
-  const claudeCalls = () => callsIn(claudeLog).filter((line) => !line.startsWith("stop-hook "));
+  // Agent starts and resumes; the Stop hook's calls are in hookCalls, and the
+  // answers an interactive session sent to the session API in answerCalls.
+  const claudeCalls = () =>
+    callsIn(claudeLog).filter(
+      (line) => !line.startsWith("stop-hook ") && !line.startsWith("answer "),
+    );
+
   const hookCalls = () => callsIn(claudeLog).filter((line) => line.startsWith("stop-hook "));
+  const answerCalls = () => callsIn(claudeLog).filter((line) => line.startsWith("answer "));
   const tmuxCalls = () => callsIn(join(root, "tmux.log"));
   const orcaCalls = () => callsIn(join(root, "orca.log"));
   const codexCalls = () => callsIn(join(root, "codex.log"));
@@ -775,6 +781,7 @@ process.stdout.write(Schema.encodeSync(SpokeHandOverJson)({ run, item }));
     anotherMachine,
     claudeCalls,
     hookCalls,
+    answerCalls,
     tmuxCalls,
     orcaCalls,
     codexCalls,
