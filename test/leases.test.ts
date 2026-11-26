@@ -110,6 +110,15 @@ const leaseTakenFirst = (fake: Fake) => (github: GitHub["Service"]) => ({
 
 type NewCommit = Parameters<GitHub["Service"]["createCommit"]>[0];
 
+// The run lets go of its claim (its claim ref deleted, as a park's wrap-up
+// does) once a writer has read it, just before that writer makes its commit.
+const releasedMeanwhile = (fake: Fake) => (github: GitHub["Service"]) => ({
+  createCommit: (commit: NewCommit) =>
+    Effect.sync(() => fake.refs.delete(ISSUE_REF)).pipe(
+      Effect.andThen(github.createCommit(commit)),
+    ),
+});
+
 // Keeps each commit asked for in `made`, as GitHub would make it.
 const keepingCommits = (made: Array<NewCommit>) => (github: GitHub["Service"]) => ({
   createCommit: (commit: NewCommit) =>
@@ -560,6 +569,31 @@ describe("renewing a lease", () => {
         expect(leaseRefs(fake)).toEqual([]);
       }),
   );
+
+  effect(
+    "a holder whose run let its claim go after the renewal read it finds it released, not lost",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        heldBy(fake, FUTURE);
+
+        const renewal = yield* asRun(
+          fake,
+          "another-run",
+          withGitHub(
+            fake,
+            releasedMeanwhile(fake),
+            Claims.renew(CLAIM, "another-run", Duration.hours(2)),
+          ),
+        );
+
+        // A park's wrap-up deletes the claim ref before it reports the
+        // ending: the hub must not end the run as lost (#732).
+        expect(renewal).toEqual({ status: "released" });
+        expect(fake.refs.has(ISSUE_REF)).toBe(false);
+        expect(leaseRefs(fake)).toEqual([]);
+      }),
+  );
 });
 
 describe("the claim ref's lease, as the daemon renews and checks it", () => {
@@ -628,6 +662,22 @@ describe("the claim ref's lease, as the daemon renews and checks it", () => {
 
       expect(yield* asRun(fake, "another-run", leaseOf(args, renewing))).toEqual(released);
       expect(yield* asRun(fake, "another-run", leaseOf(args))).toEqual(released);
+      expect(fake.refs.has(ISSUE_REF)).toBe(false);
+    }),
+  );
+
+  effect("renewing it as its run lets the claim go reports it let go, not lost", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      heldBy(fake, FUTURE);
+
+      expect(
+        yield* asRun(
+          fake,
+          "another-run",
+          withGitHub(fake, releasedMeanwhile(fake), leaseOf(args, renewing)),
+        ),
+      ).toEqual({ on: "issue-3", report: { status: "released" } });
       expect(fake.refs.has(ISSUE_REF)).toBe(false);
     }),
   );
