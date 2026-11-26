@@ -126,7 +126,7 @@ describe("a plan in a CI job", () => {
             ),
         );
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.phases()[SPEC_ITEM]).toBe("proposed");
 
         // The spec's record names the posted plan's blob, for whichever run
@@ -211,7 +211,7 @@ describe("a plan in a CI job", () => {
           ),
         );
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         // The agent drafted again, with what the person asked for.
         expect(
           fake.requests.some((request) => request.prompt.includes("Split the API in two.")),

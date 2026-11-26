@@ -633,7 +633,7 @@ const journey = (park: Park, flow: Flow, sabotaged: Option.Option<Sabotage>) =>
       }),
     );
 
-    expect([parkedRun.status, parked]).toEqual(["running", true]);
+    expect([parkedRun.status, parked]).toEqual(["ended-at-park", true]);
     fake.refs.clear();
     const atPark = comparable(fake);
 

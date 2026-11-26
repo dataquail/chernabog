@@ -96,7 +96,7 @@ describe("an adopted draft in a CI job", () => {
           ),
       );
 
-      expect(run.status).toBe("running");
+      expect(run.status).toBe("ended-at-park");
 
       // The wait is the record, with the draft and how long it waits.
       const record = Option.fromUndefinedOr(fake.records().get(ISSUE_ITEM));

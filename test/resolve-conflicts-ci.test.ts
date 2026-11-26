@@ -169,7 +169,7 @@ for (const [form, loading] of forms) {
             }),
           );
 
-          expect([run.status, parked]).toEqual(["running", true]);
+          expect([run.status, parked]).toEqual(["ended-at-park", true]);
           expect(fake.git.pushes).toBe(1);
 
           const recorded = Option.getOrThrow(recordNow(fake));

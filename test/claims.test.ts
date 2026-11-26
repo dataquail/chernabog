@@ -254,9 +254,10 @@ describe("releasing a claim as soon as the work ends", () => {
     }),
   );
 
-  effect("keeps the claim while the run waits", () =>
+  effect("keeps the claim while the run waits, and lets it go when the park ends the run", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
+      let whileWaiting = Option.none<string>();
 
       const parked = yield* runUntil(
         flowHandle(repo, "releasing", releasingFlow(fake)),
@@ -265,12 +266,19 @@ describe("releasing a claim as soon as the work ends", () => {
         (run) =>
           listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
             Effect.map(({ waits }) => waits.length > 0),
+            Effect.tap((waiting) =>
+              Effect.sync(() => {
+                if (waiting) {
+                  whileWaiting = Option.map(holderOf(fake, ISSUE_REF), (holder) => holder.runId);
+                }
+              }),
+            ),
           ),
       );
 
-      expect(Option.map(holderOf(fake, ISSUE_REF), (holder) => holder.runId)).toEqual(
-        Option.some(parked.id),
-      );
+      expect(whileWaiting).toEqual(Option.some(parked.id));
+      expect(parked.status).toBe("ended-at-park");
+      expect(holderOf(fake, ISSUE_REF)).toEqual(Option.none());
     }),
   );
 });
@@ -415,24 +423,36 @@ const requested = (fake: Fake) => {
 };
 
 describe("owning a pull request", () => {
-  effect("holds the pull request's claim ref while the run waits, and lets it go at the end", () =>
-    Effect.gen(function* () {
-      const waiting = makeFake("approve");
+  effect(
+    "holds the pull request's claim ref while the run waits, and lets it go at the park and at the end",
+    () =>
+      Effect.gen(function* () {
+        const waiting = makeFake("approve");
 
-      const parked = yield* runUntil(owning, waiting, item("owning-waits"), (run) =>
-        listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
-          Effect.map(({ waits }) => waits.length > 0),
-        ),
-      );
+        let whileWaiting = Option.none<string>();
 
-      expect(Option.map(holderOf(waiting, PULL_REF), (holder) => holder.runId)).toEqual(
-        Option.some(parked.id),
-      );
+        const parked = yield* runUntil(owning, waiting, item("owning-waits"), (run) =>
+          listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+            Effect.map(({ waits }) => waits.length > 0),
+            Effect.tap((found) =>
+              Effect.sync(() => {
+                if (found) {
+                  whileWaiting = Option.map(holderOf(waiting, PULL_REF), (holder) => holder.runId);
+                }
+              }),
+            ),
+          ),
+        );
 
-      const done = makeFake("approve");
-      expect((yield* runToEnd(owning, done, item("owning"))).status).toBe("done");
-      expect(done.refs.has(PULL_REF)).toBe(false);
-    }),
+        expect(whileWaiting).toEqual(Option.some(parked.id));
+        // The park ends the run, which lets go of its claim ref, as a spoke's does.
+        expect(parked.status).toBe("ended-at-park");
+        expect(waiting.refs.has(PULL_REF)).toBe(false);
+
+        const done = makeFake("approve");
+        expect((yield* runToEnd(owning, done, item("owning"))).status).toBe("done");
+        expect(done.refs.has(PULL_REF)).toBe(false);
+      }),
   );
 
   effect("keeps the claim ref a parked run took in its journal, for what cleans up after it", () =>

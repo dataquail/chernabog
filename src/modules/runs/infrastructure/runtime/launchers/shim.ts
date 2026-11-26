@@ -4,12 +4,16 @@
 // never passes through a shell or tmux's quoting, and every launcher gives the
 // agent the same environment.
 
+import { SandboxName } from "@chernabog/core";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
+
+import { launchSandboxRefusal } from "../sandboxes.ts";
 
 export const LaunchSpecFile = Schema.Struct({
   command: Schema.String,
@@ -21,6 +25,9 @@ export const LaunchSpecFile = Schema.Struct({
   // Holds this process's pid while the agent runs, so a session can be told
   // apart from a launcher that only says it ended.
   pidFile: Schema.optionalKey(Schema.String),
+  // Where the agent runs (ADR 24): none, docker or podman. Absent, from a
+  // spec written before it, is none.
+  sandbox: Schema.optionalKey(SandboxName),
 });
 
 export type LaunchSpecFile = typeof LaunchSpecFile.Type;
@@ -31,6 +38,15 @@ export const runLaunch = (specFile: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spec = yield* Schema.decodeEffect(LaunchSpecJson)(yield* fs.readFileString(specFile));
+
+    // A sandbox it can't start refuses the session rather than running the agent on the host.
+    const refused = launchSandboxRefusal(spec.sandbox ?? "none");
+
+    if (Option.isSome(refused)) {
+      yield* Console.error(`chernabog: ${refused.value}`);
+
+      return 1;
+    }
 
     const prompt = yield* Effect.forEach(
       Option.toArray(Option.fromUndefinedOr(spec.promptFile)),

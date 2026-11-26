@@ -356,6 +356,7 @@ const start = (
       env: { ...claudeEnvironment(context), ...sessionEnv(files, endpoint, withPerson) },
       promptFile: files.prompt,
       pidFile: files.pid,
+      sandbox: context.sandbox.name,
     });
 
     // The spec carries the session's environment, a token among it, so only its owner may read it;

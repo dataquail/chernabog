@@ -151,9 +151,10 @@ export const reviewRequests = Effect.gen(function* () {
 // its first review (review's), a review again (re-review's), one whose
 // record moves on to review-asked-again first, a record GitHub disagrees
 // with, which status shows rather than starting either, or nothing, while a
-// person has it.
+// person has it or while this persona's own review of the head is posting.
 type Asked =
   | { readonly kind: "withPerson" }
+  | { readonly kind: "posting" }
   | { readonly kind: "first" }
   | { readonly kind: "again"; readonly record: PhaseRecord }
   | { readonly kind: "reconcile"; readonly record: PhaseRecord }
@@ -195,6 +196,21 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
 
       if (found.phase === P.reviewAskedAgain) {
         return { kind: "again", record: found };
+      }
+
+      // This persona's own review of the head, recorded and about to be
+      // posted (postReview records first, #698): GitHub lists the persona as
+      // a requested reviewer until the post lands, which isn't a request to
+      // review again. A request on the same head after the post is left
+      // alone too; a push moves the head and asks again.
+      if (
+        Phases.holds(found, [P.changesAsked, P.approved]) &&
+        Option.exists(
+          Phases.reviewOf(found),
+          (kept) => sameLogin(kept.reviewer, me) && kept.sha === request.pull.headSha,
+        )
+      ) {
+        return { kind: "posting" };
       }
 
       // Waiting on a first review, or a person's turn, then a review asked of
@@ -627,7 +643,15 @@ const eventOf = (verdict: Verdict["verdict"]): ReviewEvent => {
 // keeps what the review saw and who gave it in which session (ADR 21,
 // decision 7), which the merge gate reads and a re-review resumes by; it is
 // written again over a record at the same phase that keeps another review,
-// such as a recheck's earlier round.
+// such as a recheck's earlier round. The record is written first (#698): a
+// persona's review on GitHub always finds its run's record there, so the
+// author's address-review source never takes it for a person's, which no run
+// records, and reconciles it as an observer's. A post that then fails for
+// good leaves the record with no review behind it, which changesByRecord
+// holds; a retry finds this review's record and posts without writing again.
+// Until the post lands, GitHub still asks this persona for the review, which
+// askedOf reads as its own review posting rather than a request to review
+// again; and the status label already shows the verdict the post will carry.
 const postReview = (
   pull: PullRequest,
   review: Phases.Reviewed,
@@ -636,15 +660,6 @@ const postReview = (
 ) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const event = eventOf(verdict.verdict);
-    yield* github.review(pull.number, {
-      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}`,
-      commitSha: pull.headSha,
-      comments: verdict.comments,
-      event,
-    });
-    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`.`);
-
     const item = Phases.pullRequestItem(pull.number);
     const to = phaseAfter(verdict.verdict);
 
@@ -659,6 +674,14 @@ const postReview = (
     );
 
     yield* Phases.record(item, to, Phases.reviewData(review), { always: !recorded });
+
+    yield* github.review(pull.number, {
+      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}`,
+      commitSha: pull.headSha,
+      comments: verdict.comments,
+      event: eventOf(verdict.verdict),
+    });
+    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`.`);
   });
 
 const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>

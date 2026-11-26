@@ -777,9 +777,18 @@ const heldItem = (held: Held): WorkItem => ({
 
 // For a trigger: the work items of runs holding a merge (holdWhileBaseRed)
 // whose base branch is no longer red, as BASE_GREEN signals to those runs,
-// one per work item. Never starts a run: for a document's pr.land, which
-// can't be taken up again mid-graph (audit W8); a recipe's trigger uses
-// heldMerges. Reads nothing while the flow's settings don't hold merges.
+// one per work item. Never starts a run, and wakes none either: a park ends
+// its run (ADR 23, decision 2). Reads nothing while the flow's settings don't
+// hold merges.
+/**
+ * @deprecated Wakes nothing: a park ends its run (ADR 23, decision 2), so no
+ * run is left holding a merge for its `base-green` signal to wake, and its
+ * items are `wakeOnly`, so they start none. Use a source that offers the
+ * pull request from its `merge-held` phase record, so a new run takes the
+ * merge up: `PullRequest.heldMerges(owns)` in a recipe's trigger, or
+ * `PullRequest.heldMergesOf(flow, dataOf)`, which a document's `pr.land`
+ * already offers (#694).
+ */
 export const baseTurnedGreen = Effect.gen(function* () {
   if (!(yield* Settings.mergeHold).enabled) {
     return [];
@@ -805,12 +814,12 @@ export const resumingMerge = (item: WorkItem) =>
 
 // For a recipe's trigger: the held merges its own runs held, by their work
 // items' keys (`owns`, given the key and the pull request), as work a run may
-// start (ADR 0021, decision 4): a CI job that held the merge ended at the
-// park, and a new run takes the merge up. One whose base is no longer red
-// also signals BASE_GREEN, which wakes a daemon's run still parked on it; that
-// run holds the work item, so no second one starts. One held past the
-// mergeHoldTimeout setting, by its record's `at`, is offered too, and the run
-// that takes it up finds its time is up and hands it to a person.
+// start (ADR 0021, decision 4): the run that held the merge ended at its park
+// (ADR 23, decision 2), and a new run takes the merge up from its merge-held
+// record. One is offered once its base is no longer red, saying so with
+// BASE_GREEN, or once held past the mergeHoldTimeout setting, by its record's
+// `at`, when the run that takes it up finds its time is up and hands it to a
+// person.
 export const heldMerges = (owns: (key: string, pullRequest: number) => boolean) =>
   Effect.gen(function* () {
     const hold = yield* Settings.mergeHold;

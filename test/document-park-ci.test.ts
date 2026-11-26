@@ -129,7 +129,7 @@ describe("the implement document in a CI job", () => {
       Effect.gen(function* () {
         const { fake, run } = yield* parked(yield* loaded);
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.git.opened).toBe(true);
         expect(fake.phases()[ISSUE_ITEM]).toBe("awaiting-ci");
         // Not handed off: nobody is asked to review it yet.
@@ -331,7 +331,7 @@ describe("the address-review document in a CI job", () => {
         const run = yield* runUntil(handle, fake, work, waitsOnCi);
         fake.refs.clear();
 
-        expect(run.status).toBe("running");
+        expect(run.status).toBe("ended-at-park");
         expect(fake.git.pushes).toBe(2);
         expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
         expect(Object.keys(rawData(fake, PR_ITEM))).toEqual(["since"]);
