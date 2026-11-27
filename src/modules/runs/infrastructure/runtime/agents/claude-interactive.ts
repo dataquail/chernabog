@@ -83,15 +83,35 @@ export const interactiveClaudeArgs = (
   return [...session, "--permission-mode", "auto", "--settings", settingsFile];
 };
 
+// Until the hub hands a session its URL and token (#714), an unsandboxed
+// session runs the binary on the host instead; nothing sandboxed runs yet.
+export const NO_SESSION_URL = "Only if `CHERNABOG_SESSION_URL` isn't set in your environment:";
+
 // What a session with a person adds: whatever the prompt says about working
-// unattended, the person decides with the agent, and chernabog is at hand.
+// unattended, the person decides with the agent, and chernabog is at hand,
+// through the session API (ADR 24, #715) rather than its binary, which a
+// sandboxed session can't run. The commands are the API's allowlist,
+// SESSION_COMMANDS in session-api.server.ts.
 const personNote = () =>
   [
     "## A person is here",
     "",
     "A person is working in this session with you. Where this prompt says you are unattended, that doesn't hold: talk it over with them, ask what you need to, and decide together. Stopping to wait for them is fine.",
     "",
-    `To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\`.`,
+    "## Reaching chernabog",
+    "",
+    "Where this prompt tells you to run a `chernabog` command, ask chernabog through this session's API instead of running its binary, with the URL and token in your environment. It takes one command, `open-pr`, which drafts the pull request as `open-pr --draft` does. Put its arguments in a JSON file outside the worktree, then:",
+    "",
+    "```sh",
+    'curl -sS --fail-with-body -X POST "$CHERNABOG_SESSION_URL/commands/open-pr" \\',
+    '  -H "Authorization: Bearer $CHERNABOG_SESSION_TOKEN" \\',
+    '  -H "Content-Type: application/json" \\',
+    "  --data-binary @<file>",
+    "```",
+    "",
+    'The file holds `{"draft": true, "title": "<title>", "body": "<the body in Markdown>", "summary": "<summary>"}`: `draft` must be `true`, and `body` replaces `--body-file`. It answers with what the command prints, the AskUserQuestion input to ask the person, or with why it refused. The API refuses any other command.',
+    "",
+    `${NO_SESSION_URL} To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\`.`,
     "",
   ].join("\n");
 

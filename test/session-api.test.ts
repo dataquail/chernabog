@@ -1,13 +1,13 @@
-// The hub's session API (ADR 24, #713): a TCP listener whose only routes are
-// one session's stop, question and answer, each reached with that session's
-// token alone, and only while the session's `__launch` runs and the run that
-// launched it is live. The stop
+// The hub's session API (ADR 24, #713, #715): a TCP listener whose only routes
+// are one session's stop, question, answer and allowlisted commands, each
+// reached with that session's token alone, and only while the session's
+// `__launch` runs and the run that launched it is live. The stop
 // and question routes decide what the Stop and AskUserQuestion hooks decide
 // today, case for case.
 
 import { Hybrid, type Json, printJson } from "@chernabog/sdk";
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,12 +16,26 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { it } from "effect-bun-test";
 
-import { openSessionApi, type SessionApi } from "../src/interface/daemon/session-api.server.ts";
-import { questionHook } from "../src/modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
+import * as DefaultPrompts from "../packages/sdk/src/default-prompts.ts";
+import {
+  openSessionApi,
+  SESSION_COMMANDS,
+  type SessionApi,
+} from "../src/interface/daemon/session-api.server.ts";
+import {
+  NO_SESSION_URL,
+  withAnswerFile,
+} from "../src/modules/runs/infrastructure/runtime/agents/claude-interactive.ts";
+import {
+  Draft,
+  questionFor,
+  questionHook,
+} from "../src/modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import {
   LaunchRecord,
   sessionFiles,
@@ -30,9 +44,11 @@ import {
   MAX_BLOCKS,
   stopHook,
 } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import { shellCommand } from "../src/modules/runs/infrastructure/runtime/launchers/launcher.ts";
 import { LaunchSpecJson } from "../src/modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import { spawnGroup, stopGroup } from "../src/platform/process-group.ts";
+import { selfCommand } from "../src/platform/self.ts";
 import { sessionToken } from "../src/platform/session-token.ts";
 
 const effect = it.scopedLive.layer(
@@ -656,4 +672,233 @@ describe("the answer route", () => {
       expect(yield* fs.readFileString(files.answer)).toBe(answer);
     }),
   );
+});
+
+// What a bundled prompt or recipe tells an agent to run: each `chernabog …`
+// line of a fenced shell block, as the command's name and its flags.
+const toldToRun = (prompt: string) =>
+  [...prompt.matchAll(/```(?:sh|bash|shell)?\n([\s\S]*?)```/g)].flatMap(([, block = ""]) =>
+    block.split("\n").flatMap((line) => {
+      const words = line.trim().split(/\s+/);
+
+      if (words[0] !== "chernabog") {
+        return [];
+      }
+
+      return [{ name: words[1] ?? "", flags: words.filter((word) => word.startsWith("--")) }];
+    }),
+  );
+
+const bundledPrompts = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = yield* path.fromFileUrl(new URL("../packages/recipes/prompts", import.meta.url));
+
+  const recipes = yield* Effect.forEach(yield* fs.readDirectory(dir), (name) =>
+    fs.readFileString(`${dir}/${name}`),
+  );
+
+  return [...Object.values(DefaultPrompts), ...recipes];
+});
+
+const DRAFT_ARGS = {
+  draft: true,
+  title: "feat: do the thing",
+  body: "Adds the thing.",
+};
+
+describe("the session API's commands", () => {
+  test("allow open-pr --draft, and nothing else", () => {
+    expect(SESSION_COMMANDS).toEqual(["open-pr"]);
+  });
+
+  effect("cover every command a bundled prompt or recipe tells an agent to run", () =>
+    Effect.gen(function* () {
+      const told = (yield* bundledPrompts).flatMap(toldToRun);
+
+      expect(told.length).toBeGreaterThan(0);
+
+      for (const { name } of told) {
+        expect([name, SESSION_COMMANDS.includes(name)]).toEqual([name, true]);
+      }
+
+      expect(
+        told.filter(({ name }) => name === "open-pr").map(({ flags }) => flags.includes("--draft")),
+      ).not.toContain(false);
+    }),
+  );
+
+  effect("draft the pull request as chernabog open-pr --draft does, and print the question", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, root } = yield* hub;
+
+      const { files, worktree } = yield* session(root, SESSION, {
+        schema: Hybrid.finishedJsonSchema,
+        withPerson: true,
+      });
+
+      const drafted = yield* call(api, {
+        path: routeOf(RUN, SESSION, "commands/open-pr"),
+        token: tokenFor(api, RUN, SESSION),
+        body: printJson(DRAFT_ARGS),
+      });
+
+      expect(drafted.status).toBe(200);
+
+      const draft = yield* Schema.decodeEffect(Draft)(yield* fs.readFileString(files.draft));
+      const head = (yield* git(worktree, "rev-parse", "HEAD")).trim();
+
+      expect(draft.head).toBe(head);
+      expect(draft.answer).toBe(
+        printJson({ title: DRAFT_ARGS.title, body: DRAFT_ARGS.body, summary: DRAFT_ARGS.title }),
+      );
+
+      expect(drafted.text).toContain("Drafted.");
+      expect(drafted.text).toContain(printJson(questionFor(draft)));
+      expect(yield* fs.exists(files.done)).toBe(false);
+      expect(yield* fs.exists(files.answer)).toBe(false);
+    }),
+  );
+
+  effect("refuse open-pr without --draft, which is the person's own", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, root } = yield* hub;
+
+      const { files } = yield* session(root, SESSION, {
+        schema: Hybrid.finishedJsonSchema,
+        withPerson: true,
+      });
+
+      const without: ReadonlyArray<Json> = [
+        { ...DRAFT_ARGS, draft: false },
+        { title: "t", body: "b" },
+        {},
+      ];
+
+      for (const args of without) {
+        const refused = yield* call(api, {
+          path: routeOf(RUN, SESSION, "commands/open-pr"),
+          token: tokenFor(api, RUN, SESSION),
+          body: printJson(args),
+        });
+
+        expect([args, refused.status]).toEqual([args, 422]);
+      }
+
+      expect(yield* fs.exists(files.draft)).toBe(false);
+      expect(yield* fs.exists(files.done)).toBe(false);
+      expect(yield* fs.exists(files.answer)).toBe(false);
+    }),
+  );
+
+  effect("refuse a draft while the worktree has uncommitted changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, root } = yield* hub;
+
+      const { files, worktree } = yield* session(root, SESSION, {
+        schema: Hybrid.finishedJsonSchema,
+        withPerson: true,
+      });
+
+      yield* fs.writeFileString(`${worktree}/wip.txt`, "wip\n");
+
+      const refused = yield* call(api, {
+        path: routeOf(RUN, SESSION, "commands/open-pr"),
+        token: tokenFor(api, RUN, SESSION),
+        body: printJson(DRAFT_ARGS),
+      });
+
+      expect(refused.status).toBe(422);
+      expect(refused.text).toContain("wip.txt");
+      expect(yield* fs.exists(files.draft)).toBe(false);
+    }),
+  );
+
+  effect("refuse anything off the allowlist", () =>
+    Effect.gen(function* () {
+      const { api, root } = yield* hub;
+      yield* session(root, SESSION, { schema: Hybrid.finishedJsonSchema, withPerson: true });
+      const token = tokenFor(api, RUN, SESSION);
+
+      for (const name of [
+        "cancel",
+        "start",
+        "run",
+        "enroll",
+        "pause",
+        "status",
+        "open-pr-now",
+        "PauseRepoCommand",
+        "open-pr/../cancel",
+      ]) {
+        const refused = yield* call(api, {
+          path: routeOf(RUN, SESSION, `commands/${name}`),
+          token,
+          body: "{}",
+        });
+
+        expect([name, refused.status]).toEqual([name, 404]);
+      }
+
+      const wrong = yield* call(api, {
+        method: "GET",
+        path: routeOf(RUN, SESSION, "commands/open-pr"),
+        token,
+      });
+
+      expect(wrong.status).toBe(405);
+    }),
+  );
+
+  effect("take only the session's own token, while its run is live", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { api, end, root } = yield* hub;
+
+      const { files } = yield* session(root, SESSION, {
+        schema: Hybrid.finishedJsonSchema,
+        withPerson: true,
+      });
+
+      const path = routeOf(RUN, SESSION, "commands/open-pr");
+      const body = printJson(DRAFT_ARGS);
+
+      const without = yield* call(api, { path, body });
+      expect(without.status).toBe(401);
+
+      const other = yield* call(api, { path, body, token: tokenFor(api, RUN, OTHER_SESSION) });
+      expect(other.status).toBe(401);
+
+      yield* end(RUN);
+
+      const ended = yield* call(api, { path, body, token: tokenFor(api, RUN, SESSION) });
+      expect(ended.status).toBe(410);
+      expect(yield* fs.exists(files.draft)).toBe(false);
+    }),
+  );
+});
+
+describe("the note a session with a person gets", () => {
+  test("tells the agent to reach chernabog through the session API, with its token", () => {
+    const prompt = withAnswerFile("Do it.", Option.some(Hybrid.finishedJsonSchema), true);
+
+    expect(prompt).toContain("$CHERNABOG_SESSION_URL/commands/open-pr");
+    expect(prompt).toContain("Authorization: Bearer $CHERNABOG_SESSION_TOKEN");
+
+    // A prompt that never asks for a pull request still doesn't, note and all.
+    expect(prompt).not.toContain("chernabog open-pr");
+
+    // The binary only where the session has no URL, which #714 hands every one.
+    const api = prompt.indexOf("$CHERNABOG_SESSION_URL/commands/open-pr");
+
+    const fallback = prompt.indexOf(
+      `${NO_SESSION_URL} To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\``,
+    );
+
+    expect(fallback).toBeGreaterThan(api);
+    expect(prompt.split(shellCommand(selfCommand())).length).toBe(2);
+  });
 });
