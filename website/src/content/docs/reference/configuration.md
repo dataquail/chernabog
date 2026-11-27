@@ -46,7 +46,13 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 
 `sandbox` says where agent sessions run: `none` runs them on the host, as the person; `docker` and `podman` are meant to run each one in a container built from the repo's image ([ADR 24](https://github.com/dataquail/chernabog/blob/main/docs/adr/0024-local-sessions-run-in-a-sandbox.md)). It is chosen the way the [launcher](/chernabog/agents/launchers/#who-chooses) is, and independently of it: the repo's entry in machine config (or its persona's), then machine config's own `sandbox`, then the repo's, then `none`. A choice outside the repo's `allowedSandboxes` fails the repo with a config error naming the layer that chose it, and so does a name other than those three. So a team that requires a container writes `allowedSandboxes: [docker, podman]`, and each person picks the runtime they have.
 
-The chosen sandbox goes in each interactive session's launch spec. A session whose sandbox can't start is refused, saying why, and never falls back to running on the host. Container support hasn't landed yet: for now `docker` and `podman` refuse every agent session with `isn't supported yet`.
+The chosen sandbox goes in each interactive session's launch spec. A session whose sandbox can't start is refused, saying why, and never falls back to running on the host.
+
+With `docker` or `podman`, `chernabog __launch` runs Claude with `<runtime> run -it --rm --init` in the foreground of the launcher's terminal, so Orca and tmux show its TUI as before, and closing the terminal removes the container. Only the worktree and the repo's common git dir are mounted, read-write at their host paths (the common dir's `config` and `hooks/` read-only), with a Claude config dir of the session's own; nothing else of your home. The container gets exactly the session's environment, each variable passed by name, and reaches chernabog at `host.docker.internal` or `host.containers.internal`. Commits come out as you: rootless Podman runs with `--userns=keep-id`, Docker as your uid and gid. For now:
+
+- the image is the one `CHERNABOG_SANDBOX_IMAGE` names, in the environment chernabog runs in, until chernabog builds each repo's own;
+- only Claude under a launcher (orca, tmux or your own) runs sandboxed: headless Claude, Codex, opencode and custom adapters refuse;
+- a session is refused when `<runtime> info` fails, the runtime missing or not running.
 
 ```yaml
 # .chernabog/config.yaml

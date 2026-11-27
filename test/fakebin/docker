@@ -1,0 +1,88 @@
+#!/usr/bin/env bun
+// Stands in for `docker` (and, as test/fakebin/podman, for `podman`) in
+// end-to-end tests. `run` records its arguments in FAKE_RUNTIME_LOG and runs
+// the command on the host as the container would: in its --workdir, with the
+// variables --env names (taken from this process's environment, as the real
+// CLI does) and PATH, and FAKE_HOST_GATEWAY telling fakebin/claude that the
+// container's host names are this machine's loopback. It keeps each
+// "container" in FAKE_RUNTIME_STATE by its labels, for `ps --filter label=`
+// and `rm -f`.
+// FAKE_RUNTIME_MISSING: behave as if neither runtime were installed.
+// FAKE_RUNTIME_DETACH: the container's process outlives this CLI, as a real
+// container outlives its client, until `rm -f` removes it.
+import { spawn } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
+
+const runtime = basename(process.argv[1] ?? 'docker');
+const args = process.argv.slice(2);
+if (process.env.FAKE_RUNTIME_MISSING) {
+  console.error(`${runtime}: command not found`);
+  process.exit(127);
+}
+const state = process.env.FAKE_RUNTIME_STATE ?? join(process.env.TMPDIR ?? '/tmp', 'fake-runtime');
+mkdirSync(state, { recursive: true });
+const log = (line: string) => process.env.FAKE_RUNTIME_LOG && appendFileSync(process.env.FAKE_RUNTIME_LOG, `${runtime} ${line}\n`);
+
+type Container = { id: string; labels: Record<string, string>; pid: number };
+const containers = (): Array<Container> =>
+  readdirSync(state).filter((name) => name.endsWith('.json')).map((name) => JSON.parse(readFileSync(join(state, name), 'utf8')));
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+if (args[0] === 'info') {
+  console.log(`${runtime} fake`);
+} else if (args[0] === 'ps') {
+  const filter = args[args.indexOf('--filter') + 1] ?? '';
+  const [, name, value] = /^label=([^=]+)=(.*)$/.exec(filter) ?? [];
+  for (const container of containers()) {
+    if (name && container.labels[name] === value && alive(container.pid)) console.log(container.id);
+  }
+} else if (args[0] === 'rm') {
+  log(args.join(' '));
+  for (const id of args.slice(1).filter((arg) => !arg.startsWith('-'))) {
+    const file = join(state, `${id}.json`);
+    if (!existsSync(file)) continue;
+    const container: Container = JSON.parse(readFileSync(file, 'utf8'));
+    for (const target of [-container.pid, container.pid]) {
+      try {
+        process.kill(target, 'SIGKILL');
+      } catch {}
+    }
+    rmSync(file);
+  }
+} else if (args[0] === 'run') {
+  log(`run ${JSON.stringify(args.slice(1))}`);
+  const withValue = new Set(['--label', '--volume', '-v', '--workdir', '-w', '--env', '-e', '--user', '--userns']);
+  const labels: Record<string, string> = {};
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '/usr/bin:/bin', FAKE_HOST_GATEWAY: '127.0.0.1' };
+  for (const [name, value] of Object.entries(process.env)) if (name.startsWith('FAKE_') && value !== undefined) env[name] = value;
+  let cwd = process.cwd();
+  let i = 1;
+  for (; i < args.length && args[i]!.startsWith('-'); i++) {
+    const arg = args[i]!;
+    if (!withValue.has(arg)) continue;
+    const value = args[++i]!;
+    if (arg === '--label') labels[value.slice(0, value.indexOf('='))] = value.slice(value.indexOf('=') + 1);
+    if (arg === '--workdir' || arg === '-w') cwd = value;
+    if ((arg === '--env' || arg === '-e') && process.env[value] !== undefined) env[value] = process.env[value]!;
+  }
+  const [, command, ...rest] = args.slice(i);
+  const id = `c${process.pid}${Date.now()}`;
+  const detach = Boolean(process.env.FAKE_RUNTIME_DETACH);
+  const child = spawn(command!, rest, { cwd, env, stdio: 'inherit', detached: detach });
+  writeFileSync(join(state, `${id}.json`), JSON.stringify({ id, labels, pid: child.pid }));
+  child.on('exit', (code) => {
+    rmSync(join(state, `${id}.json`), { force: true });
+    process.exit(code ?? 1);
+  });
+} else {
+  console.error(`fake ${runtime}: unknown command ${args.join(' ')}`);
+  process.exit(1);
+}

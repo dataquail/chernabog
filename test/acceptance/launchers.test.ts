@@ -2,7 +2,7 @@
 // it sends and the Stop hook, both through the hub's session API, decide when
 // it is done, and nothing runs `claude -p`.
 
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Database } from "bun:sqlite";
@@ -173,18 +173,181 @@ describe.each(["tmux", "orca", "mine", "headless"])(
   },
 );
 
-// ADR 24, decision 2: a sandbox that can't start refuses the run, and nothing
-// falls back to running on the host. Until the container lands, none can.
-describe.each(["docker", "podman"])("a repo whose sandbox is %s", (provider) => {
-  test("refuses the session, saying why, and never starts the agent", async () => {
+// What fakebin's runtime records of a `run`: its arguments.
+const RunArgs = Schema.fromJsonString(Schema.Array(Schema.String));
+
+// What a sandboxed session's launch spec says of where it runs.
+const SandboxedSpec = Schema.fromJsonString(
+  Schema.Struct({
+    cwd: Schema.String,
+    env: Schema.Record(Schema.String, Schema.String),
+    container: Schema.Struct({
+      mounts: Schema.Array(Schema.Struct({ path: Schema.String })),
+    }),
+  }),
+);
+
+const CONTAINER_HOST = {
+  docker: "host.docker.internal",
+  podman: "host.containers.internal",
+} as const;
+
+const USER_MAPPING = {
+  docker: `${process.getuid?.()}:${process.getgid?.()}`,
+  podman: "--userns=keep-id",
+} as const;
+
+// ADR 24: with a docker or podman sandbox, __launch runs the agent in a
+// container (here fakebin's runtime, which runs it on the host as a
+// container would), and a sandbox that can't start refuses the run, never
+// falling back to the host (decision 2).
+describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (provider) => {
+  const runtimeEnv = (sandbox: Sandbox) => ({
+    FAKE_RUNTIME_LOG: join(sandbox.root, "runtime.log"),
+    FAKE_RUNTIME_STATE: join(sandbox.root, "runtime"),
+  });
+
+  const runtimeCalls = (sandbox: Sandbox) => {
+    if (!existsSync(join(sandbox.root, "runtime.log"))) {
+      return [];
+    }
+
+    return readFileSync(join(sandbox.root, "runtime.log"), "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0);
+  };
+
+  test("runs the session in a container, under the launcher, through the session API", async () => {
     const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
     sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
-    const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
-    expect(output).toContain(`sandbox ${provider} (from repo config) isn't supported yet`);
+
+    const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
+      ...runtimeEnv(sandbox),
+      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+    });
+
+    expect(output).toContain("done: #1:");
+    expect(code).toBe(0);
+    expect(sandbox.claudeCalls()).toHaveLength(1);
+    expect(sandbox.answerCalls().map((call) => call.split(" ").slice(2).join(" "))).toEqual([
+      "exited 0",
+    ]);
+
+    const runs = runtimeCalls(sandbox)
+      .filter((call) => call.startsWith(`${provider} run `))
+      .map((call) => Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)));
+
+    expect(runs).toHaveLength(1);
+
+    const [args = []] = runs;
+
+    expect(args.slice(0, 3)).toEqual(["-i", "--rm", "--init"]);
+    expect(args[args.indexOf("chernabog-sandbox:test") + 1]).toBe("claude");
+
+    // Labelled with its run and session, which cancel and the sweep remove it by.
+    const [specFile = ""] = [
+      ...new Bun.Glob("*/spec.json").scanSync(join(sandbox.home, "sessions/interactive")),
+    ];
+
+    const [sessionId = ""] = specFile.split("/");
+
+    expect(args).toContain(`chernabog.session=${sessionId}`);
+    expect(args.some((arg) => /^chernabog\.run=[\da-f-]+$/.test(arg))).toBe(true);
+
+    // The worktree, the repo's common git dir and the session's own config
+    // dir, each at its host path, and nothing else of the home.
+    const spec = Schema.decodeSync(SandboxedSpec)(
+      readFileSync(join(sandbox.home, "sessions/interactive", specFile), "utf8"),
+    );
+
+    const volumes = args.filter((_, at) => args[at - 1] === "--volume");
+
+    for (const volume of volumes) {
+      const [from, to] = volume.split(":");
+
+      expect(to).toBe(from);
+    }
+
+    const mounted = spec.container.mounts.map((mount) => mount.path);
+
+    expect(mounted).toContain(spec.cwd);
+    // At the path git names it by from the worktree's .git file: its real path.
+    expect(mounted).toContain(realpathSync(join(sandbox.checkout, ".git")));
+    expect(
+      mounted
+        .filter((path) => path.startsWith(sandbox.home) && path !== spec.cwd)
+        .map((path) => path.slice(sandbox.home.length)),
+    ).toEqual([
+      `/sessions/interactive/${sessionId}/claude`,
+      `/sessions/interactive/${sessionId}/settings.json`,
+    ]);
+    expect(volumes.filter((volume) => volume.endsWith(":ro")).length).toBeGreaterThanOrEqual(2);
+
+    // Exactly the spec's environment, each variable by name, so no token is
+    // on the command line; none of it is the host's PATH or HOME.
+    expect(args.filter((_, at) => args[at - 1] === "--env").sort()).toEqual(
+      Object.keys(spec.env).sort(),
+    );
+    expect(Object.keys(spec.env)).not.toContain("PATH");
+    expect(Object.keys(spec.env)).not.toContain("HOME");
+    expect(args.join(" ")).not.toContain(spec.env.CHERNABOG_SESSION_TOKEN);
+
+    // It reaches the hub at the runtime's name for the host.
+    expect(spec.env.CHERNABOG_SESSION_URL).toStartWith(`http://${CONTAINER_HOST[provider]}:`);
+    expect(spec.env.CLAUDE_CONFIG_DIR).toBe(
+      join(sandbox.home, "sessions/interactive", sessionId, "claude"),
+    );
+
+    // Commits come out owned by the person.
+    expect(args).toContain(USER_MAPPING[provider]);
+  }, 60_000);
+
+  test("refuses the session when the runtime isn't there, saying why, and never starts the agent", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+
+    const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
+      ...runtimeEnv(sandbox),
+      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+      FAKE_RUNTIME_MISSING: "1",
+    });
+
+    expect(output).toContain(
+      `sandbox ${provider} (from repo config) can't start: \`${provider} info\` failed`,
+    );
     expect(sandbox.claudeCalls()).toHaveLength(0);
     // Refused before any session was opened, so nothing reached the launcher.
     expect(existsSync(join(sandbox.home, "sessions/interactive"))).toBe(false);
     expect(sandbox.tmuxCalls()).toHaveLength(0);
+  }, 60_000);
+
+  test("refuses the session when there is no image to run it in", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+
+    const { output } = await sandbox.runCli(
+      ["run", "implement", "--repo", "demo"],
+      runtimeEnv(sandbox),
+    );
+
+    expect(output).toContain(
+      `sandbox ${provider} (from repo config): no image to run the session in`,
+    );
+    expect(sandbox.claudeCalls()).toHaveLength(0);
+    expect(runtimeCalls(sandbox)).toEqual([]);
+  }, 60_000);
+
+  test("refuses a headless session, which runs no container yet", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "headless" });
+    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+
+    const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
+      ...runtimeEnv(sandbox),
+      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
+    });
+
+    expect(output).toContain("only under a launcher");
+    expect(sandbox.claudeCalls()).toHaveLength(0);
   }, 60_000);
 });
 

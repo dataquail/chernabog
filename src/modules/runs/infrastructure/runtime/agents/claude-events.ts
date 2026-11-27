@@ -1,15 +1,17 @@
 // What both ways of running Claude Code share: the environment it runs with,
 // where it keeps a session's transcript, and how its messages read in a run log.
 
-import type { AgentRequest } from "@chernabog/core";
+import type { Account, AgentRequest } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { claudeTokenVariables } from "../../../../../platform/agent-accounts.ts";
+import { claudeHomeOf, claudeTokenVariables } from "../../../../../platform/agent-accounts.ts";
+import { Home } from "../../../../../platform/home.ts";
 import { type AdapterContext, agentEnvironment } from "./adapter.ts";
 import { clip } from "./process.ts";
+import { sessionFiles } from "./session-files.ts";
 
 // Claude keeps a session's transcript under the directory it ran in, with every non-alphanumeric replaced by a dash.
 export const transcriptDirectoryFor = (worktreePath: string) =>
@@ -125,3 +127,22 @@ export const transcriptExists = (request: AgentRequest, configDir: string) =>
 
     return yield* fs.exists(yield* transcriptFile(request, configDir));
   }).pipe(Effect.orElseSucceed(() => false));
+
+// The config dir a session's Claude keeps its transcripts in: a sandboxed
+// session's own, made as the session is recorded (ADR 24, "The container"),
+// or else its account's.
+export const sessionClaudeHome = (session: {
+  readonly sessionId: string;
+  readonly account: Account;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* Home;
+    const own = sessionFiles(home.root, session.sessionId).claude;
+
+    if (yield* fs.exists(own).pipe(Effect.orElseSucceed(() => false))) {
+      return own;
+    }
+
+    return claudeHomeOf(session.account, home.user);
+  });

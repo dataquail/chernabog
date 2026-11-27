@@ -18,11 +18,9 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
-import { claudeHomeOf } from "../../../../../platform/agent-accounts.ts";
-import { Home } from "../../../../../platform/home.ts";
 import { type ModelUsage } from "../../../domain/token-usage/model-usage.value-object.ts";
 import { type AgentSession } from "./adapter.ts";
-import { transcriptFile } from "./claude-events.ts";
+import { sessionClaudeHome, transcriptFile } from "./claude-events.ts";
 
 const Count = Schema.optionalKey(Schema.Finite);
 
@@ -153,8 +151,7 @@ const add = (totals: Map<string, Totals>, message: AssistantUsage["message"]) =>
 const transcriptsOf = (session: AgentSession) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const home = yield* Home;
-    const main = yield* transcriptFile(session, claudeHomeOf(session.account, home.user));
+    const main = yield* transcriptFile(session, yield* sessionClaudeHome(session));
     const subagents = `${main.slice(0, -".jsonl".length)}/subagents`;
 
     const listed = yield* fs.readDirectory(subagents).pipe(Effect.orElseSucceed(() => []));
@@ -177,8 +174,7 @@ const transcriptsOf = (session: AgentSession) =>
 // tell a session working quietly from a spoke gone idle (ADR 23, decision 4).
 export const claudeTranscripts = (session: AgentSession) =>
   Effect.gen(function* () {
-    const home = yield* Home;
-    const main = yield* transcriptFile(session, claudeHomeOf(session.account, home.user));
+    const main = yield* transcriptFile(session, yield* sessionClaudeHome(session));
 
     return [main, main.slice(0, -".jsonl".length)];
   });
