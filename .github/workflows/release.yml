@@ -35,7 +35,7 @@ jobs:
     steps:
       # An App token rather than GITHUB_TOKEN: a PR opened with GITHUB_TOKEN
       # runs no workflows, so the release PR would never get CI.
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         if: github.event_name == 'push'
         id: app-token
         with:
@@ -94,7 +94,7 @@ jobs:
     if: needs.plan.outputs.pr != ''
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: app-token
         with:
           app-id: ${{ secrets.VERSION_BUMPER_APPID }}
@@ -185,7 +185,7 @@ jobs:
             echo "$TAG is not the newest release ($newest); leaving the formula alone"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         if: steps.newest.outputs.skip != 'true'
         id: app-token
         with:
