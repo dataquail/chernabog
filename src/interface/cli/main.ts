@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stdio from "effect/Stdio";
-import * as Stream from "effect/Stream";
 
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
@@ -32,7 +31,6 @@ import {
   type ActiveRun,
   attachCommand,
   declaredLabels,
-  questionHook,
   repoConfigDir,
   runLaunch,
   RunLogsQueries,
@@ -40,7 +38,6 @@ import {
   runStepChild,
   type RunView,
   StepServicesLive,
-  stopHook,
   syncLabels,
 } from "../../modules/runs/runs.platform.ts";
 import { trustEndpoints } from "../../modules/trust/interface/cli/trust.endpoint-groups.ts";
@@ -410,27 +407,6 @@ const launchChild = Command.make("__launch", { spec: Argument.String("spec") }, 
   }),
 );
 
-// Claude's Stop hook in an interactive session.
-const stopHookChild = Command.make(
-  "__stop-hook",
-  { dir: Flag.String("dir"), person: Flag.Boolean("person").pipe(Flag.withDefault(false)) },
-  ({ dir, person }) =>
-    Effect.flatMap(
-      stopHook(dir, person),
-      Option.match({ onNone: () => Effect.void, onSome: Console.log }),
-    ),
-);
-
-// Claude's PreToolUse and PostToolUse hook on AskUserQuestion, in a session with a person.
-const questionHookChild = Command.make("__question-hook", { dir: Flag.String("dir") }, ({ dir }) =>
-  Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-    const input = yield* Stream.mkString(Stream.decodeText(stdio.stdin));
-    const printed = yield* questionHook(dir, input);
-    yield* Option.match(printed, { onNone: () => Effect.void, onSome: Console.log });
-  }),
-);
-
 // With no subcommand, in a terminal: the live view. Piped, the status instead.
 const live = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
@@ -488,8 +464,6 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     daemon,
     Command.unlisted(stepChild),
     Command.unlisted(launchChild),
-    Command.unlisted(stopHookChild),
-    Command.unlisted(questionHookChild),
   ]),
 );
 

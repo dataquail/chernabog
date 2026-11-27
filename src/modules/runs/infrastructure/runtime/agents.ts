@@ -29,6 +29,7 @@ import { type Environment, HostEnvironment } from "../../../../platform/environm
 import type { Exec } from "../../../../platform/exec.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
+import { SessionApiAccess, sessionEndpoint } from "../../../../platform/session-api-access.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
 import { commitsSince, headOf, recordAnswer, recordUnanswered } from "./agents/answers.ts";
 import { claudeAdapter } from "./agents/claude.ts";
@@ -232,6 +233,15 @@ export const AgentLive = (
             const before = yield* headOf(request.cwd);
             const log = yield* logOf;
 
+            // The session's routes on the hub's session API, in a run whose hub handed out its key.
+            const access = yield* Effect.serviceOption(SessionApiAccess);
+
+            const sessionApi = Option.flatMap(run, (info) =>
+              Option.flatMap(access, (given) =>
+                sessionEndpoint(given, info.runId, request.sessionId),
+              ),
+            );
+
             const result = yield* found.value
               .run(asked, {
                 account,
@@ -240,6 +250,7 @@ export const AgentLive = (
                 launcher: settings.launcher,
                 sandbox,
                 log,
+                sessionApi,
               })
               .pipe(
                 // What the call spent, however it ends, in a run.
@@ -331,6 +342,7 @@ export const attachCommand = (record: SessionRecord) =>
       launcher: HEADLESS,
       sandbox: NO_SANDBOX,
       log: () => Effect.void,
+      sessionApi: Option.none(),
     };
 
     const session = Option.getOrElse(

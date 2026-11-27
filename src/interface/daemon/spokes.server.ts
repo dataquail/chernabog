@@ -71,6 +71,7 @@ import {
   type SpokeEndRequest,
   SpokeHandOverJson,
   type SpokeReport,
+  type SpokeSessionApi,
   type WorkItem,
 } from "../../modules/runs/runs.platform.ts";
 import { homePaths } from "../../platform/home.ts";
@@ -488,6 +489,9 @@ export const hubSpokes = <R>(options: {
   // How long a reaped spoke gets after SIGTERM before SIGKILL; STOP_GRACE,
   // unless a test says otherwise.
   readonly reapGrace?: Duration.Duration;
+  // Where the hub's session API listens and a run's key (ADR 24), handed to
+  // the run's spoke; none when the hub has no session API.
+  readonly sessionApi?: (runId: RunId) => Option.Option<typeof SpokeSessionApi.Type>;
 }): Effect.Effect<Spokes, never, R | FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -577,10 +581,25 @@ export const hubSpokes = <R>(options: {
         const handOverFile = handOverFileOf(handOver.runId);
         yield* fs.makeDirectory(paths.spokes, { recursive: true });
 
+        const sessionApi = Option.flatMap(Option.fromUndefinedOr(options.sessionApi), (of) =>
+          of(handOver.runId),
+        );
+
+        // It holds the run's key, so only its owner may read it; chmod covers
+        // a file left from before it was written this way.
         yield* fs.writeFileString(
           handOverFile,
-          encodeHandOver({ run: handOver.run, item: handOver.item }),
+          encodeHandOver({
+            run: handOver.run,
+            item: handOver.item,
+            ...Option.match(sessionApi, {
+              onNone: () => ({}),
+              onSome: (given) => ({ sessionApi: given }),
+            }),
+          }),
+          { mode: 0o600 },
         );
+        yield* fs.chmod(handOverFile, 0o600);
 
         const group = yield* spawnGroup(
           program,

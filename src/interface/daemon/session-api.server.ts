@@ -21,10 +21,10 @@
 // every route of either is refused with a 410. A request with an Origin
 // header, a browser's, is refused.
 //
-// The routes act on the session dir in the chernabog home, as the hooks do:
-// stop and question decide exactly what `__stop-hook` and `__question-hook`
-// decide, by running the same code on the same files, and whether a person
-// works in the session comes from its launch record, never the request.
+// The routes act on the session dir in the chernabog home: stop and question
+// are Claude's Stop and AskUserQuestion hooks (stop-hook.ts,
+// open-pr-question.ts), which Claude calls as HTTP hooks, and whether a
+// person works in the session comes from its launch record, never the request.
 
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as Cause from "effect/Cause";
@@ -52,11 +52,14 @@ import {
 } from "../../modules/runs/runs.platform.ts";
 import { writeFileAtomic } from "../../platform/atomic-write.ts";
 import { type Exec } from "../../platform/exec.ts";
-import { newHubKey, runKey, sameSessionToken, sessionToken } from "../../platform/session-token.ts";
+import {
+  newHubKey,
+  runKey,
+  sameSessionToken,
+  SESSION_API_LOOPBACK,
+  sessionToken,
+} from "../../platform/session-token.ts";
 import { Refusal } from "./daemon.protocol.ts";
-
-// The address every hub binds; an unsandboxed session reaches it here.
-export const SESSION_API_LOOPBACK = "127.0.0.1";
 
 // More than any answer or hook input, far less than Bun's default.
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -176,7 +179,7 @@ export const openSessionApi = (options: SessionApiOptions) =>
         const checked = checkAnswer(schema, Option.some(text));
 
         if (Result.isFailure(checked)) {
-          return yield* refuse(422, checked.failure.replace("The answer file is", "The answer is"));
+          return yield* refuse(422, checked.failure);
         }
 
         yield* writeFileAtomic(fs, files.answer, text);

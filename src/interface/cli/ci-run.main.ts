@@ -67,6 +67,8 @@ import { viewerAs, viewerLoginAs } from "../../platform/github-api.ts";
 import { GH_TOKEN_CREDENTIAL_HELPER } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { SessionApiAccess } from "../../platform/session-api-access.ts";
+import { decodeRunKey } from "../../platform/session-token.ts";
 import { killGroupOnStop, stopWhenStdinCloses } from "../../platform/shutdown.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import { followOwnRun, startOwnRun } from "./own-hub.main.ts";
@@ -825,6 +827,25 @@ const spokeProgram = (
     return yield* followSpoke(over, executionId, flow, stopAt, parked);
   });
 
+// How a spoke's agent sessions reach its hub's session API: the port and
+// its run's key, from its hand-over (ADR 24). A hub without the API gives
+// none, and neither does a job, which runs no interactive session.
+const sessionApiOf = (over: SpokeHandOver) =>
+  Option.match(Option.fromUndefinedOr(over.sessionApi), {
+    onNone: () => Layer.empty,
+    onSome: (given) => {
+      const key = decodeRunKey(given.key);
+
+      return Layer.succeed(
+        SessionApiAccess,
+        SessionApiAccess.of({
+          port: given.port,
+          runKey: (runId) => Option.some(key).pipe(Option.filter(() => runId === over.run.id)),
+        }),
+      );
+    },
+  });
+
 // The engine a run executes in: a spoke's journal, with its records there
 // for the hub to fold (ADR 23, decision 3), or a job's, which is its own hub
 // and records into its own state.db.
@@ -837,7 +858,7 @@ const engineOf = (
 > =>
   Option.match(handedOver, {
     onNone: () => EngineLive,
-    onSome: SpokeEngineLive,
+    onSome: (over) => Layer.merge(SpokeEngineLive(over), sessionApiOf(over)),
   });
 
 // One item on one runner, to the next phase boundary. Fails only for a run

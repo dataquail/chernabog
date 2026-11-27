@@ -1,8 +1,10 @@
 // Claude Code as an ordinary interactive session under a launcher, never
-// `claude -p`. The agent writes its answer to a file; a Stop hook marks the
-// session done once that answer is valid. Meanwhile the transcript feeds the
-// run log. A session still running when the daemon restarts is waited on
-// again, never started twice.
+// `claude -p`. The session reaches its hub's session API (ADR 24): the agent
+// sends its answer to the answer route, and Claude's Stop hook, an HTTP hook
+// on the stop route, marks the session done once that answer is valid. A
+// hook needs nothing from the `chernabog` binary. Meanwhile the transcript
+// feeds the run log. A session still running when the daemon restarts is
+// waited on again, never started twice.
 
 import { createHash } from "node:crypto";
 
@@ -27,6 +29,11 @@ import { claudeHomeOf } from "../../../../../platform/agent-accounts.ts";
 import { type Environment } from "../../../../../platform/environment.ts";
 import { Home } from "../../../../../platform/home.ts";
 import { selfCommand } from "../../../../../platform/self.ts";
+import {
+  SESSION_TOKEN_ENV,
+  SESSION_URL_ENV,
+  type SessionEndpoint,
+} from "../../../../../platform/session-api-access.ts";
 import { type Launcher, launcherFor } from "../launchers.ts";
 import { shellCommand } from "../launchers/launcher.ts";
 import { LaunchSpecJson } from "../launchers/shim.ts";
@@ -87,51 +94,64 @@ const personNote = () =>
     "",
   ].join("\n");
 
+// How the agent sends its answer: a PUT to its session's answer route, with
+// the URL and token its environment carries, so neither is in the prompt.
+// curl fails, printing the hub's reason, when the answer doesn't match.
+export const answerCommand = (placeholder: string) =>
+  [
+    "```sh",
+    `curl -sS --fail-with-body -X PUT "$${SESSION_URL_ENV}/answer" -H "Authorization: Bearer $${SESSION_TOKEN_ENV}" -H 'Content-Type: application/json' --data-binary @- <<'ANSWER'`,
+    placeholder,
+    "ANSWER",
+    "```",
+  ].join("\n");
+
+export const ANSWER_PLACEHOLDER = "<your answer, as JSON>";
+
 // Added here, not in the repo's prompts, so those stay the same under every launcher.
-export const withAnswerFile = (
-  prompt: string,
-  files: SessionFiles,
-  schema: Option.Option<Json>,
-  withPerson = false,
-) => {
+export const withAnswerFile = (prompt: string, schema: Option.Option<Json>, withPerson = false) => {
   const format = Option.match(schema, {
     onNone: () => "as a JSON string",
     onSome: (json) =>
-      `as JSON matching this JSON Schema (also in ${files.schema}):\n\n\`\`\`json\n${printJson(json)}\n\`\`\`\n`,
+      `as JSON matching this JSON Schema:\n\n\`\`\`json\n${printJson(json)}\n\`\`\`\n`,
   });
 
+  const send = `Send it to chernabog with this command, the JSON in place of \`${ANSWER_PLACEHOLDER}\`:\n\n${answerCommand(ANSWER_PLACEHOLDER)}\n\nIf it fails, it says why: fix the answer and send it again.`;
+
   if (withPerson) {
-    return `${prompt}\n\n${personNote()}\n## Your final answer\n\nOnce the two of you agree you are finished, your final answer goes to \`${files.answer}\` ${format}\nWhere this prompt names a command that records it, run that; otherwise write the file yourself. Until then, keep working with the person.\n`;
+    return `${prompt}\n\n${personNote()}\n## Your final answer\n\nOnce the two of you agree you are finished, your final answer goes to chernabog ${format}\nWhere this prompt names a command that records it, run that. Otherwise: ${send}\nUntil then, keep working with the person.\n`;
   }
 
-  return `${prompt}\n\n## Your final answer\n\nWhen you are finished, write your final answer to \`${files.answer}\` ${format}\nThen stop. Don't start background work after writing it.\n`;
+  return `${prompt}\n\n## Your final answer\n\nWhen you are finished, send your final answer ${format}\n${send}\nThen stop. Don't start background work after sending it.\n`;
 };
 
-const hook = (args: ReadonlyArray<string>) => ({
-  type: "command",
-  command: shellCommand([...selfCommand(), ...args]),
+// Longer than the stop route's git checks take.
+const HOOK_TIMEOUT_SECONDS = 120;
+
+// Claude Code's HTTP hook on one of the session's routes: it POSTs the
+// hook's input there and reads the hook's output from the reply. The token
+// is interpolated into the header from the session's env, never written down.
+const hook = (url: string, route: string) => ({
+  type: "http",
+  url: `${url}/${route}`,
+  headers: { Authorization: `Bearer $${SESSION_TOKEN_ENV}` },
+  allowedEnvVars: [SESSION_TOKEN_ENV],
+  timeout: HOOK_TIMEOUT_SECONDS,
 });
 
-// With a person, the Stop hook never insists on the answer: stopping to wait for them is the
-// point. The question hook makes the person's answer to the Open PR question what ends it.
-const sessionSettings = (files: SessionFiles, withPerson: boolean) => {
-  const stop = [{ hooks: [hook(["__stop-hook", "--dir", files.dir])] }];
+// The session's settings: its Stop hook on the stop route, and with a person
+// its AskUserQuestion hooks on the question route. Whether a person is in the
+// session the hub reads from its launch record, never from the request.
+export const sessionSettings = (url: string, withPerson: boolean) => {
+  const stop = [{ hooks: [hook(url, "stop")] }];
 
   if (!withPerson) {
     return printJson({ hooks: { Stop: stop } });
   }
 
-  const question = [
-    { matcher: "AskUserQuestion", hooks: [hook(["__question-hook", "--dir", files.dir])] },
-  ];
+  const question = [{ matcher: "AskUserQuestion", hooks: [hook(url, "question")] }];
 
-  return printJson({
-    hooks: {
-      Stop: [{ hooks: [hook(["__stop-hook", "--dir", files.dir, "--person"])] }],
-      PreToolUse: question,
-      PostToolUse: question,
-    },
-  });
+  return printJson({ hooks: { Stop: stop, PreToolUse: question, PostToolUse: question } });
 };
 
 // Which call the session files belong to: a fix on the same session is a new call.
@@ -291,12 +311,20 @@ const waitForEnd = (
     }
   });
 
-const personEnv = (files: SessionFiles, withPerson: boolean): Environment => {
-  if (withPerson) {
-    return { [SESSION_ENV]: files.dir };
+// Its own routes' URL and token, and with a person its directory, which
+// `chernabog open-pr` finds it by until it too goes through the API (#715).
+const sessionEnv = (
+  files: SessionFiles,
+  endpoint: SessionEndpoint,
+  withPerson: boolean,
+): Environment => {
+  const routes = { [SESSION_URL_ENV]: endpoint.url, [SESSION_TOKEN_ENV]: endpoint.token };
+
+  if (!withPerson) {
+    return routes;
   }
 
-  return {};
+  return { ...routes, [SESSION_ENV]: files.dir };
 };
 
 const start = (
@@ -305,6 +333,7 @@ const start = (
   launcher: Launcher,
   files: SessionFiles,
   configDir: string,
+  endpoint: SessionEndpoint,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -312,20 +341,19 @@ const start = (
     const withPerson = request.withPerson === true;
     yield* fs.writeFileString(
       files.prompt,
-      withAnswerFile(promptFor(request, resuming), files, request.outputSchema, withPerson),
+      withAnswerFile(promptFor(request, resuming), request.outputSchema, withPerson),
     );
     yield* Option.match(request.outputSchema, {
       onNone: () => fs.remove(files.schema, { force: true }),
       onSome: (json) => fs.writeFileString(files.schema, printJson(json)),
     });
-    yield* fs.writeFileString(files.settings, sessionSettings(files, withPerson));
+    yield* fs.writeFileString(files.settings, sessionSettings(endpoint.url, withPerson));
 
     const spec = yield* Schema.encodeEffect(LaunchSpecJson)({
       command: "claude",
       args: interactiveClaudeArgs(request, resuming, files.settings),
       cwd: request.cwd,
-      // chernabog open-pr, run in a session with a person, finds the session by it.
-      env: { ...claudeEnvironment(context), ...personEnv(files, withPerson) },
+      env: { ...claudeEnvironment(context), ...sessionEnv(files, endpoint, withPerson) },
       promptFile: files.prompt,
       pidFile: files.pid,
       sandbox: context.sandbox.name,
@@ -396,6 +424,18 @@ export const runInteractiveClaude = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
+
+    // Without its hub's session API, a session could never say it is done.
+    const endpoint = yield* Effect.fromOption(context.sessionApi).pipe(
+      Effect.mapError(
+        () =>
+          new AgentError({
+            message:
+              "claude: an interactive session reaches chernabog through its hub's session API, which this process doesn't have; the hub's log says why it didn't open",
+          }),
+      ),
+    );
+
     const files = sessionFiles(home.root, request.sessionId);
     const configDir = claudeHomeOf(context.account, home.user);
     yield* fs.makeDirectory(files.dir, { recursive: true });
@@ -433,8 +473,23 @@ export const runInteractiveClaude = (
         return yield* finish(request, done.value, files, context);
       }
 
-      const live = yield* liveSession(files);
+      let live = yield* liveSession(files);
       let running: Running;
+
+      // A session an earlier run of this call left running reaches that
+      // run's routes, which refuse it now: it could never finish. It is
+      // closed, and resumed below with this run's.
+      for (const left of Option.toArray(live)) {
+        const settings = sessionSettings(endpoint.url, request.withPerson === true);
+
+        if (!Option.contains(yield* readText(files.settings), settings)) {
+          yield* context.log(
+            `claude: session ${request.sessionId} reaches an earlier run's session API; closing it to resume it under this run`,
+          );
+          yield* closeSession(left, context.log);
+          live = Option.none();
+        }
+      }
 
       if (Option.isSome(live)) {
         yield* context.log(
@@ -453,7 +508,7 @@ export const runInteractiveClaude = (
           message: `claude: the session ended ${starts} times without an answer`,
         });
       } else {
-        running = yield* start(request, context, launcher, files, configDir);
+        running = yield* start(request, context, launcher, files, configDir, endpoint);
         starts += 1;
       }
 

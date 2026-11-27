@@ -43,6 +43,7 @@ const contextFor = (fake: Fake, fixture: string, exit = 0): AdapterContext => ({
   launcher: HEADLESS,
   sandbox: NO_SANDBOX,
   log: () => Effect.void,
+  sessionApi: Option.none(),
 });
 
 const request = (cwd: string): AgentRequest => ({

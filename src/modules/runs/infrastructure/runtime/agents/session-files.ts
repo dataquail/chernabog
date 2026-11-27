@@ -1,6 +1,7 @@
 // The files of one interactive agent session, under
 // <home>/sessions/interactive/<sessionId>/: what the launcher ran and the
-// agent was asked, the answer the agent writes, and what the Stop hook decided.
+// agent was asked, the answer the agent sent, and what the Stop hook decided.
+// The hub's session API writes the answer and the hook's files (ADR 24).
 
 import { ResolvedLauncher } from "@chernabog/core";
 import * as Effect from "effect/Effect";
@@ -17,7 +18,7 @@ export const sessionFilesIn = (dir: string) => ({
   spec: `${dir}/spec.json`,
   settings: `${dir}/settings.json`,
   schema: `${dir}/schema.json`,
-  // Written by the agent.
+  // The answer the agent sent to the session API's answer route.
   answer: `${dir}/answer.json`,
   // Written by the Stop hook, once the answer is valid or it gave up.
   done: `${dir}/done`,

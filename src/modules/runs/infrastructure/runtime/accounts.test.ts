@@ -86,6 +86,7 @@ const sessionEnv = (account: Account, host: Record<string, string>) =>
     launcher: { ...HEADLESS, name: "headless", from: "machine config" },
     sandbox: NO_SANDBOX,
     log: () => Effect.void,
+    sessionApi: Option.none(),
   });
 
 test("an agent session gets the token only for an account with its own, from the host and never the repo's env", () => {

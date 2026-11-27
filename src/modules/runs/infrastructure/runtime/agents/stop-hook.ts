@@ -1,9 +1,9 @@
-// `chernabog __stop-hook --dir <session dir> [--person]`: Claude's Stop hook
-// for an interactive session. The session is done once the agent has written a
-// valid answer file; until then the hook sends the agent back to write it,
-// three times at most, unless a person works in the session. Then it only
-// reminds the agent, once for each new commit, to offer the pull request.
-// Under every launcher, `done` is how Chernabog knows.
+// What Claude's Stop hook decides for an interactive session, which the hub's
+// session API answers on the session's stop route (ADR 24). The session is
+// done once the agent has sent a valid answer; until then the hook sends the
+// agent back to send it, three times at most, unless a person works in the
+// session. Then it only reminds the agent, once for each new commit, to
+// offer the pull request. Under every launcher, `done` is how Chernabog knows.
 
 import { type Json, parseJson, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
@@ -29,13 +29,13 @@ export const checkAnswer = (
   text: Option.Option<string>,
 ): Result.Result<Json, string> => {
   if (Option.isNone(text)) {
-    return Result.fail("There is no answer file yet.");
+    return Result.fail("There is no answer yet.");
   }
 
   const answer = parseJson(text.value);
 
   if (Option.isNone(answer)) {
-    return Result.fail("The answer file is not valid JSON.");
+    return Result.fail("The answer is not valid JSON.");
   }
 
   // A schema that isn't an object (`true`) accepts anything.
@@ -144,7 +144,7 @@ export const stopHook = (dir: string, withPerson = false) =>
     }
 
     yield* fs.writeFileString(files.blocks, String(blocks + 1));
-    const reason = `Write your final answer as JSON matching the schema in ${files.schema} to ${files.answer}, then stop. ${checked.failure}`;
+    const reason = `Send your final answer to chernabog with the curl command under "Your final answer" in your prompt, as JSON matching the schema there, then stop. ${checked.failure}`;
 
     return Option.some(printJson({ decision: "block", reason }));
   });

@@ -193,6 +193,20 @@ resolved sandbox, and `CHERNABOG_SESSION_TOKEN`. They replace
 `CHERNABOG_SESSION` (the session dir). The token goes only in an
 `Authorization: Bearer` header, never in a URL, so no access log holds it.
 
+**How a session uses them (#714).** Its settings file's hooks are Claude
+Code's HTTP hooks (`"type": "http"`) on its stop and question routes, with
+`Authorization: Bearer $CHERNABOG_SESSION_TOKEN` interpolated from the env
+(`allowedEnvVars`), so the settings file holds no token. The prompt gives
+the agent a `curl … -X PUT "$CHERNABOG_SESSION_URL/answer"` command that
+reads the answer from a heredoc; a `422` makes curl fail with the reason.
+Until #715 moves `chernabog open-pr` onto the API, a session with a person
+also keeps `CHERNABOG_SESSION`, which `open-pr` finds the session dir by.
+The hub hands a spoke the listener's port and the run's key in its
+hand-over file, written owner-only. A process that is its own hub answers
+only the runs it started and hasn't ended. A run with no session API (the
+hub couldn't open one, or a key wasn't handed over) refuses an interactive
+session, saying so.
+
 **The routes**, each under `/runs/:run/sessions/:session`:
 
 | Route                   | Takes                                                           | Does                                                                                                                                                                                             |

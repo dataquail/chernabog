@@ -1472,7 +1472,8 @@ Decisions that cut across them:
   not one an earlier unattended run claimed. One Claude session per
   repo+issue (`sessionIdFor(slug#issue, 'human-initiated')`), so a restart resumes it.
 - `AgentRequest.withPerson`: only claude under an interactive launcher; the
-  Stop hook gets `--person` and never blocks; the session stays open after
+  session API's stop route reads it from the session's `launch.json` and
+  never blocks for the answer; the session stays open after
   answering; a session the person closes fails the call. The session's env
   carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/interface/cli/open-pr.main.ts`)
   uses to write the answer and `done` once the worktree is clean.
