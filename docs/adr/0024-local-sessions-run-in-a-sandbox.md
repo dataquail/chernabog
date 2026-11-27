@@ -136,6 +136,16 @@ launcher terminal (Orca tab, tmux pane)
    name (`--env NAME`), so the values come from its own environment and
    never show in `ps`. The spec file stays owner-only, as today.
 
+   **(#720 settles:** the token is at `keys/claude/<account>.token` in the
+   chernabog home, 0600 in a 0700 directory, written by
+   `chernabog accounts set-token <account>`, which reads it from stdin, or
+   asks for it hidden in a terminal, and never takes it as an argument. An
+   account's `oauthTokenEnv` doesn't stand in for it. A session whose
+   account has no token is refused, naming the command. Of the persona's
+   variables the session gets `GH_TOKEN` and the git config that answers
+   github.com with it, not `GITHUB_TOKEN`; the implicit persona's is `gh`'s
+   own login's token, which a container can't reach otherwise.**)**
+
 8. **The session API lives on the hub** (ADR 23). It never exposes
    `POST /commands/:tag`. Each session gets its own token, scoped to its
    routes and revoked when the session ends. Its routes, its token scheme
@@ -294,7 +304,10 @@ nothing waits on it any more.
   persona's (less the PATH a repo pins), the account's token, the session
   API's URL and token, and `GIT_AUTHOR_*`/`GIT_COMMITTER_*` from the host's
   git config in the worktree, since the person's `~/.gitconfig` isn't
-  mounted. #720 narrows it to what decision 7 allows.**)**
+  mounted. #720 narrows it to what decision 7 allows.**)** **(#720
+  amends:** of the repo's and persona's, only the persona's `GH_TOKEN` and
+  its git credential config, so nothing a repo adds and no other
+  credential.**)**
 - **User.** Commits come out owned by the person: `--userns=keep-id` for
   rootless Podman, and the image's uid/gid build arguments for Docker.
   **(#717 amends:** Docker also runs with `--user <uid>:<gid>`, so an image
