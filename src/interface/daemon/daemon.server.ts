@@ -1110,10 +1110,14 @@ export const runDaemon = Effect.gen(function* () {
         yield* Ref.set(containerFailures, now);
       }).pipe(Effect.catchCause((cause) => log(`sweeping containers failed: ${String(cause)}`)));
 
-      yield* sweepContainers;
-
+      // The first sweep too, so a runtime that hangs rather than failing
+      // doesn't hold the daemon's start for its timeout.
       yield* Effect.forkScoped(
-        Effect.forever(Effect.sleep("1 minute").pipe(Effect.andThen(sweepContainers))),
+        sweepContainers.pipe(
+          Effect.andThen(
+            Effect.forever(Effect.sleep("1 minute").pipe(Effect.andThen(sweepContainers))),
+          ),
+        ),
       );
 
       const reloadPending = yield* Ref.make(false);

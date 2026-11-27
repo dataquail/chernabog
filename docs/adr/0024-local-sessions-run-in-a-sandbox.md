@@ -161,9 +161,11 @@ launcher terminal (Orca tab, tmux pane)
    daemon's, at its start and every minute: on each runtime its repos'
    personas resolved, it lists every container with a `chernabog.run`
    label and reads both labels with `inspect`, and removes those whose run
-   isn't running in state.db and whose session's `__launch` isn't running
+   state.db records as ended and whose session's `__launch` isn't running
    (checked as the session API checks it, by `agent.pid` and that the
-   process's command line names the session's spec). A runtime that
+   process's command line names the session's spec). A run state.db has no
+   row for is left alone: the labels name no home, so it may be another
+   chernabog home's on the same runtime, still in flight. A runtime that
    doesn't answer is logged when what it says changes, and keeps no other
    runtime from its sweep.**)**
 
