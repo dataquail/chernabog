@@ -883,8 +883,7 @@ describe("the session API's commands", () => {
 
 describe("the note a session with a person gets", () => {
   test("tells the agent to reach chernabog through the session API, with its token", () => {
-    const files = sessionFiles("/home", SESSION);
-    const prompt = withAnswerFile("Do it.", files, Option.some(Hybrid.finishedJsonSchema), true);
+    const prompt = withAnswerFile("Do it.", Option.some(Hybrid.finishedJsonSchema), true);
 
     expect(prompt).toContain("$CHERNABOG_SESSION_URL/commands/open-pr");
     expect(prompt).toContain("Authorization: Bearer $CHERNABOG_SESSION_TOKEN");
