@@ -136,6 +136,16 @@ launcher terminal (Orca tab, tmux pane)
    name (`--env NAME`), so the values come from its own environment and
    never show in `ps`. The spec file stays owner-only, as today.
 
+   **(#720 settles:** the token is at `keys/claude/<account>.token` in the
+   chernabog home, 0600 in a 0700 directory, written by
+   `chernabog accounts set-token <account>`, which reads it from stdin, or
+   asks for it hidden in a terminal, and never takes it as an argument. An
+   account's `oauthTokenEnv` doesn't stand in for it. A session whose
+   account has no token is refused, naming the command. Of the persona's
+   variables the session gets `GH_TOKEN` and the git config that answers
+   github.com with it, not `GITHUB_TOKEN`; the implicit persona's is `gh`'s
+   own login's token, which a container can't reach otherwise.**)**
+
 8. **The session API lives on the hub** (ADR 23). It never exposes
    `POST /commands/:tag`. Each session gets its own token, scoped to its
    routes and revoked when the session ends. Its routes, its token scheme
@@ -236,6 +246,15 @@ session, saying so.
 | `PUT …/answer`          | the answer, as JSON                                             | Checks it against the call's schema (`checkAnswer`) and stores it where the stop route and the spoke read it; a `422` with the reason when it doesn't match, so the agent can fix it             |
 | `POST …/commands/:name` | the command's arguments, as JSON                                | One of the allowlisted things an agent may ask of chernabog (#715): what the bundled prompts and recipes tell an agent to run, such as `open-pr --draft`, and nothing else; a test pins the list |
 
+**The allowlist (#715)** is one command, because the bundled prompts and
+recipes tell an agent to run only `chernabog open-pr --draft`. The API's
+`open-pr` takes `{"draft": true, "title", "body", "summary"}` and nothing
+less: without `--draft` it is the person's own way to finish, which no agent
+runs. It drafts by the same code as the CLI, and answers what the CLI
+prints, or a `422` with its reason. `SESSION_COMMANDS` in
+`session-api.server.ts` is the list, and a test pins it and checks that
+every `chernabog` command in a bundled prompt's shell block is on it.
+
 Whether a session works with a person is read from its own launch record
 (`LaunchRecord.withPerson`), never taken from the request, so an agent can't
 claim a person's leniency.
@@ -305,7 +324,10 @@ nothing waits on it any more.
   persona's (less the PATH a repo pins), the account's token, the session
   API's URL and token, and `GIT_AUTHOR_*`/`GIT_COMMITTER_*` from the host's
   git config in the worktree, since the person's `~/.gitconfig` isn't
-  mounted. #720 narrows it to what decision 7 allows.**)**
+  mounted. #720 narrows it to what decision 7 allows.**)** **(#720
+  amends:** of the repo's and persona's, only the persona's `GH_TOKEN` and
+  its git credential config, so nothing a repo adds and no other
+  credential.**)**
 - **User.** Commits come out owned by the person: `--userns=keep-id` for
   rootless Podman, and the image's uid/gid build arguments for Docker.
   **(#717 amends:** Docker also runs with `--user <uid>:<gid>`, so an image

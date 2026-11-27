@@ -5,6 +5,8 @@
 //   POST /runs/:run/sessions/:session/stop      Claude's Stop hook
 //   POST /runs/:run/sessions/:session/question  its AskUserQuestion hook
 //   PUT  /runs/:run/sessions/:session/answer    the session's answer
+//   POST /runs/:run/sessions/:session/commands/:name
+//                                               one of SESSION_COMMANDS
 //
 // It forwards nothing to the socket, so `/commands/…`, `/dashboard/…` and
 // the dashboard's `/api/…` don't exist here rather than being filtered. It
@@ -47,6 +49,7 @@ import {
   launchRuns,
   questionHook,
   readText,
+  recordPullRequest,
   sessionFiles,
   stopHook,
 } from "../../modules/runs/runs.platform.ts";
@@ -66,14 +69,36 @@ const MAX_BODY_BYTES = 1024 * 1024;
 
 // A run's or session's id as a path names it: letters, digits and dashes,
 // so no path elsewhere matches, encoded or not.
-const ROUTE = /^\/runs\/([A-Za-z0-9-]{1,128})\/sessions\/([A-Za-z0-9-]{1,128})\/([a-z]+)$/;
+const ROUTE =
+  /^\/runs\/([A-Za-z0-9-]{1,128})\/sessions\/([A-Za-z0-9-]{1,128})\/([a-z]+(?:\/[a-z-]{1,64})?)$/;
 
-type RouteName = "stop" | "question" | "answer";
+// What an agent session may ask of chernabog (#715): what the bundled prompts
+// and recipes tell an agent to run, and nothing else, each taking its
+// arguments as JSON. `open-pr` is `chernabog open-pr --draft`, so it takes
+// `draft: true` and nothing less: without --draft it is the person's own way
+// to finish, which no agent runs. A command off this list has no route.
+const OpenPrArgs = Schema.Struct({
+  draft: Schema.Literal(true),
+  title: Schema.String,
+  body: Schema.optionalKey(Schema.String),
+  summary: Schema.optionalKey(Schema.String),
+});
+
+const COMMANDS = {
+  "open-pr": OpenPrArgs,
+} as const;
+
+type CommandName = keyof typeof COMMANDS;
+
+export const SESSION_COMMANDS: ReadonlyArray<string> = Object.keys(COMMANDS);
+
+type RouteName = "stop" | "question" | "answer" | `commands/${CommandName}`;
 
 const METHODS: Readonly<Record<RouteName, string>> = {
   stop: "POST",
   question: "POST",
   answer: "PUT",
+  "commands/open-pr": "POST",
 };
 
 const isRouteName = (name: string): name is RouteName => Object.hasOwn(METHODS, name);
@@ -187,6 +212,40 @@ export const openSessionApi = (options: SessionApiOptions) =>
         return HttpServerResponse.empty({ status: 204 });
       });
 
+    // The session API's `open-pr`, as `chernabog open-pr --draft`: a refusal
+    // is the CLI's own reason, as a 422, so the agent can fix it.
+    const openPr = (files: ReturnType<typeof sessionFiles>) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const text = yield* request.text;
+
+        const args = Schema.decodeUnknownOption(OpenPrArgs)(
+          Option.getOrUndefined(Schema.decodeOption(JsonFile)(text)),
+        );
+
+        if (Option.isNone(args)) {
+          return yield* refuse(
+            422,
+            'open-pr takes {"draft": true, "title": …, "body": …, "summary": …} as JSON; without draft it is the person\'s own, not a session\'s',
+          );
+        }
+
+        const recorded = yield* Effect.result(
+          recordPullRequest(files, {
+            title: args.value.title,
+            body: args.value.body ?? "",
+            summary: Option.fromUndefinedOr(args.value.summary),
+            draft: args.value.draft,
+          }),
+        );
+
+        if (Result.isFailure(recorded)) {
+          return yield* refuse(422, recorded.failure.message);
+        }
+
+        return HttpServerResponse.text(`${recorded.success.join("\n")}\n`, { status: 200 });
+      });
+
     const handle = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const header = (name: string) => Headers.get(request.headers, name);
@@ -247,6 +306,8 @@ export const openSessionApi = (options: SessionApiOptions) =>
             return yield* question(files.dir);
           case "answer":
             return yield* answer(files);
+          case "commands/open-pr":
+            return yield* openPr(files);
         }
       }).pipe(lockOf(sessionId).withPermits(1));
     }).pipe(

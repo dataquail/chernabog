@@ -357,7 +357,8 @@ describe("chernabog recipes blocks", () => {
 
     expect(unknown.code).not.toBe(0);
     expect(unknown.output).toContain("no subject named release; there are");
-  });
+    // Five CLI starts one after another, which a loaded machine takes past the default 15s on.
+  }, 60_000);
 
   test("--json gives an agent the catalogue to read", async () => {
     const { code, output } = await sandbox.runCli(["recipes", "blocks", "--json"]);

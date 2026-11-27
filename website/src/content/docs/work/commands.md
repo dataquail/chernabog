@@ -22,6 +22,7 @@ description: Every chernabog command and flag.
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, the [rulesets that protect progress records](/chernabog/operate/progress/#what-doctor-checks) and that each persona may write them, and the daemon; and print the warnings the repo's flows contribute (`defineFlow({ doctor })`), such as the recipes' reviewer-pool checks |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
+| `accounts set-token <account>`    | Keep a Claude account's token from `claude setup-token`, which its [sandboxed](/chernabog/reference/configuration/#sandbox) sessions sign in with: read from stdin, or asked for hidden in a terminal, never taken as an argument |
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, add `@chernabog/recipes` there, copy the [recipes](/chernabog/recipes/) chosen, write the [CI workflow](#ci-workflow) when `ci.flows` names a flow, then enroll the repo once it has a flow |
 | `recipes list [path]`             | The recipes of each recipe package installed in `.chernabog/`, with their descriptions and docs pages: `✓` by the ones the repo copied, `→` by the ones it imports |
 | `recipes add [names…]`            | Copy recipes into this repo's `.chernabog/`, recording the version each came from; asked in a terminal when none is named. Never overwrites a file the repo has. A name is `<package>/<recipe>`, or a bare name from `@chernabog/recipes` |
@@ -145,4 +146,5 @@ Some commands always run here: `setup`, `install`, `uninstall`, `start` and `sto
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log, kept 30 days after the run finishes |
 | `~/.config/chernabog/telemetry/<day>/` | Spans and logs of the daemon and each CLI command, a file a process; kept 30 days and to 500 MB |
 | `~/.config/chernabog/dashboard.json`   | Whether the [dashboard](/chernabog/operate/dashboard/) is to run, and its port, so a restarted daemon opens it again |
+| `~/.config/chernabog/keys/claude/<account>.token` | Each Claude account's token for sandboxed sessions, readable only by you; `accounts set-token` writes it |
 | `~/.config/chernabog/dashboard.token`  | The token in the dashboard's URL, readable only by you; `ui --rotate-token` replaces it |
