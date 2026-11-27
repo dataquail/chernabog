@@ -55,13 +55,15 @@ const runtime = (holdings: FakeHoldings) =>
     RunCleanupClientFake(holdings),
   );
 
-// ADR 24, decision 9: the sweep removes any labelled container whose run has ended.
+// ADR 24, decision 9: the sweep removes a labelled container whose run state.db
+// records as ended.
 describe("sweepContainersHandler", () => {
   const held = fakeHoldings({
     containers: [
       // A run that ended, whose session's shim died: nothing else removes it.
       container("orphan", "ended"),
-      // A run state.db has never heard of has no run in flight either.
+      // A run state.db has never heard of may be another chernabog home's on
+      // the same runtime, still in flight: it hasn't been shown to have ended.
       container("unknown", "gone", { runtime: "podman", sessionId: Option.none() }),
       // A run still in flight keeps its container, whether its shim lives or not.
       container("in-flight", "live"),
@@ -71,16 +73,13 @@ describe("sweepContainersHandler", () => {
     ],
   });
 
-  effect("removes the containers of runs that have ended whose __launch is gone", () =>
+  effect("removes the containers of runs state.db records as ended whose __launch is gone", () =>
     Effect.gen(function* () {
       const swept = yield* sweepContainersHandler();
 
-      expect(swept.removed).toEqual([
-        { runtime: "docker", id: "orphan", runId: "ended" },
-        { runtime: "podman", id: "unknown", runId: "gone" },
-      ]);
+      expect(swept.removed).toEqual([{ runtime: "docker", id: "orphan", runId: "ended" }]);
       expect(swept.failed).toEqual([]);
-      expect(held.containers.map((left) => left.id)).toEqual(["in-flight", "launched"]);
+      expect(held.containers.map((left) => left.id)).toEqual(["unknown", "in-flight", "launched"]);
     }).pipe(Effect.provide(runtime(held))),
   );
 
