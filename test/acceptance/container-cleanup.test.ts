@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Schema from "effect/Schema";
 
@@ -156,7 +157,17 @@ describe("a sandboxed repo's containers", () => {
   }, 90_000);
 
   test("the daemon's sweep removes the container a killed shim left behind for a run that ended", async () => {
-    const { agent, launch } = await launchSession("run-that-ended", "session-orphaned");
+    // A run this home recorded and has ended: one state.db has no row for
+    // may be another home's, which the sweep leaves alone.
+    const { runId } = sandbox.recordRun("idle", { key: "issue-2", data: {} });
+    const db = new Database(join(sandbox.home, "state.db"));
+    db.run(
+      "UPDATE om_runs SET status = 'done', finished_at = '2026-11-27T00:00:00.000Z' WHERE id = ?",
+      [runId],
+    );
+    db.close();
+
+    const { agent, launch } = await launchSession(runId, "session-orphaned");
 
     // The shim dies without its cleanup, and its runtime's CLI with it: the
     // container goes on running, as one does in the runtime's daemon or VM.
@@ -178,7 +189,7 @@ describe("a sandboxed repo's containers", () => {
 
     expect(swept).toBe("removed");
     expect(sandbox.daemonLog()).toMatch(
-      /removed docker container \S+ of run-that-ended, which had ended/,
+      new RegExp(`removed docker container \\S+ of ${runId.slice(0, 8)}, which had ended`),
     );
   }, 90_000);
 });
