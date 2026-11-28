@@ -31,10 +31,22 @@ export type OpenSession = {
   readonly withPerson: boolean;
 };
 
+// A container chernabog labelled with a run's id (ADR 24, decision 9), under
+// the runtime it runs in: its session's, if it names one, and whether that
+// session's `__launch` still runs, which removes the container itself as it
+// exits.
+export type LabelledContainer = {
+  readonly runtime: string;
+  readonly id: string;
+  readonly runId: string;
+  readonly sessionId: Option.Option<string>;
+  readonly launched: boolean;
+};
+
 // What a run holds outside state.db, for cancelling it as a run that finishes
 // would leave things: its worktrees, its claim ref, its claim on its issue,
-// and its agent sessions. Each acts as the run's persona, and never touches a
-// pull request.
+// its agent sessions and their containers. Each acts as the run's persona,
+// and never touches a pull request.
 export type RunCleanupClientService = {
   // Removes the run's worktrees for its item, keeping any with work not pushed.
   readonly removeWorktrees: (run: RunRoot) => Effect.Effect<WorktreeCleanup, CleanupFailed>;
@@ -61,6 +73,21 @@ export type RunCleanupClientService = {
   ) => Effect.Effect<ReadonlyArray<OpenSession>>;
   // Closes a session through its launcher, by the handle it recorded.
   readonly closeSession: (session: OpenSession) => Effect.Effect<void, CleanupFailed>;
+  // Removes the run's containers, by its label on the runtime its repo's
+  // sandbox names, never by name, except those of the sessions `sparing`
+  // names: the containers removed. None for a repo without a sandbox.
+  readonly removeContainers: (
+    run: RunRoot,
+    sparing: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<LabelledContainer>, CleanupFailed>;
+  // The container runtimes the sandboxes of the repos this process loaded name.
+  readonly containerRuntimes: Effect.Effect<ReadonlyArray<string>>;
+  // Every container on `runtime` labelled with a run's id.
+  readonly labelledContainers: (
+    runtime: string,
+  ) => Effect.Effect<ReadonlyArray<LabelledContainer>, CleanupFailed>;
+  // Removes one of them, by its id.
+  readonly removeContainer: (container: LabelledContainer) => Effect.Effect<void, CleanupFailed>;
 };
 
 export class RunCleanupClient extends Context.Service<RunCleanupClient, RunCleanupClientService>()(

@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
 import {
+  type LabelledContainer,
   type OpenSession,
   type ReleasedClaim,
   RunCleanupClient,
@@ -13,10 +14,12 @@ import { CleanupFailed } from "../../domain/run/run.errors.ts";
 
 // What a test's runs hold, by run id, and what cleaning up did: the
 // worktrees each run's cleanup finds, the claim it releases, if any, the claim
-// refs that name it (`issue-<n>`, `pr-<n>`), the sessions it has open, and the
-// runs and issues cleaned up, the refs deleted, and sessions closed, and the
-// order worktrees were removed and sessions closed in (`steps`). A run listed
-// in `failing` fails every cleanup with its message.
+// refs that name it (`issue-<n>`, `pr-<n>`), the sessions it has open, the
+// labelled containers on each runtime, and the runs and issues cleaned up, the
+// refs deleted, sessions closed and containers removed, each by its id, in the
+// order `events` records with what else cleaning up did. A run listed in
+// `failing` fails every cleanup but its containers' with its message, and a
+// runtime in `failingRuntimes` every listing and removal on it.
 export type FakeHoldings = {
   readonly worktrees: Record<string, WorktreeCleanup>;
   readonly claims: Record<string, ReleasedClaim>;
@@ -27,7 +30,10 @@ export type FakeHoldings = {
   readonly released: Array<number>;
   readonly deletedRefs: Array<string>;
   readonly closed: Array<string>;
-  readonly steps: Array<string>;
+  readonly containers: Array<LabelledContainer>;
+  readonly failingRuntimes: Record<string, string>;
+  readonly removedContainers: Array<string>;
+  readonly events: Array<string>;
 };
 
 export const fakeHoldings = (held: Partial<FakeHoldings> = {}): FakeHoldings => ({
@@ -40,7 +46,10 @@ export const fakeHoldings = (held: Partial<FakeHoldings> = {}): FakeHoldings => 
   released: [],
   deletedRefs: [],
   closed: [],
-  steps: [],
+  containers: [],
+  failingRuntimes: {},
+  removedContainers: [],
+  events: [],
   ...held,
 });
 
@@ -51,6 +60,23 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
       onSome: (message) => Effect.fail(new CleanupFailed({ message })),
     });
 
+  const runtimeFailure = (runtime: string) =>
+    Option.match(Record.get(holdings.failingRuntimes, runtime), {
+      onNone: () => Effect.void,
+      onSome: (message) => Effect.fail(new CleanupFailed({ message })),
+    });
+
+  const remove = (container: LabelledContainer) => {
+    const at = holdings.containers.indexOf(container);
+
+    if (at >= 0) {
+      holdings.containers.splice(at, 1);
+    }
+
+    holdings.removedContainers.push(container.id);
+    holdings.events.push(`removed ${container.id}`);
+  };
+
   return Layer.succeed(
     RunCleanupClient,
     RunCleanupClient.of({
@@ -59,7 +85,7 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
           Effect.andThen(
             Effect.sync(() => {
               holdings.cleaned.push(run.id);
-              holdings.steps.push(`removed the worktrees of ${run.id}`);
+              holdings.events.push(`removed the worktrees of ${run.id}`);
 
               return Option.getOrElse(
                 Record.get(holdings.worktrees, run.id),
@@ -108,8 +134,50 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
       closeSession: (session) =>
         Effect.sync(() => {
           holdings.closed.push(session.handle);
-          holdings.steps.push(`closed ${session.handle}`);
+          holdings.events.push(`closed ${session.handle}`);
         }),
+      removeContainers: (run, sparing) =>
+        Effect.gen(function* () {
+          const removing = holdings.containers.filter(
+            (container) =>
+              container.runId === run.id &&
+              !Option.exists(container.sessionId, (sessionId) => sparing.includes(sessionId)),
+          );
+
+          for (const container of removing) {
+            yield* runtimeFailure(container.runtime);
+          }
+
+          for (const container of removing) {
+            remove(container);
+          }
+
+          return removing;
+        }),
+      containerRuntimes: Effect.sync(() =>
+        [
+          ...new Set([
+            ...holdings.containers.map((container) => container.runtime),
+            ...Object.keys(holdings.failingRuntimes),
+          ]),
+        ].sort(),
+      ),
+      labelledContainers: (runtime) =>
+        runtimeFailure(runtime).pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              holdings.containers.filter((container) => container.runtime === runtime),
+            ),
+          ),
+        ),
+      removeContainer: (container) =>
+        runtimeFailure(container.runtime).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              remove(container);
+            }),
+          ),
+        ),
     }),
   );
 };

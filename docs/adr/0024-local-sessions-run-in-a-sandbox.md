@@ -200,6 +200,26 @@ launcher terminal (Orca tab, tmux pane)
    `ps -a --filter label=chernabog.run=<id>`), never by name. The sweep
    removes any labelled container whose run has ended (#721).
 
+   **(#721 amends:** cancel, and so a bound's ending and the reap, which end
+   a run through it, removes the run's containers on the runtime the run's
+   repo's sandbox names for its persona, after closing the sessions it was
+   asked to and before it records the ending, **except those of the
+   sessions it leaves open**: a person's that the reap spares, or any
+   without `--close-session`. Such a session's own `__launch` removes its
+   container as it exits, as on a hangup, and removing it here would close
+   a session cancel says it left open. A container cancel can't remove is
+   left for a person, and the sweep tries it again. The sweep is the
+   daemon's, at its start and every minute: on each runtime its repos'
+   personas resolved, it lists every container with a `chernabog.run`
+   label and reads both labels with `inspect`, and removes those whose run
+   state.db records as ended and whose session's `__launch` isn't running
+   (checked as the session API checks it, by `agent.pid` and that the
+   process's command line names the session's spec). A run state.db has no
+   row for is left alone: the labels name no home, so it may be another
+   chernabog home's on the same runtime, still in flight. A runtime that
+   doesn't answer is logged when what it says changes, and keeps no other
+   runtime from its sweep.**)**
+
 10. **The local gate runs in the repo's image** when the repo has a
     sandbox, with the worktree and common git dir mounted as for the agent
     and no credentials or session mounts (#722). **So does the repo's
@@ -266,6 +286,15 @@ session, saying so.
 | `POST …/question`       | Claude's `PreToolUse`/`PostToolUse` input for `AskUserQuestion` | What `__question-hook` does today (`open-pr-question.ts`); answers the hook output                                                                                                               |
 | `PUT …/answer`          | the answer, as JSON                                             | Checks it against the call's schema (`checkAnswer`) and stores it where the stop route and the spoke read it; a `422` with the reason when it doesn't match, so the agent can fix it             |
 | `POST …/commands/:name` | the command's arguments, as JSON                                | One of the allowlisted things an agent may ask of chernabog (#715): what the bundled prompts and recipes tell an agent to run, such as `open-pr --draft`, and nothing else; a test pins the list |
+
+**The allowlist (#715)** is one command, because the bundled prompts and
+recipes tell an agent to run only `chernabog open-pr --draft`. The API's
+`open-pr` takes `{"draft": true, "title", "body", "summary"}` and nothing
+less: without `--draft` it is the person's own way to finish, which no agent
+runs. It drafts by the same code as the CLI, and answers what the CLI
+prints, or a `422` with its reason. `SESSION_COMMANDS` in
+`session-api.server.ts` is the list, and a test pins it and checks that
+every `chernabog` command in a bundled prompt's shell block is on it.
 
 Whether a session works with a person is read from its own launch record
 (`LaunchRecord.withPerson`), never taken from the request, so an agent can't

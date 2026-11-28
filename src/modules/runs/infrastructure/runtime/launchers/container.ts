@@ -161,5 +161,46 @@ export const removeSessionContainers = (
     }
   }).pipe(Effect.ignore);
 
+// The containers labelled with the run `runId`, or with any run, for `rm -f`
+// and the sweep (#721).
+export const runContainersArgs = (runId: Option.Option<string>): ReadonlyArray<string> => [
+  "ps",
+  "-aq",
+  "--filter",
+  Option.match(runId, {
+    onNone: () => `label=${RUN_LABEL}`,
+    onSome: (id) => `label=${RUN_LABEL}=${id}`,
+  }),
+];
+
+// Each container's id, run label and session label, a line each, tab-separated:
+// Docker and Podman both answer `inspect` with the container's labels under
+// .Config.Labels, where a missing one is empty.
+export const containerLabelsArgs = (ids: ReadonlyArray<string>): ReadonlyArray<string> => [
+  "inspect",
+  "--format",
+  `{{.Id}}\t{{index .Config.Labels "${RUN_LABEL}"}}\t{{index .Config.Labels "${SESSION_LABEL}"}}`,
+  ...ids,
+];
+
+export type ContainerLabels = {
+  readonly id: string;
+  readonly runId: string;
+  readonly sessionId: Option.Option<string>;
+};
+
+// What `inspect` with containerLabelsArgs printed, less any container with no
+// run label.
+export const parseContainerLabels = (stdout: string): ReadonlyArray<ContainerLabels> =>
+  stdout.split("\n").flatMap((line) => {
+    const [id = "", runId = "", sessionId = ""] = line.trim().split("\t");
+
+    if (id.length === 0 || runId.length === 0) {
+      return [];
+    }
+
+    return [{ id, runId, sessionId: Option.liftPredicate(sessionId, (named) => named.length > 0) }];
+  });
+
 // A path `--volume` can't name: its `:` separates the host path from the rest.
 export const unmountable = (path: string) => path.includes(":");

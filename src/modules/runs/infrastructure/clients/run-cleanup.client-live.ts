@@ -1,8 +1,9 @@
 // What a cancelled run held, cleaned up as its persona: the worktrees its
 // item's flow keeps, by the SDK's names for them; its claim ref, when it still
 // names the run; its claim on its issue, as the issue's claim marker records
-// it; and its agent sessions, by the handle
-// each launch recorded, never by a process's name.
+// it; its agent sessions, by the handle each launch recorded, never by a
+// process's name; and their containers, by the run's label (ADR 24,
+// decision 9), never by a container's name.
 
 import {
   claimMarker,
@@ -11,6 +12,7 @@ import {
   GitHub,
   latestMarker,
   Repo,
+  SandboxName,
   type SetupError,
   Worktree,
 } from "@chernabog/core";
@@ -24,10 +26,11 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
-import type { Exec } from "../../../../platform/exec.ts";
+import { Exec } from "../../../../platform/exec.ts";
 import { Home } from "../../../../platform/home.ts";
 import {
   type KeptWorktree,
+  type LabelledContainer,
   type OpenSession,
   type ReleasedClaim,
   RunCleanupClient,
@@ -35,9 +38,19 @@ import {
 import { CleanupFailed } from "../../domain/run/run.errors.ts";
 import { type RunRoot } from "../../domain/run/run.root.ts";
 import { itemTarget } from "../../domain/run/work-item.value-object.ts";
-import { LaunchRecord, readDecoded, sessionFiles } from "../runtime/agents/session-files.ts";
+import {
+  LaunchRecord,
+  launchRuns,
+  readDecoded,
+  sessionFiles,
+} from "../runtime/agents/session-files.ts";
 import { runSessions } from "../runtime/agents/sessions.ts";
 import { launcherFor } from "../runtime/launchers.ts";
+import {
+  containerLabelsArgs,
+  parseContainerLabels,
+  runContainersArgs,
+} from "../runtime/launchers/container.ts";
 import { type Launcher } from "../runtime/launchers/launcher.ts";
 
 // What cleaning up uses of a persona's services.
@@ -150,7 +163,88 @@ type LaunchOf = Option.Option<{
   readonly withPerson: boolean;
 }>;
 
-export const RunCleanupClientLive = (services: CleanupServicesFor) =>
+type ContainerRuntime = "docker" | "podman";
+
+const containerRuntimeOf = (sandbox: Option.Option<SandboxName>) =>
+  Option.filter(sandbox, (name): name is ContainerRuntime => name !== "none");
+
+// How long a runtime's CLI may take to answer, as `sandboxUnavailable` gives `info`.
+const RUNTIME_TIMEOUT = "30 seconds";
+
+// What a runtime's CLI printed, and what to say if it failed: what it said
+// on stderr, or its exit code.
+const runtimeSaid = (runtime: ContainerRuntime, args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const result = yield* (yield* Exec)
+      .run(runtime, args, { timeout: RUNTIME_TIMEOUT })
+      .pipe(Effect.mapError(failed));
+
+    const reason = Option.getOrElse(
+      Option.liftPredicate(result.stderr.trim().slice(0, 400), (said) => said.length > 0),
+      () => `exited ${result.exitCode}`,
+    );
+
+    return { ...result, said: `\`${runtime} ${args[0] ?? ""}\` failed: ${reason}` };
+  });
+
+// The containers on `runtime` labelled with the run `runId`, or any run, and
+// whether each one's session's `__launch` still runs.
+const labelledOn = (runtime: ContainerRuntime, runId: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const listed = yield* runtimeSaid(runtime, runContainersArgs(runId));
+
+    if (listed.exitCode !== 0) {
+      return yield* new CleanupFailed({ message: listed.said });
+    }
+
+    const ids = listed.stdout.split(/\s+/).filter((id) => id.length > 0);
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    // A container removed since it was listed is no longer there to inspect,
+    // and the runtime says so with a non-zero exit, but prints the rest.
+    const inspected = yield* runtimeSaid(runtime, containerLabelsArgs(ids));
+    const home = yield* Home;
+
+    return yield* Effect.forEach(
+      parseContainerLabels(inspected.stdout),
+      (container): Effect.Effect<LabelledContainer, never, Exec | FileSystem.FileSystem> =>
+        Effect.map(
+          Option.match(container.sessionId, {
+            onNone: () => Effect.succeed(false),
+            onSome: (sessionId) => launchRuns(sessionFiles(home.root, sessionId)),
+          }),
+          (launched) => ({ runtime, ...container, launched }),
+        ),
+    );
+  });
+
+const removeOn = (runtime: string, ids: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const named = containerRuntimeOf(Schema.decodeUnknownOption(SandboxName)(runtime));
+
+    if (Option.isNone(named)) {
+      return yield* new CleanupFailed({ message: `${runtime} is no container runtime` });
+    }
+
+    if (ids.length === 0) {
+      return;
+    }
+
+    const removed = yield* runtimeSaid(named.value, ["rm", "-f", ...ids]);
+
+    if (removed.exitCode !== 0) {
+      return yield* new CleanupFailed({ message: removed.said });
+    }
+  });
+
+export const RunCleanupClientLive = (
+  services: CleanupServicesFor,
+  // The sandboxes this process's repos resolved, whose runtimes the sweep lists.
+  sandboxes: ReadonlyArray<SandboxName> = [],
+) =>
   Layer.effect(
     RunCleanupClient,
     Effect.gen(function* () {
@@ -339,6 +433,50 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
 
             yield* launch.value.launcher.close(launch.value.handle).pipe(Effect.mapError(failed));
           }).pipe(Effect.provideContext(platform)),
+        removeContainers: (run, sparing) =>
+          Effect.gen(function* () {
+            // The runtime the run's repo's sandbox names, as its persona has it.
+            const runtime = containerRuntimeOf(
+              Option.map(
+                Option.fromUndefinedOr(
+                  yield* asPersona(
+                    run,
+                    Repo.use((repo) => Effect.succeed(repo.sandbox)),
+                  ),
+                ),
+                (sandbox) => sandbox.name,
+              ),
+            );
+
+            if (Option.isNone(runtime)) {
+              return [];
+            }
+
+            const removing = (yield* labelledOn(runtime.value, Option.some(run.id))).filter(
+              (container) =>
+                !Option.exists(container.sessionId, (sessionId) => sparing.includes(sessionId)),
+            );
+
+            yield* removeOn(
+              runtime.value,
+              removing.map((container) => container.id),
+            );
+
+            return removing;
+          }).pipe(Effect.provideContext(platform)),
+        containerRuntimes: Effect.succeed(
+          Arr.dedupe(
+            sandboxes.flatMap((name) => Option.toArray(containerRuntimeOf(Option.some(name)))),
+          ),
+        ),
+        labelledContainers: (runtime) =>
+          Option.match(containerRuntimeOf(Schema.decodeUnknownOption(SandboxName)(runtime)), {
+            onNone: () =>
+              Effect.fail(new CleanupFailed({ message: `${runtime} is no container runtime` })),
+            onSome: (named) => labelledOn(named, Option.none()),
+          }).pipe(Effect.provideContext(platform)),
+        removeContainer: (container) =>
+          removeOn(container.runtime, [container.id]).pipe(Effect.provideContext(platform)),
       });
     }),
   );

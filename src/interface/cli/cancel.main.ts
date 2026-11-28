@@ -174,6 +174,9 @@ export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string
       (session) =>
         `left ${session.launcher} session ${session.handle} open; close it yourself, or cancel with --close-session`,
     ),
+    ...(cancelled.removedContainers ?? []).map(
+      (container) => `removed ${container.runtime} container ${container.id}`,
+    ),
     ...cancelled.leftForPerson.map((line) => `left for you: ${line}`),
   ];
 };

@@ -49,6 +49,9 @@ const OpenSessionView = Schema.Struct({
   withPerson: Schema.Boolean,
 });
 
+// A container removed by the run's label, and the runtime it ran in.
+const RemovedContainerView = Schema.Struct({ runtime: Schema.String, id: Schema.String });
+
 // A cancelled run and what cancelling it cleaned up: the worktrees removed,
 // the claim refs deleted, the claim released on its issue, the sessions
 // closed, and what it left for a person, each with why. For a run that had
@@ -77,6 +80,9 @@ export class CancelledRun extends Schema.Class<CancelledRun, { readonly brand: "
   ),
   closedSessions: Schema.Array(OpenSessionView),
   openSessions: Schema.Array(OpenSessionView),
+  // The containers of its sessions it removed, by the run's label (ADR 24,
+  // decision 9). A daemon from before them says none.
+  removedContainers: Schema.optionalKey(Schema.Array(RemovedContainerView)),
   // What it left, each a sentence saying what and why.
   leftForPerson: Schema.Array(Schema.String),
   // How the run's spoke exited once cancel ended it (`killed by SIGTERM`),
