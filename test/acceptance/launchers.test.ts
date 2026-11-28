@@ -526,6 +526,74 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     );
   }, 60_000);
 
+  // #723: doctor checks ahead of time what would refuse a session.
+  test("doctor checks the runtime, the image, the session API from a container and the token, and says how to fix each", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
+    const checked = `demo: sandbox ${provider} (from repo config)`;
+
+    const before = await sandbox.runCli(["doctor"], runtimeEnv(sandbox));
+
+    expect(before.output).toContain(`✓ ${checked}: ${provider} is installed`);
+    expect(before.output).toContain(`✓ ${checked}: ${provider} info answers`);
+    expect(before.output).toContain(
+      `✓ ${checked}: its image builds from .chernabog/sandbox/Dockerfile`,
+    );
+    expect(before.output).toContain(
+      `✓ ${checked}: a container from its image reaches the session API`,
+    );
+    expect(before.output).toContain(
+      "✗ demo: the work account has a Claude token for sandboxed sessions",
+    );
+    expect(before.output).toContain("fix: claude setup-token, as the work account");
+    expect(before.output).not.toMatch(/✗ demo: sandbox/);
+
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], `${CLAUDE_TOKEN}\n`);
+
+    const after = await sandbox.runCli(["doctor"], runtimeEnv(sandbox));
+    expect(after.output).toContain("✓ demo: the work account has a Claude token");
+
+    const down = await sandbox.runCli(["doctor"], {
+      ...runtimeEnv(sandbox),
+      FAKE_RUNTIME_DOWN: "1",
+    });
+
+    // On macOS, podman's stopped machine is what doctor names; elsewhere, info that can't connect.
+    expect(
+      [`✗ ${checked}: podman's machine is running`, `✗ ${checked}: ${provider} info answers`].some(
+        (said) => down.output.includes(said),
+      ),
+    ).toBe(true);
+    expect(down.output).not.toContain("its image builds");
+    expect(down.code).toBe(1);
+
+    const missing = await sandbox.runCli(["doctor"], {
+      ...runtimeEnv(sandbox),
+      FAKE_RUNTIME_MISSING: "1",
+    });
+
+    expect(missing.output).toContain(`✗ ${checked}: ${provider} is installed`);
+    expect(missing.output).toContain(`fix: `);
+  }, 120_000);
+
+  test("doctor quotes a failing build, and points at sandbox init without a Dockerfile", async () => {
+    const broken = sandboxFor(
+      { sandbox: provider },
+      { launcher: "tmux", repoFiles: { "sandbox/Dockerfile": `${SANDBOX_DOCKERFILE}RUN false\n` } },
+    );
+
+    const failing = await broken.runCli(["doctor"], runtimeEnv(broken));
+
+    expect(failing.output).toContain("did not complete successfully");
+    expect(failing.output).toContain("fix: fix .chernabog/sandbox/Dockerfile");
+    expect(failing.output).not.toContain("reaches the session API");
+
+    const none = sandboxFor({ sandbox: provider }, { launcher: "tmux", noDockerfile: true });
+    const without = await none.runCli(["doctor"], runtimeEnv(none));
+
+    expect(without.output).toContain(".chernabog/sandbox/Dockerfile is on the default branch");
+    expect(without.output).toContain("fix: chernabog sandbox init");
+  }, 120_000);
+
   test("refuses a headless session, which runs no container yet", async () => {
     const sandbox = sandboxFor({ sandbox: provider }, { launcher: "headless" });
     sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
