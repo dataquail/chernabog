@@ -373,6 +373,8 @@ nothing waits on it any more.
   rootless Podman, and the image's uid/gid build arguments for Docker.
   **(#717 amends:** Docker also runs with `--user <uid>:<gid>`, so an image
   built without them still writes as the person; as root, neither maps.**)**
+  The template `chernabog sandbox init` writes (#718) names them
+  `AGENT_UID` and `AGENT_GID`, and its user `agent`.
 - **The hub's address.** Docker on Linux gets
   `--add-host=host.docker.internal:host-gateway`, and the hub binds the
   bridge's address as well (#713). Docker Desktop and Podman name the host
