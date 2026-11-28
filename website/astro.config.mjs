@@ -97,6 +97,7 @@ export default defineConfig({
             { slug: "operate/dashboard" },
             { slug: "operate/trust" },
             { slug: "operate/progress" },
+            { slug: "operate/sandbox" },
             { slug: "operate/github-actions" },
             { slug: "operate/versions" },
           ],
