@@ -39,14 +39,15 @@
     "test/acceptance/review-coverage.test.ts": 13773,
     "test/acceptance/container-cleanup.test.ts": 13000,
     "test/acceptance/spec-guard.test.ts": 11285,
+    "test/acceptance/sandbox-gate.test.ts": 10100,
     "test/acceptance/foreground-run.test.ts": 9407,
     "test/acceptance/machine-config.test.ts": 9012,
     "test/acceptance/ci-workflow.test.ts": 9008,
     "test/acceptance/daemon-commands.test.ts": 7264,
     "test/acceptance/telemetry.test.ts": 7043,
     "test/acceptance/left-sessions.test.ts": 5841,
-    "test/acceptance/attach.test.ts": 2043,
     "test/acceptance/sandbox-init.test.ts": 2150,
+    "test/acceptance/attach.test.ts": 2043,
     "test/acceptance/review-loop.live.feature.test.ts": 143,
     "test/acceptance/progress-live.test.ts": 89
   }
