@@ -19,6 +19,14 @@ const ok = (stdout = ""): ExecResult => ({ exitCode: 0, stdout, stderr: "" });
 
 type Runtime = "docker" | "podman";
 
+// This process's environment: what the runtime's CLI finds itself and its
+// context or machine connection by.
+const HOST = {
+  PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+  HOME: "/Users/alice",
+  DOCKER_CONTEXT: "colima",
+};
+
 // A repo checked out with a worktree and a common git dir, a trusted
 // snapshot whose .chernabog/sandbox/ the runtime has built already, and a
 // host spawner that records what it is asked to start and starts nothing.
@@ -40,15 +48,29 @@ const setUp = (runtime: Runtime, options: { readonly dockerfile?: boolean } = {}
     yield* fs.writeFileString(`${common}/config`, "[core]\n");
 
     const asked: Array<ReadonlyArray<string>> = [];
+    // The environment each runtime command was asked to run with, by its arguments.
+    const askedEnv: Array<{ readonly args: ReadonlyArray<string>; readonly env: unknown }> = [];
     const spawned: Array<ChildProcess.StandardCommand> = [];
 
     const exec = Exec.of({
-      run: (command, args) =>
+      run: (command, args, execOptions = {}) =>
         Effect.sync(() => {
           asked.push([command, ...args]);
 
+          // Only the worktree is in a git checkout.
+          if (command === "git" && execOptions.cwd !== worktree) {
+            return { exitCode: 128, stdout: "", stderr: "fatal: not a git repository\n" };
+          }
+
           if (command === "git") {
             return ok(`${common}\n`);
+          }
+
+          askedEnv.push({ args, env: execOptions.env });
+
+          // A container the stopped command left, for rm -f.
+          if (args[0] === "ps") {
+            return ok("left-container\n");
           }
 
           return ok();
@@ -83,6 +105,7 @@ const setUp = (runtime: Runtime, options: { readonly dockerfile?: boolean } = {}
         settings: { configDir, slug: "Acme/Widgets" },
         user: { uid: Option.some(501), gid: Option.some(20) },
         platform: "darwin",
+        host: HOST,
       },
       platform,
     );
@@ -100,7 +123,7 @@ const setUp = (runtime: Runtime, options: { readonly dockerfile?: boolean } = {}
         Effect.exit,
       );
 
-    return { worktree, common, asked, spawned, start };
+    return { worktree, common, asked, askedEnv, spawned, start };
   });
 
 const gate = (cwd: string) =>
@@ -167,9 +190,9 @@ describe.each(["docker", "podman"] as const)("a sandboxed repo's command on %s",
 
       expect(valueAfter(args, "--env")).toEqual(["CI"]);
       expect(args.join(" ")).not.toContain("token-alice");
-      // The CLI runs with this process's environment, for its own config.
-      expect(command.options.extendEnv).toBe(true);
-      expect(command.options.env).toEqual({ CI: "1" });
+      // The CLI runs with this process's environment, for its own context
+      // and PATH, and the container's variables it hands over.
+      expect(command.options.env).toEqual({ ...HOST, CI: "1" });
     }),
   );
 
@@ -200,6 +223,25 @@ describe.each(["docker", "podman"] as const)("a sandboxed repo's command on %s",
 
       expect(own.length).toBeGreaterThan("chernabog.command=".length);
       expect(asked).toContainEqual([runtime, "ps", "-aq", "--filter", `label=${own}`]);
+      expect(asked).toContainEqual([runtime, "rm", "-f", "left-container"]);
+    }),
+  );
+
+  effect("removes its container with the environment its runtime CLI ran with", () =>
+    Effect.gen(function* () {
+      const { askedEnv, spawned, start, worktree } = yield* setUp(runtime);
+      yield* start(gate(worktree));
+
+      const ran = only(spawned).options.env;
+      const removal = askedEnv.filter(({ args }) => args[0] === "ps" || args[0] === "rm");
+
+      expect(removal.map(({ args }) => args[0])).toEqual(["ps", "rm"]);
+
+      for (const { env } of removal) {
+        expect(env).toEqual(ran);
+        // HOME holds the runtime's context or machine connection, and PATH finds it.
+        expect(env).toMatchObject({ HOME: "/Users/alice", PATH: HOST.PATH });
+      }
     }),
   );
 
