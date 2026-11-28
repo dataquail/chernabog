@@ -7,9 +7,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type Environment } from "../../../../platform/environment.ts";
 import { Exec } from "../../../../platform/exec.ts";
-import { SANDBOX_IMAGE_ENV } from "./launchers/container.ts";
 
 // What a session would run as, for whether its sandbox can hold it.
 export type SandboxedSession = {
@@ -17,7 +15,6 @@ export type SandboxedSession = {
   // Under a launcher, through `chernabog __launch`, which runs the container.
   readonly interactive: boolean;
   readonly platform: string;
-  readonly host: Environment;
 };
 
 const named = (sandbox: ResolvedSandbox) => `sandbox ${sandbox.name} (from ${sandbox.from})`;
@@ -26,10 +23,6 @@ const named = (sandbox: ResolvedSandbox) => `sandbox ${sandbox.name} (from ${san
 const CONTAINED: ReadonlyArray<string> = ["claude", "codex"];
 
 const NEVER_ON_HOST = "and never runs a sandboxed repo's session on the host instead";
-
-// The image a sandboxed session runs in.
-export const sandboxImage = (host: Environment) =>
-  Option.filter(Option.fromUndefinedOr(host[SANDBOX_IMAGE_ENV]), (image) => image.length > 0);
 
 // Why a session in this sandbox can't start, from what is known without
 // asking the runtime; none when it may.
@@ -60,12 +53,6 @@ export const sandboxRefusal = (
   if (session.adapter === "claude" && !session.interactive) {
     return Option.some(
       `${named(sandbox)}: this chernabog runs a sandboxed claude session only under a launcher (orca, tmux or your own), not headless, ${NEVER_ON_HOST}`,
-    );
-  }
-
-  if (Option.isNone(sandboxImage(session.host))) {
-    return Option.some(
-      `${named(sandbox)}: no image to run the session in: set ${SANDBOX_IMAGE_ENV} to one, until chernabog builds the repo's own`,
     );
   }
 

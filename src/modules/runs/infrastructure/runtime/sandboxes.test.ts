@@ -9,14 +9,13 @@ const session: SandboxedSession = {
   adapter: "claude",
   interactive: true,
   platform: "darwin",
-  host: { CHERNABOG_SANDBOX_IMAGE: "sandbox:test" },
 };
 
 const refusal = (overrides: Partial<SandboxedSession>) =>
   Option.getOrElse(sandboxRefusal(DOCKER, { ...session, ...overrides }), () => "");
 
 describe("whether a session's sandbox can hold it", () => {
-  test("holds an interactive claude session with an image to run in", () => {
+  test("holds an interactive claude session", () => {
     expect(sandboxRefusal(DOCKER, session)).toEqual(Option.none());
   });
 
@@ -34,26 +33,15 @@ describe("whether a session's sandbox can hold it", () => {
 
   // Codex runs headless (`codex exec`) under any launcher, so its container
   // is started by its adapter, not by __launch.
-  test("holds a codex session, headless or under a launcher, with an image to run in", () => {
+  test("holds a codex session, headless or under a launcher", () => {
     expect(sandboxRefusal(DOCKER, { ...session, adapter: "codex" })).toEqual(Option.none());
     expect(sandboxRefusal(DOCKER, { ...session, adapter: "codex", interactive: false })).toEqual(
       Option.none(),
     );
   });
 
-  test("refuses a codex session with no image", () => {
-    expect(refusal({ adapter: "codex", interactive: false, host: {} })).toContain(
-      "set CHERNABOG_SANDBOX_IMAGE",
-    );
-  });
-
   test("refuses headless claude, which __launch doesn't start", () => {
     expect(refusal({ interactive: false })).toContain("only under a launcher");
-  });
-
-  test("refuses a session with no image, naming the variable that gives one", () => {
-    expect(refusal({ host: {} })).toContain("set CHERNABOG_SANDBOX_IMAGE");
-    expect(refusal({ host: { CHERNABOG_SANDBOX_IMAGE: "" } })).toContain("no image");
   });
 
   test("refuses on Windows, where a worktree can't be mounted at its own path", () => {

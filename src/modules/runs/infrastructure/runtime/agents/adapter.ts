@@ -35,6 +35,9 @@ export type AdapterContext = {
   readonly launcher: ResolvedLauncher;
   // Where its sessions run (ADR 24); written to an interactive session's launch spec.
   readonly sandbox: ResolvedSandbox;
+  // The image its sessions run in, built from the repo's .chernabog/sandbox/
+  // for this call; none without a sandbox.
+  readonly image: Option.Option<string>;
   readonly log: (line: string) => Effect.Effect<void>;
   // This session's routes on its hub's session API (ADR 24), for an
   // interactive session: none outside a run, or where no hub opened one.

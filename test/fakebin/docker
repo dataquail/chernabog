@@ -6,7 +6,7 @@
 // CLI does) and PATH, and FAKE_HOST_GATEWAY telling fakebin/claude that the
 // container's host names are this machine's loopback. It keeps each
 // "container" in FAKE_RUNTIME_STATE by its labels, for `ps --filter label=`
-// `inspect`, and `rm -f`.
+// `inspect`, and `rm -f`. `build` records the image's tag, for `image inspect`.
 // FAKE_RUNTIME_MISSING: behave as if neither runtime were installed.
 // FAKE_RUNTIME_DETACH: the container's process outlives this CLI, as a real
 // container outlives its client, until `rm -f` removes it.
@@ -36,8 +36,28 @@ const alive = (pid: number) => {
   }
 };
 
+// The images it has built, by tag, as files under FAKE_RUNTIME_STATE/images.
+const imageFile = (tag: string) => join(state, 'images', encodeURIComponent(tag));
+
 if (args[0] === 'info') {
   console.log(`${runtime} fake`);
+} else if (args[0] === 'image' && args[1] === 'inspect') {
+  if (!existsSync(imageFile(args[2] ?? ''))) {
+    console.error(`Error: No such image: ${args[2]}`);
+    process.exit(1);
+  }
+  console.log('[]');
+} else if (args[0] === 'build') {
+  // Builds nothing: it records the tag, and fails a Dockerfile with a `RUN false` line as a real build would.
+  log(`build ${JSON.stringify(args.slice(1))}`);
+  const dockerfile = readFileSync(args[args.indexOf('--file') + 1] ?? 'Dockerfile', 'utf8');
+  console.log('#1 [internal] load build definition from Dockerfile');
+  if (/^RUN false$/m.test(dockerfile)) {
+    console.error('ERROR: failed to solve: process "/bin/sh -c false" did not complete successfully: exit code: 1');
+    process.exit(1);
+  }
+  mkdirSync(join(state, 'images'), { recursive: true });
+  writeFileSync(imageFile(args[args.indexOf('--tag') + 1] ?? ''), '');
 } else if (args[0] === 'ps') {
   const filter = args[args.indexOf('--filter') + 1] ?? '';
   const [, name, value] = /^label=([^=]+)(?:=(.*))?$/.exec(filter) ?? [];

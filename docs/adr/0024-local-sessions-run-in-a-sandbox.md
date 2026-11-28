@@ -388,8 +388,18 @@ nothing waits on it any more.
   Dockerfile doesn't change its own sandbox until the change is merged and
   trusted **(settled here)**. Cached under a tag named for the repo and a
   hash of the directory's contents, and rebuilt when that hash changes.
-  Until #719 builds it, the image is the one `CHERNABOG_SANDBOX_IMAGE`
-  names in the hub's environment, and a session is refused without one.
+  **(#719 settles:** the tag is `chernabog-sandbox/<owner>-<name>:<hash>`,
+  the first 16 hex digits of a SHA-256 over every file under the snapshot's
+  `.chernabog/sandbox/`, by path and contents, and the build arguments.
+  Before each sandboxed call the agent asks `<runtime> image inspect` for
+  that tag, and builds it with `<runtime> build --tag … --build-arg
+  AGENT_UID=<uid> --build-arg AGENT_GID=<gid> --file <dir>/Dockerfile
+  <dir>` when the runtime hasn't got it (no build arguments as root, so the
+  template's defaults stand). A build that fails refuses the session with
+  the build's last lines, and writes the last 200 lines of its output to the run's log; a
+  repo with a sandbox and no Dockerfile is refused, pointing at
+  `chernabog sandbox init`. `CHERNABOG_SANDBOX_IMAGE` is gone. Old tags are
+  left for a person to prune.**)**
   A repo whose flows run Codex needs `codex` (and `sh`) on the image's
   `PATH`: the template `sandbox init` writes (#718) carries the Codex CLI
   as an optional step, off unless the repo turns it on **(#724 settles)**.

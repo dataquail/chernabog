@@ -82,6 +82,9 @@ export type MachineOptions = {
   readonly launchers?: Readonly<Record<string, Json>>;
   // Files under .chernabog/ beyond the scaffold's, such as a flow of the repo's own.
   readonly repoFiles?: Readonly<Record<string, string>>;
+  // A repo whose config names a sandbox gets SANDBOX_DOCKERFILE to build its
+  // image from, unless repoFiles gives its own or this says it has none.
+  readonly noDockerfile?: boolean;
   // The recipes baked in; the review loop's four when unset.
   readonly recipes?: ReadonlyArray<string>;
   // Which events tick every persona's flows sooner than cron (#138), and each login's own.
@@ -300,6 +303,17 @@ export const closed = (child: ChildProcess) =>
     });
   });
 
+// The image a sandboxed repo's sessions run in, as fakebin's runtime builds
+// it: a Dockerfile with a `RUN false` line fails to build.
+export const SANDBOX_DOCKERFILE = "FROM debian:bookworm-slim\n";
+
+const sandboxFiles = (repoConfig: Readonly<Record<string, Json>>, machine: MachineOptions) =>
+  Object.fromEntries(
+    [["sandbox/Dockerfile", SANDBOX_DOCKERFILE] as const].filter(
+      () => "sandbox" in repoConfig && machine.noDockerfile !== true,
+    ),
+  );
+
 export const openSandbox = (
   repoConfig: Readonly<Record<string, Json>> = {},
   machine: MachineOptions = {},
@@ -334,6 +348,7 @@ export const openSandbox = (
     ...files,
     ...baked,
     "config.yaml": repoConfigText(files["config.yaml"], repoConfig),
+    ...sandboxFiles(repoConfig, machine),
     ...machine.repoFiles,
   })) {
     const path = join(checkout, ".chernabog", relative);
