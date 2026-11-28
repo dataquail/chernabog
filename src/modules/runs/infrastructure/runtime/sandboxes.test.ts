@@ -27,9 +27,24 @@ describe("whether a session's sandbox can hold it", () => {
   });
 
   test("refuses another agent, which runs in no container yet, rather than running it on the host", () => {
-    for (const adapter of ["codex", "opencode", "mine"]) {
+    for (const adapter of ["opencode", "mine"]) {
       expect(refusal({ adapter })).toContain(`can't run a ${adapter} session in a container yet`);
     }
+  });
+
+  // Codex runs headless (`codex exec`) under any launcher, so its container
+  // is started by its adapter, not by __launch.
+  test("holds a codex session, headless or under a launcher, with an image to run in", () => {
+    expect(sandboxRefusal(DOCKER, { ...session, adapter: "codex" })).toEqual(Option.none());
+    expect(sandboxRefusal(DOCKER, { ...session, adapter: "codex", interactive: false })).toEqual(
+      Option.none(),
+    );
+  });
+
+  test("refuses a codex session with no image", () => {
+    expect(refusal({ adapter: "codex", interactive: false, host: {} })).toContain(
+      "set CHERNABOG_SANDBOX_IMAGE",
+    );
   });
 
   test("refuses headless claude, which __launch doesn't start", () => {
