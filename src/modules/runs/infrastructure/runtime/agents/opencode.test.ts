@@ -42,6 +42,7 @@ const contextFor = (fake: Fake, fixture: string, exit = 0): AdapterContext => ({
   env: { OPENCODE_FIXTURE: `${fake.fixtures}/${fixture}`, OPENCODE_EXIT: String(exit) },
   launcher: HEADLESS,
   sandbox: NO_SANDBOX,
+  image: Option.none(),
   log: () => Effect.void,
   sessionApi: Option.none(),
 });

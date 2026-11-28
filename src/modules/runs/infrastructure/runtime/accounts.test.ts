@@ -85,6 +85,7 @@ const sessionEnv = (account: Account, host: Record<string, string>) =>
     env: { CLAUDE_CODE_OAUTH_TOKEN: "committed-token" },
     launcher: { ...HEADLESS, name: "headless", from: "machine config" },
     sandbox: NO_SANDBOX,
+    image: Option.none(),
     log: () => Effect.void,
     sessionApi: Option.none(),
   });

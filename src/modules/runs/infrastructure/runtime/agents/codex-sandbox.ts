@@ -24,7 +24,6 @@ import {
   containerRunArgs,
   removeSessionContainers,
 } from "../launchers/container.ts";
-import { sandboxImage } from "../sandboxes.ts";
 import { type AdapterContext } from "./adapter.ts";
 import {
   checkMountable,
@@ -145,7 +144,7 @@ export const sandboxedCodex = (
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
 
-    const image = yield* Effect.fromOption(sandboxImage(context.host)).pipe(
+    const image = yield* Effect.fromOption(context.image).pipe(
       Effect.mapError(
         () => new AgentError({ message: `codex: sandbox ${context.sandbox.name} has no image` }),
       ),

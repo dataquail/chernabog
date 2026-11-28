@@ -13,7 +13,6 @@ import { CLAUDE_OAUTH_TOKEN } from "../../../../../platform/agent-accounts.ts";
 import { setTokenCommand, storedClaudeToken } from "../../../../../platform/claude-tokens.ts";
 import { type Environment } from "../../../../../platform/environment.ts";
 import { type ContainerMount, type ContainerSpec } from "../launchers/container.ts";
-import { sandboxImage } from "../sandboxes.ts";
 import { type AdapterContext } from "./adapter.ts";
 import {
   checkMountable,
@@ -67,7 +66,7 @@ export const sandboxedLaunch = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
-    const image = yield* Effect.fromOption(sandboxImage(context.host)).pipe(
+    const image = yield* Effect.fromOption(context.image).pipe(
       Effect.mapError(
         () => new AgentError({ message: `claude: sandbox ${context.sandbox.name} has no image` }),
       ),

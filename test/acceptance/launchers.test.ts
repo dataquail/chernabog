@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { LaunchRecord } from "../../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
-import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
+import { closed, openSandbox, type Sandbox, SANDBOX_DOCKERFILE, waitFor } from "./sandbox.ts";
 
 const sandboxes: Array<Sandbox> = [];
 
@@ -248,7 +248,6 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
       ["run", "implement", "--repo", "demo", "--as", "alice"],
       {
         ...runtimeEnv(sandbox),
-        CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
         // A host's own credentials, none of which reach the container.
         ANTHROPIC_API_KEY: "host-api-key",
         AWS_SECRET_ACCESS_KEY: "host-aws-secret",
@@ -272,7 +271,11 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     const [args = []] = runs;
 
     expect(args.slice(0, 3)).toEqual(["-i", "--rm", "--init"]);
-    expect(args[args.indexOf("chernabog-sandbox:test") + 1]).toBe("claude");
+    // In the repo's own image, built from its .chernabog/sandbox/Dockerfile.
+    const image = args.findIndex((arg) => arg.startsWith("chernabog-sandbox/dataquail-demo:"));
+
+    expect(image).toBeGreaterThan(0);
+    expect(args[image + 1]).toBe("claude");
 
     // Labelled with its run and session, which cancel and the sweep remove it by.
     const [specFile = ""] = [
@@ -350,7 +353,6 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
       ...runtimeEnv(sandbox),
-      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
       GH_TOKEN: "token-implicit",
       GITHUB_TOKEN: "host-github-token",
     });
@@ -385,7 +387,6 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
       ...runtimeEnv(sandbox),
-      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
     });
 
     expect(output).toContain("account work has no Claude token");
@@ -402,7 +403,6 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
       ...runtimeEnv(sandbox),
-      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
       FAKE_RUNTIME_MISSING: "1",
     });
 
@@ -415,20 +415,109 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     expect(sandbox.tmuxCalls()).toHaveLength(0);
   }, 60_000);
 
-  test("refuses the session when there is no image to run it in", async () => {
+  const builds = (sandbox: Sandbox) =>
+    runtimeCalls(sandbox)
+      .filter((call) => call.startsWith(`${provider} build `))
+      .map((call) => Schema.decodeSync(RunArgs)(call.slice(`${provider} build `.length)));
+
+  const runImplement = (sandbox: Sandbox, title: string) => {
+    sandbox.github.addIssue(title, ["auto:eligible"]);
+
+    return sandbox.runCli(["run", "implement", "--repo", "demo"], runtimeEnv(sandbox));
+  };
+
+  // A change to the image merged on the default branch, the tree it's built from.
+  const mergeDockerfile = (sandbox: Sandbox, dockerfile: string) => {
+    writeFileSync(join(sandbox.checkout, ".chernabog/sandbox/Dockerfile"), dockerfile);
+    sandbox.git(sandbox.checkout, "commit", "-qam", "chore: change the sandbox image");
+    sandbox.git(sandbox.checkout, "push", "-q", "origin", "main");
+  };
+
+  // #719: built once per content of .chernabog/sandbox/, as the person.
+  test("builds the repo's image for its first session, reuses it, and rebuilds it once its Dockerfile changes", async () => {
     const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux" });
-    sandbox.github.addIssue("Do the thing", ["auto:eligible"]);
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], `${CLAUDE_TOKEN}\n`);
 
-    const { output } = await sandbox.runCli(
-      ["run", "implement", "--repo", "demo"],
-      runtimeEnv(sandbox),
+    const first = await runImplement(sandbox, "First");
+
+    expect(first.output).toMatch(/done: #\d+:/);
+
+    const [build = [], ...more] = builds(sandbox);
+
+    expect(more).toEqual([]);
+    expect(build).toContain(`AGENT_UID=${process.getuid?.()}`);
+    expect(build).toContain(`AGENT_GID=${process.getgid?.()}`);
+    expect(build.at(-1)).toEndWith("/.chernabog/sandbox");
+
+    const tag = build[build.indexOf("--tag") + 1] ?? "";
+
+    expect(tag).toStartWith("chernabog-sandbox/dataquail-demo:");
+
+    const second = await runImplement(sandbox, "Second");
+
+    expect(second.output).toMatch(/done: #\d+:/);
+    expect(builds(sandbox)).toHaveLength(1);
+
+    mergeDockerfile(sandbox, `${SANDBOX_DOCKERFILE}RUN apt-get update\n`);
+
+    const third = await runImplement(sandbox, "Third");
+
+    expect(third.output).toMatch(/done: #\d+:/);
+
+    const rebuilt = builds(sandbox);
+
+    expect(rebuilt).toHaveLength(2);
+
+    const [, again = []] = rebuilt;
+
+    expect(again[again.indexOf("--tag") + 1]).not.toBe(tag);
+
+    const images = runtimeCalls(sandbox)
+      .filter((call) => call.startsWith(`${provider} run `))
+      .map((call) =>
+        Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)).find((arg) =>
+          arg.startsWith("chernabog-sandbox/"),
+        ),
+      );
+
+    expect(images).toEqual([tag, tag, again[again.indexOf("--tag") + 1]]);
+  }, 120_000);
+
+  test("refuses the session when the image fails to build, with the build's error in the run's log", async () => {
+    const sandbox = sandboxFor(
+      { sandbox: provider },
+      { launcher: "tmux", repoFiles: { "sandbox/Dockerfile": `${SANDBOX_DOCKERFILE}RUN false\n` } },
     );
 
-    expect(output).toContain(
-      `sandbox ${provider} (from repo config): no image to run the session in`,
-    );
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], `${CLAUDE_TOKEN}\n`);
+
+    const { output } = await runImplement(sandbox, "Do the thing");
+
+    expect(output).toContain(`\`${provider} build\` of .chernabog/sandbox/Dockerfile failed`);
+    expect(output).toContain('process "/bin/sh -c false" did not complete successfully');
     expect(sandbox.claudeCalls()).toHaveLength(0);
-    expect(runtimeCalls(sandbox)).toEqual([]);
+    expect(runtimeCalls(sandbox).filter((call) => call.startsWith(`${provider} run `))).toEqual([]);
+    expect(sandbox.tmuxCalls()).toHaveLength(0);
+
+    const [log = ""] = [...new Bun.Glob("*.log").scanSync(join(sandbox.home, "runs"))];
+
+    expect(readFileSync(join(sandbox.home, "runs", log), "utf8")).toContain(
+      'process "/bin/sh -c false" did not complete successfully',
+    );
+  }, 60_000);
+
+  test("refuses the session when the repo has no Dockerfile, pointing at sandbox init", async () => {
+    const sandbox = sandboxFor({ sandbox: provider }, { launcher: "tmux", noDockerfile: true });
+    await sandbox.runCliWithInput(["accounts", "set-token", "work"], `${CLAUDE_TOKEN}\n`);
+
+    const { output } = await runImplement(sandbox, "Do the thing");
+
+    expect(output).toContain("no .chernabog/sandbox/Dockerfile");
+    expect(output).toContain("chernabog sandbox init");
+    expect(sandbox.claudeCalls()).toHaveLength(0);
+    expect(runtimeCalls(sandbox).filter((call) => !call.startsWith(`${provider} info`))).toEqual(
+      [],
+    );
   }, 60_000);
 
   test("refuses a headless session, which runs no container yet", async () => {
@@ -437,7 +526,6 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
 
     const { output } = await sandbox.runCli(["run", "implement", "--repo", "demo"], {
       ...runtimeEnv(sandbox),
-      CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
     });
 
     expect(output).toContain("only under a launcher");

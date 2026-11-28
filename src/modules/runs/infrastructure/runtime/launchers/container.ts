@@ -31,10 +31,6 @@ export const sessionApiHostFor = (sandbox: SandboxName, loopback: string) => {
   return loopback;
 };
 
-// Until each repo's image is built (#719), the image a sandboxed session runs
-// in is named on the host by this variable.
-export const SANDBOX_IMAGE_ENV = "CHERNABOG_SANDBOX_IMAGE";
-
 export const ContainerMount = Schema.Struct({
   path: Schema.String,
   readOnly: Schema.optionalKey(Schema.Boolean),
@@ -71,7 +67,7 @@ export type ContainerCommand = {
 
 // Commits come out owned by the person: rootless Podman maps them to the
 // container's user with keep-id, and Docker runs as their uid and gid, which
-// the image's build arguments give its user too (#719). As root, neither
+// the image's build arguments give its user too (sandbox-image.ts). As root, neither
 // needs mapping.
 const userArgs = (runtime: "docker" | "podman", host: ContainerHost) => {
   const ids = Option.all([host.uid, host.gid]).pipe(Option.filter(([uid]) => uid !== 0));

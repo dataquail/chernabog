@@ -9,6 +9,7 @@ import {
   HEADLESS,
   NO_SANDBOX,
   type RepoSettings,
+  type ResolvedSandbox,
   Run,
   RunLog,
 } from "@chernabog/core";
@@ -50,6 +51,7 @@ import { recordingTokenUsage } from "./agents/token-usage.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
 import { sessionApiHostFor } from "./launchers/container.ts";
 import { RunRecords } from "./run-records.ts";
+import { sandboxImage } from "./sandbox-image.ts";
 import { sandboxRefusal, sandboxUnavailable } from "./sandboxes.ts";
 
 export type AgentsConfig = Readonly<
@@ -148,6 +150,31 @@ const logOf = Effect.serviceOption(RunLog).pipe(
   ),
 );
 
+// The image a sandboxed session runs in, built from the repo's trusted
+// .chernabog/sandbox/ when the runtime hasn't got it yet; none without a
+// sandbox, or for a rehearsal, which runs no agent. A build that fails refuses the session (ADR 24, decision 2).
+const sessionImage = (adapter: string, sandbox: ResolvedSandbox, settings: RepoSettings) =>
+  Effect.gen(function* () {
+    if (sandbox.name === "none" || adapter === REHEARSAL) {
+      return Option.none<string>();
+    }
+
+    const tag = yield* sandboxImage({
+      sandbox,
+      configDir: settings.configDir,
+      slug: settings.slug,
+      user: {
+        uid: Option.fromUndefinedOr(process.getuid?.()),
+        gid: Option.fromUndefinedOr(process.getgid?.()),
+      },
+      log: yield* logOf,
+    }).pipe(
+      Effect.mapError((error) => new AgentError({ message: `${adapter}: ${error.message}` })),
+    );
+
+    return Option.some(tag);
+  });
+
 // The run's own log comes from the run that calls, so one Agent serves every
 // run of a repo as one persona. The agent acts as that persona too: its gh and
 // git get the persona's token.
@@ -204,7 +231,6 @@ export const AgentLive = (
                   adapter: name,
                   interactive: isInteractive(settings.launcher),
                   platform: host.platform,
-                  host: host.variables,
                 }),
                 {
                   onNone: () => sandboxUnavailable(sandbox),
@@ -226,6 +252,8 @@ export const AgentLive = (
                   .pipe(Effect.mapError((error) => new AgentError({ message: error.message })));
               }
             }
+
+            const image = yield* sessionImage(name, sandbox, settings);
 
             // Each agent runs under its own account: a Codex reviewer on a Claude repo spends the Codex account.
             const account = Option.getOrElse(
@@ -304,6 +332,7 @@ export const AgentLive = (
                 env,
                 launcher: settings.launcher,
                 sandbox,
+                image,
                 log,
                 sessionApi,
               })
@@ -396,6 +425,7 @@ export const attachCommand = (record: SessionRecord) =>
       env: {},
       launcher: HEADLESS,
       sandbox: NO_SANDBOX,
+      image: Option.none(),
       log: () => Effect.void,
       sessionApi: Option.none(),
     };

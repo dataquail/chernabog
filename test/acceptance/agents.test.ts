@@ -131,7 +131,6 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
     FAKE_RUNTIME_LOG: join(sandbox.root, "runtime.log"),
     FAKE_RUNTIME_STATE: join(sandbox.root, "runtime"),
     FAKE_CODEX_ENV_LOG: join(sandbox.root, "codex-env.log"),
-    CHERNABOG_SANDBOX_IMAGE: "chernabog-sandbox:test",
   });
 
   const runs = (sandbox: Sandbox) => {
@@ -181,7 +180,11 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
 
     expect(others).toEqual([]);
     expect(args.slice(0, 3)).toEqual(["-i", "--rm", "--init"]);
-    expect(args.slice(args.indexOf("chernabog-sandbox:test") + 1, -1)).toContain("codex");
+    // In the repo's own image, built from its .chernabog/sandbox/Dockerfile.
+    const image = args.findIndex((arg) => arg.startsWith("chernabog-sandbox/dataquail-demo:"));
+
+    expect(image).toBeGreaterThan(0);
+    expect(args.slice(image + 1, -1)).toContain("codex");
     expect(args.some((arg) => /^chernabog\.run=[\da-f-]+$/.test(arg))).toBe(true);
     expect(args.some((arg) => arg.startsWith("chernabog.session="))).toBe(true);
 
