@@ -135,6 +135,11 @@ export const sandboxedSpawner = (
   const host = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
   const runtime = commands.sandbox.name;
 
+  const outsideWorktree = (name: string, why: string) =>
+    refused(
+      `sandbox ${runtime}: ${name} ${why}, and a sandboxed repo's commands run only in a worktree`,
+    );
+
   const containerFor = (command: ChildProcess.StandardCommand) =>
     Effect.gen(function* () {
       if (
@@ -148,11 +153,7 @@ export const sandboxedSpawner = (
       }
 
       const cwd = yield* Effect.fromOption(Option.fromUndefinedOr(command.options.cwd)).pipe(
-        Effect.mapError(() =>
-          refused(
-            `sandbox ${runtime}: ${command.command} names no worktree to run in, and a sandboxed repo's commands run only in one`,
-          ),
-        ),
+        Effect.mapError(() => outsideWorktree(command.command, "names no worktree to run in")),
       );
 
       const log = yield* Effect.serviceOption(RunLog);
@@ -166,7 +167,15 @@ export const sandboxedSpawner = (
           Option.match(log, { onNone: () => Effect.void, onSome: (runLog) => runLog.log(line) }),
       });
 
-      const mounts = yield* repoMounts(`sandbox ${runtime}`, cwd);
+      const mounts = yield* repoMounts(`sandbox ${runtime}`, cwd).pipe(
+        Effect.mapError((error) =>
+          outsideWorktree(
+            command.command,
+            `runs in ${cwd}, which isn't a worktree (${error.message})`,
+          ),
+        ),
+      );
+
       yield* checkMountable(`sandbox ${runtime}`, mounts);
       const run = yield* Effect.serviceOption(Run);
       const id = yield* Crypto.Crypto.use((random) => random.randomUUIDv4());

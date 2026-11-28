@@ -254,7 +254,9 @@ launcher terminal (Orca tab, tmux pane)
     `GITHUB_TOKEN`, the git credential config, Claude's and Codex's), by
     name; and the labels `chernabog.run` and `chernabog.command`, a fresh id
     by which the container is removed when the command ends however it
-    ends. The image is the session's, built first when the runtime hasn't
+    ends, by the runtime's CLI with the environment it ran the command
+    with (the host's, for its context or machine, and PATH). A command run
+    outside a worktree is refused, saying so. The image is the session's, built first when the runtime hasn't
     got it, and a build that fails, or a command with no working directory,
     fails the command and so the step.**)**
 

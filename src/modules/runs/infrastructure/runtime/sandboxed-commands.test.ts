@@ -265,6 +265,26 @@ describe.each(["docker", "podman"] as const)("a sandboxed repo's command on %s",
     }),
   );
 
+  effect("refuses a command run outside a worktree, saying a worktree is where they run", () =>
+    Effect.gen(function* () {
+      const { spawned, start, worktree } = yield* setUp(runtime);
+
+      const exit = yield* start(
+        ChildProcess.make("sh", ["-c", "ls"], {
+          cwd: `${worktree}/..`,
+          forceKillAfter: "5 seconds",
+        }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      const said = String(Exit.isFailure(exit) && exit.cause);
+
+      expect(said).toContain("isn't a worktree");
+      expect(said).toContain("run only in a worktree");
+      expect(spawned).toEqual([]);
+    }),
+  );
+
   effect("refuses a command that names no worktree, and starts nothing on the host", () =>
     Effect.gen(function* () {
       const { spawned, start } = yield* setUp(runtime);
