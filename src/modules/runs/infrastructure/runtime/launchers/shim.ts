@@ -16,13 +16,12 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
 import { HostEnvironment } from "../../../../../platform/environment.ts";
-import { execOk } from "../../../../../platform/exec.ts";
 import {
   type ContainerCommand,
   containerRunArgs,
   ContainerSpec,
+  removeSessionContainers,
   SESSION_LABEL,
-  sessionContainersArgs,
 } from "./container.ts";
 
 export const LaunchSpecFile = Schema.Struct({
@@ -84,23 +83,6 @@ const listenForEndingSignal = Effect.gen(function* () {
 
   return signalled;
 });
-
-// Removes the session's containers, by its label, never by name: the runtime
-// CLI dies with a hangup, and the container it started would otherwise go on
-// running in the runtime's daemon or VM.
-const removeSessionContainers = (
-  runtime: "docker" | "podman",
-  sessionId: string,
-  env: Readonly<Record<string, string>>,
-) =>
-  Effect.gen(function* () {
-    const listed = yield* execOk(runtime, sessionContainersArgs(sessionId), { env });
-    const ids = listed.split(/\s+/).filter((id) => id.length > 0);
-
-    if (ids.length > 0) {
-      yield* execOk(runtime, ["rm", "-f", ...ids], { env });
-    }
-  }).pipe(Effect.ignore);
 
 type Runtime = "docker" | "podman";
 

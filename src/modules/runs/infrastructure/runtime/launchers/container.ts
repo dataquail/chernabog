@@ -8,8 +8,11 @@
 // cancel, and the sweep) remove it.
 
 import type { SandboxName } from "@chernabog/core";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { execOk } from "../../../../../platform/exec.ts";
 
 export const RUN_LABEL = "chernabog.run";
 export const SESSION_LABEL = "chernabog.session";
@@ -140,6 +143,23 @@ export const sessionContainersArgs = (sessionId: string): ReadonlyArray<string> 
   "--filter",
   `label=${SESSION_LABEL}=${sessionId}`,
 ];
+
+// Removes the session's containers, by its label, never by name: the runtime
+// CLI dies with a hangup, and the container it started would otherwise go on
+// running in the runtime's daemon or VM.
+export const removeSessionContainers = (
+  runtime: "docker" | "podman",
+  sessionId: string,
+  env: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* () {
+    const listed = yield* execOk(runtime, sessionContainersArgs(sessionId), { env });
+    const ids = listed.split(/\s+/).filter((id) => id.length > 0);
+
+    if (ids.length > 0) {
+      yield* execOk(runtime, ["rm", "-f", ...ids], { env });
+    }
+  }).pipe(Effect.ignore);
 
 // The containers labelled with the run `runId`, or with any run, for `rm -f`
 // and the sweep (#721).

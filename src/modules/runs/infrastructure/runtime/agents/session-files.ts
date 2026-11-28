@@ -37,6 +37,10 @@ export const sessionFilesIn = (dir: string) => ({
   // A sandboxed session's Claude config dir, mounted into its container
   // (ADR 24, "The container"): its transcripts are here, not the account's.
   claude: `${dir}/claude`,
+  // A sandboxed Codex session's CODEX_HOME, mounted into its container: its
+  // threads' rollouts are here, not the account's, and its login only while
+  // a call runs.
+  codex: `${dir}/codex`,
 });
 
 export type SessionFiles = ReturnType<typeof sessionFilesIn>;

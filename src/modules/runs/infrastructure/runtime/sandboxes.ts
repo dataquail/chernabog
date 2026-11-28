@@ -22,6 +22,9 @@ export type SandboxedSession = {
 
 const named = (sandbox: ResolvedSandbox) => `sandbox ${sandbox.name} (from ${sandbox.from})`;
 
+// The agents whose sessions run in a container.
+const CONTAINED: ReadonlyArray<string> = ["claude", "codex"];
+
 const NEVER_ON_HOST = "and never runs a sandboxed repo's session on the host instead";
 
 // The image a sandboxed session runs in.
@@ -45,14 +48,16 @@ export const sandboxRefusal = (
     );
   }
 
-  // Decision 4: Claude first; Codex (#724), opencode and custom adapters refuse.
-  if (session.adapter !== "claude") {
+  // Decision 4: Claude and Codex; opencode and custom adapters refuse.
+  if (!CONTAINED.includes(session.adapter)) {
     return Option.some(
-      `${named(sandbox)}: this chernabog can't run a ${session.adapter} session in a container yet, ${NEVER_ON_HOST}; only claude runs sandboxed so far`,
+      `${named(sandbox)}: this chernabog can't run a ${session.adapter} session in a container yet, ${NEVER_ON_HOST}; only ${CONTAINED.join(" and ")} run sandboxed so far`,
     );
   }
 
-  if (!session.interactive) {
+  // Codex runs headless under any launcher, its adapter running the
+  // container; Claude's interactive session is __launch's to run in one.
+  if (session.adapter === "claude" && !session.interactive) {
     return Option.some(
       `${named(sandbox)}: this chernabog runs a sandboxed claude session only under a launcher (orca, tmux or your own), not headless, ${NEVER_ON_HOST}`,
     );
