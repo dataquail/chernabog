@@ -7,6 +7,7 @@ import {
   describeError,
   type Flow,
   Machine,
+  NO_SANDBOX,
   RunLog,
   type SetupError,
   type WorkItem,
@@ -14,11 +15,12 @@ import {
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -27,6 +29,8 @@ import { type Persona, samePersona } from "../../../../kernel/persona.value-obje
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
+import { HostEnvironment } from "../../../../platform/environment.ts";
+import { type Exec } from "../../../../platform/exec.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
 import {
   checkFlowSettings,
@@ -47,6 +51,7 @@ import {
   type ServicesFor,
 } from "./engine.ts";
 import { withRepoOver } from "./flow-registry.ts";
+import { sandboxedSpawner } from "./sandboxed-commands.ts";
 
 // Runs a flow's trigger with the repo's services, as the runtime does, for a
 // composition root that asks one itself (a foreground run, a rehearsal): it
@@ -173,6 +178,43 @@ const consoleRunLog = RunLog.of({
   stepFinished: () => Effect.void,
 });
 
+// The platform a repo's flows run commands with: a sandboxed repo's run in
+// containers from its image (ADR 24, decision 10), anything else's on the host.
+const flowPlatform = (
+  repo: PersonaRepo,
+  platform: Context.Context<
+    | FileSystem.FileSystem
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Exec
+    | Crypto.Crypto
+    | HostEnvironment
+  >,
+) => {
+  const sandbox = repo.settings.sandbox ?? NO_SANDBOX;
+
+  if (sandbox.name === "none") {
+    return platform;
+  }
+
+  return Context.add(
+    platform,
+    ChildProcessSpawner.ChildProcessSpawner,
+    sandboxedSpawner(
+      {
+        sandbox: { ...sandbox, name: sandbox.name },
+        settings: repo.settings,
+        user: {
+          uid: Option.fromUndefinedOr(process.getuid?.()),
+          gid: Option.fromUndefinedOr(process.getgid?.()),
+        },
+        platform: process.platform,
+        host: Context.get(platform, HostEnvironment).variables,
+      },
+      platform,
+    ),
+  );
+};
+
 // One repo's services as one persona, with its account, agent and launcher,
 // built once at its composition point and shared by every trigger, gate and
 // run of its flows as that persona, beside the logins this machine acts as.
@@ -181,7 +223,11 @@ const consoleRunLog = RunLog.of({
 export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<
-      FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+      | FileSystem.FileSystem
+      | ChildProcessSpawner.ChildProcessSpawner
+      | Exec
+      | Crypto.Crypto
+      | HostEnvironment
     >();
 
     const services = yield* Layer.build(
@@ -198,7 +244,7 @@ export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
       ),
     );
 
-    return Context.merge(platform, services);
+    return Context.merge(flowPlatform(repo, platform), services);
   });
 
 export type RepoContext = Effect.Success<ReturnType<typeof buildRepoContext>>;

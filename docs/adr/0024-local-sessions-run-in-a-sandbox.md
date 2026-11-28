@@ -239,6 +239,27 @@ launcher terminal (Orca tab, tmux pane)
     macOS host, and running `install`'s scripts on the host would run code
     the repo can change outside the sandbox.
 
+    **(#722 settles:** the binary does it, not the SDK. A sandboxed repo's
+    flows, triggers and gates are given a `ChildProcessSpawner` that runs
+    every process they start (the SDK's `shell`, which `install` and each
+    `localGate` command go through, and anything a repo's own flow spawns)
+    as `<runtime> run -i --rm --init` from the repo's image
+    (`sandboxed-commands.ts`, provided by `buildRepoContext`), so a flow
+    written against any SDK runs its commands there, and none falls back to
+    the host. The engine's own services (git, GitHub, worktrees, the agent)
+    keep the host's. Each container gets the command's working directory,
+    which must be a worktree, as its workdir; the worktree and common git
+    dir mounts and the user mapping a session gets; of the command's own
+    variables, all but `PATH`, `HOME` and any credential (`GH_TOKEN`,
+    `GITHUB_TOKEN`, the git credential config, Claude's and Codex's), by
+    name; and the labels `chernabog.run` and `chernabog.command`, a fresh id
+    by which the container is removed when the command ends however it
+    ends, by the runtime's CLI with the environment it ran the command
+    with (the host's, for its context or machine, and PATH). A command run
+    outside a worktree is refused, saying so. The image is the session's, built first when the runtime hasn't
+    got it, and a build that fails, or a command with no working directory,
+    fails the command and so the step.**)**
+
 11. **No published base image** for now. The template is copied into each
     repo, and the repo's Dockerfile is the image.
 

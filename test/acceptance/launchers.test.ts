@@ -176,6 +176,9 @@ describe.each(["tmux", "orca", "mine", "headless"])(
 // What fakebin's runtime records of a `run`: its arguments.
 const RunArgs = Schema.fromJsonString(Schema.Array(Schema.String));
 
+// What a session's container is labelled with, beside the run's.
+const SESSION_CONTAINER = '"chernabog.session=';
+
 // What a sandboxed session's launch spec says of where it runs.
 const SandboxedSpec = Schema.fromJsonString(
   Schema.Struct({
@@ -262,8 +265,9 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
       "exited 0",
     ]);
 
+    // The session's container; the install and local gate run in their own (#722).
     const runs = runtimeCalls(sandbox)
-      .filter((call) => call.startsWith(`${provider} run `))
+      .filter((call) => call.startsWith(`${provider} run `) && call.includes(SESSION_CONTAINER))
       .map((call) => Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)));
 
     expect(runs).toHaveLength(1);
@@ -374,7 +378,9 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     expect(Object.keys(spec.env)).not.toContain("GITHUB_TOKEN");
     expect(Object.keys(spec.env).filter((name) => !SANDBOXED_VARIABLE.test(name))).toEqual([]);
 
-    const runs = runtimeCalls(sandbox).filter((call) => call.startsWith(`${provider} run `));
+    const runs = runtimeCalls(sandbox).filter(
+      (call) => call.startsWith(`${provider} run `) && call.includes(SESSION_CONTAINER),
+    );
 
     expect(runs).toHaveLength(1);
     expect(runs.join(" ")).not.toContain("token-implicit");
@@ -473,7 +479,7 @@ describe.each(["docker", "podman"] as const)("a repo whose sandbox is %s", (prov
     expect(again[again.indexOf("--tag") + 1]).not.toBe(tag);
 
     const images = runtimeCalls(sandbox)
-      .filter((call) => call.startsWith(`${provider} run `))
+      .filter((call) => call.startsWith(`${provider} run `) && call.includes(SESSION_CONTAINER))
       .map((call) =>
         Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)).find((arg) =>
           arg.startsWith("chernabog-sandbox/"),
