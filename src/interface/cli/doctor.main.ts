@@ -1,8 +1,8 @@
 // `chernabog doctor`: checks logins, gh scopes, labels, trust, the rulesets
-// that protect progress records, a CI repo's workflow and secrets, and the
-// daemon, and says how to fix what is wrong.
+// that protect progress records, a CI repo's workflow and secrets, a repo's
+// sandbox, and the daemon, and says how to fix what is wrong.
 
-import { type Account, type ResolvedLauncher } from "@chernabog/core";
+import { type Account, NO_SANDBOX, type ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
@@ -22,6 +22,7 @@ import { RecipesCommands } from "../../modules/recipes/recipes.platform.ts";
 import {
   checkAccount,
   checkCodexAccount,
+  checkSandbox,
   checkThreadsSetup,
   CI_SECRETS,
   CI_WORKFLOW_FILE,
@@ -43,6 +44,7 @@ import { TrustQueries } from "../../modules/trust/trust.platform.ts";
 import { type Backup, listBackups } from "../../platform/backups.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configBranch, configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
+import { containerGateways } from "../../platform/container-gateways.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec, type ExecResult } from "../../platform/exec.ts";
 import {
@@ -65,7 +67,7 @@ import {
   githubGetAllPages,
   viewerLoginAs,
 } from "../../platform/github-api.ts";
-import { Home } from "../../platform/home.ts";
+import { Home, homePaths } from "../../platform/home.ts";
 import { VERSION } from "../../platform/version.ts";
 import {
   type EffectiveRepo,
@@ -81,6 +83,7 @@ import {
   workflowYaml,
 } from "../../repo-config.ts";
 import { daemonStatus } from "../daemon/daemon.client.ts";
+import { openSessionApi } from "../daemon/session-api.server.ts";
 import { printJson, printLines } from "./cli.output.ts";
 import { jsonFlag } from "./output.arguments.ts";
 
@@ -732,6 +735,100 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // Whether each sandbox the repo's personas run in can start a session
+  // (ADR 24, decision 2): the runtime, its VM on macOS, the image, the
+  // session API from a container, and the Claude tokens. A container reaches
+  // a session API doctor opens as the hub does, on the same addresses, since
+  // the daemon's port is its own and may not be open.
+  const checkSandboxes = (repo: EnrolledRepo, effective: EffectiveRepo, name: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sandboxed = effective.personas.filter(
+          ({ settings }) => (settings.sandbox?.name ?? "none") !== "none",
+        );
+
+        if (sandboxed.length === 0) {
+          return;
+        }
+
+        const root = (yield* Home).root;
+
+        const sessionApi = yield* openSessionApi({
+          root,
+          isLive: () => Effect.succeed(false),
+          log: () => Effect.void,
+          gateways: containerGateways(host.platform),
+        }).pipe(
+          Effect.map((api): Result.Result<number, string> => Result.succeed(api.port)),
+          Effect.catch((refused) => Effect.succeed(Result.fail(refused.message))),
+        );
+
+        const common = yield* exec
+          .run("git", ["-C", repo.path, "rev-parse", "--path-format=absolute", "--git-common-dir"])
+          .pipe(Effect.orElseSucceed(() => notRun));
+
+        const worktrees = homePaths(root).worktrees(effective.settings.name);
+        yield* fs.makeDirectory(worktrees, { recursive: true }).pipe(Effect.ignore);
+
+        const shares = [
+          { path: worktrees, what: "its worktrees live" },
+          ...Option.toArray(
+            Option.liftPredicate(
+              { path: common.stdout.trim(), what: "its git dir lives" },
+              (share) => common.exitCode === 0 && share.path.length > 0,
+            ),
+          ),
+        ];
+
+        const seen = new Set<string>();
+
+        for (const { settings } of sandboxed) {
+          const sandbox = settings.sandbox ?? NO_SANDBOX;
+
+          const claude = Option.orElse(Record.get(settings.agentAccounts, "claude"), () =>
+            Option.liftPredicate(settings.account, () => settings.agent === "claude"),
+          );
+
+          const claudeAccounts = Option.toArray(claude)
+            .map((account) => account.name)
+            .filter((account) => !seen.has(`${sandbox.name}:${account}`));
+
+          const runtimeChecked = seen.has(sandbox.name);
+
+          if (runtimeChecked && claudeAccounts.length === 0) {
+            continue;
+          }
+
+          seen.add(sandbox.name);
+
+          for (const account of claudeAccounts) {
+            seen.add(`${sandbox.name}:${account}`);
+          }
+
+          const found = yield* checkSandbox({
+            sandbox,
+            name,
+            slug: settings.slug,
+            configDir: settings.configDir,
+            platform: host.platform,
+            user: {
+              uid: Option.fromUndefinedOr(process.getuid?.()),
+              gid: Option.fromUndefinedOr(process.getgid?.()),
+            },
+            shares,
+            sessionApi,
+            claudeAccounts,
+          });
+
+          for (const each of found.filter(
+            (one) => !runtimeChecked || one.label.includes("Claude token"),
+          )) {
+            check(each.ok, each.label, each.fix);
+          }
+        }
+      }),
+    );
+
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
@@ -763,6 +860,7 @@ export const doctor = Effect.gen(function* () {
       yield* checkThreads(loaded.success, name, repo.repo);
       yield* checkStatusLabels(loaded.success, name);
       yield* checkCi(repo, name, loaded.success.settings.configDir);
+      yield* checkSandboxes(repo, loaded.success, name);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
@@ -1037,6 +1135,6 @@ export const doctorCommand = Command.make("doctor", { json: jsonFlag }, ({ json 
   }),
 ).pipe(
   Command.withDescription(
-    "Check logins, gh scopes, labels, trust, rulesets, a CI repo's workflow and secrets, and the daemon",
+    "Check logins, gh scopes, labels, trust, rulesets, a CI repo's workflow and secrets, a repo's sandbox, and the daemon",
   ),
 );

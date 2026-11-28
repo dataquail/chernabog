@@ -7,7 +7,11 @@
 // container's host names are this machine's loopback. It keeps each
 // "container" in FAKE_RUNTIME_STATE by its labels, for `ps --filter label=`
 // `inspect`, and `rm -f`. `build` records the image's tag, for `image inspect`.
+// A container's host names (host.docker.internal, host.containers.internal)
+// in its command are this machine's loopback, as FAKE_HOST_GATEWAY says.
 // FAKE_RUNTIME_MISSING: behave as if neither runtime were installed.
+// FAKE_RUNTIME_DOWN: installed, but `info` can't reach its daemon or machine,
+// and `podman machine inspect` says the machine is stopped.
 // FAKE_RUNTIME_DETACH: the container's process outlives this CLI, as a real
 // container outlives its client, until `rm -f` removes it.
 import { spawn } from 'node:child_process';
@@ -39,7 +43,15 @@ const alive = (pid: number) => {
 // The images it has built, by tag, as files under FAKE_RUNTIME_STATE/images.
 const imageFile = (tag: string) => join(state, 'images', encodeURIComponent(tag));
 
-if (args[0] === 'info') {
+if (args[0] === '--version') {
+  console.log(`${runtime} version 0.0.0-fake`);
+} else if (args[0] === 'machine' && args[1] === 'inspect') {
+  console.log(process.env.FAKE_RUNTIME_DOWN ? 'stopped' : 'running');
+} else if (args[0] === 'info') {
+  if (process.env.FAKE_RUNTIME_DOWN) {
+    console.error('Cannot connect to the daemon. Is it running?');
+    process.exit(1);
+  }
   console.log(`${runtime} fake`);
 } else if (args[0] === 'image' && args[1] === 'inspect') {
   if (!existsSync(imageFile(args[2] ?? ''))) {
@@ -113,7 +125,8 @@ if (args[0] === 'info') {
     if (arg === '--workdir' || arg === '-w') cwd = value;
     if ((arg === '--env' || arg === '-e') && process.env[value] !== undefined) env[value] = process.env[value]!;
   }
-  const [, command, ...rest] = args.slice(i);
+  const [, command, ...given] = args.slice(i);
+  const rest = given.map((arg) => arg.replaceAll(/host\.(docker|containers)\.internal/g, env.FAKE_HOST_GATEWAY!));
   const id = `c${process.pid}${Date.now()}`;
   const detach = Boolean(process.env.FAKE_RUNTIME_DETACH);
   const child = spawn(command!, rest, { cwd, env, stdio: 'inherit', detached: detach });

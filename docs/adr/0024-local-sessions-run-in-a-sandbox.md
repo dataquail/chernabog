@@ -106,6 +106,17 @@ launcher terminal (Orca tab, tmux pane)
    to fix it. Nothing falls back to `none`. `chernabog doctor` checks the
    same things ahead of time (#723).
 
+   **(#723 settles:** `doctor` checks, for each repo with a sandbox, that the
+   runtime is installed and `info` answers; on macOS that Podman's machine
+   is running and the VM shares the repo's worktrees and common git dir (a
+   container from the image mounts each at its path); that the image builds;
+   that a container from it reaches a session API with `curl`; and that
+   each Claude account has its token. The daemon's session API port is its
+   own and may not be open, so doctor opens a listener of its own, the
+   hub's code on the hub's addresses, and asks a route that needs a token:
+   any HTTP status is a reach. A check that fails leaves out the ones that
+   need it. `sandbox-doctor.ts` holds them.**)**
+
 3. **Sessions with a person present are sandboxed like unattended ones.**
    `withPerson` changes how a session finishes, not where it runs.
 
