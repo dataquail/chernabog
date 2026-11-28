@@ -189,6 +189,11 @@ export {
   withRepoReservedFor,
 } from "./infrastructure/runtime/repo-runtime.ts";
 export { noHooks, RunLogLimit, runLogWriting } from "./infrastructure/runtime/runlog.ts";
+export {
+  checkSandbox,
+  type SandboxCheck,
+  type SandboxShare,
+} from "./infrastructure/runtime/sandbox-doctor.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";
 export {
   checkThreadsSetup,

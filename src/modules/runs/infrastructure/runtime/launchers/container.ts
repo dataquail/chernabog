@@ -86,8 +86,8 @@ const userArgs = (runtime: "docker" | "podman", host: ContainerHost) => {
 
 // On Linux, Docker names the host's gateway only when asked; Docker Desktop
 // and Podman name theirs themselves.
-const hostArgs = (runtime: "docker" | "podman", host: ContainerHost) => {
-  if (runtime === "docker" && host.platform === "linux") {
+export const gatewayArgs = (runtime: "docker" | "podman", platform: string) => {
+  if (runtime === "docker" && platform === "linux") {
     return ["--add-host=host.docker.internal:host-gateway"];
   }
 
@@ -126,7 +126,7 @@ export const containerRunArgs = (
   agent.cwd,
   ...Object.keys(agent.env).flatMap((name) => ["--env", name]),
   ...userArgs(runtime, host),
-  ...hostArgs(runtime, host),
+  ...gatewayArgs(runtime, host.platform),
   container.image,
   agent.command,
   ...agent.args,
