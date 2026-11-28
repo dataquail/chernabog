@@ -33,7 +33,7 @@ describe("chernabog sandbox init", () => {
     await sandbox.github.stop();
   });
 
-  test("writes the template Dockerfile, with git, gh, curl, Claude Code, a non-root user and room for the repo's toolchain", async () => {
+  test("writes the template Dockerfile, with git, gh, curl, Claude Code, an optional Codex, a non-root user and room for the repo's toolchain", async () => {
     const written = await sandbox.runCli(["sandbox", "init"]);
 
     expect(written.output).toContain(`wrote ${DOCKERFILE}`);
@@ -49,6 +49,9 @@ describe("chernabog sandbox init", () => {
     expect(text).toContain("ARG AGENT_GID=");
     expect(text).toMatch(/^USER agent$/m);
     expect(text).toContain("The repo's toolchain goes here");
+    // The Codex CLI is an optional step, off until the repo turns it on (#724).
+    expect(text).toMatch(/^ARG INSTALL_CODEX=false$/m);
+    expect(text).toContain("github.com/openai/codex/releases");
   });
 
   test("refuses to write over a Dockerfile that's there, and leaves it as it was", async () => {

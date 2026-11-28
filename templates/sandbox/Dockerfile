@@ -55,6 +55,19 @@ ENV PATH="/home/agent/.local/bin:${PATH}"
 RUN curl -fsSL https://claude.ai/install.sh | bash \
   && claude --version
 
+# The Codex CLI, for a repo whose flows run Codex: set INSTALL_CODEX=true to
+# install it into ~/.local/bin, beside claude. Off by default, so a repo that
+# runs only Claude doesn't download it.
+ARG INSTALL_CODEX=false
+RUN if [ "$INSTALL_CODEX" = "true" ]; then \
+    target="$(uname -m)-unknown-linux-musl" \
+    && curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-${target}.tar.gz" \
+      | tar -xz -C /tmp \
+    && install -m 0755 "/tmp/codex-${target}" /home/agent/.local/bin/codex \
+    && rm "/tmp/codex-${target}" \
+    && codex --version; \
+  fi
+
 # ---------------------------------------------------------------------------
 # Toolchain steps that install into the user's home (rustup, a version
 # manager, …) go here, after USER agent.
