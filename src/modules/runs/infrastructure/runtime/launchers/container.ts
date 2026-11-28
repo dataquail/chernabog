@@ -17,6 +17,10 @@ import { execOk } from "../../../../../platform/exec.ts";
 export const RUN_LABEL = "chernabog.run";
 export const SESSION_LABEL = "chernabog.session";
 
+// The one command of a run's flow a container runs, such as a local gate
+// check, outside any session (ADR 24, decision 10).
+export const COMMAND_LABEL = "chernabog.command";
+
 // The host a container reaches its hub's session API at, by sandbox; an
 // unsandboxed session reaches it at loopback.
 export const sessionApiHostFor = (sandbox: SandboxName, loopback: string) => {
@@ -132,13 +136,32 @@ export const containerRunArgs = (
   ...agent.args,
 ];
 
-// The containers a session runs, by its label, for `rm -f`.
-export const sessionContainersArgs = (sessionId: string): ReadonlyArray<string> => [
+// The containers that carry the label `name` with `value`, for `rm -f`.
+const labelledContainersArgs = (name: string, value: string): ReadonlyArray<string> => [
   "ps",
   "-aq",
   "--filter",
-  `label=${SESSION_LABEL}=${sessionId}`,
+  `label=${name}=${value}`,
 ];
+
+// The containers a session runs, by its label, for `rm -f`.
+export const sessionContainersArgs = (sessionId: string): ReadonlyArray<string> =>
+  labelledContainersArgs(SESSION_LABEL, sessionId);
+
+// Removes the containers labelled `name` with `value`, never by name.
+export const removeLabelledContainers = (
+  runtime: "docker" | "podman",
+  label: { readonly name: string; readonly value: string },
+  env: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* () {
+    const listed = yield* execOk(runtime, labelledContainersArgs(label.name, label.value), { env });
+    const ids = listed.split(/\s+/).filter((id) => id.length > 0);
+
+    if (ids.length > 0) {
+      yield* execOk(runtime, ["rm", "-f", ...ids], { env });
+    }
+  }).pipe(Effect.ignore);
 
 // Removes the session's containers, by its label, never by name: the runtime
 // CLI dies with a hangup, and the container it started would otherwise go on
@@ -147,15 +170,7 @@ export const removeSessionContainers = (
   runtime: "docker" | "podman",
   sessionId: string,
   env: Readonly<Record<string, string>>,
-) =>
-  Effect.gen(function* () {
-    const listed = yield* execOk(runtime, sessionContainersArgs(sessionId), { env });
-    const ids = listed.split(/\s+/).filter((id) => id.length > 0);
-
-    if (ids.length > 0) {
-      yield* execOk(runtime, ["rm", "-f", ...ids], { env });
-    }
-  }).pipe(Effect.ignore);
+) => removeLabelledContainers(runtime, { name: SESSION_LABEL, value: sessionId }, env);
 
 // The containers labelled with the run `runId`, or with any run, for `rm -f`
 // and the sweep (#721).
