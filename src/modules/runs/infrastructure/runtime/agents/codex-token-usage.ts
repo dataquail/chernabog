@@ -24,6 +24,7 @@ import {
   type TokenUsageReading,
 } from "../../../domain/token-usage/model-usage.value-object.ts";
 import { type AgentSession } from "./adapter.ts";
+import { sessionFiles } from "./session-files.ts";
 import { knownSession } from "./sessions.ts";
 
 // A total as Codex logs it, and as the cursor keeps it. Codex before
@@ -184,6 +185,21 @@ const threadFiles = (sessions: string, thread: string) =>
     ).map((file) => `${sessions}/${file}`);
   });
 
+// The CODEX_HOME a session's threads are in: a sandboxed session's own,
+// made as the session is recorded (ADR 24, decision 4), or else its account's.
+const sessionCodexHome = (session: AgentSession) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* Home;
+    const own = sessionFiles(home.root, session.sessionId).codex;
+
+    if (yield* fs.exists(own).pipe(Effect.orElseSucceed(() => false))) {
+      return own;
+    }
+
+    return codexHomeOf(session.account, home.user);
+  });
+
 const fail = (message: string) =>
   Effect.fail(new AgentError({ message: `codex usage: ${message}` }));
 
@@ -205,7 +221,7 @@ export const readCodexTokenUsage = (session: AgentSession, cursor: Option.Option
         }),
     });
 
-    const sessions = `${codexHomeOf(session.account, (yield* Home).user)}/sessions`;
+    const sessions = `${yield* sessionCodexHome(session)}/sessions`;
     const files = yield* threadFiles(sessions, thread.value);
 
     if (files.length === 0) {

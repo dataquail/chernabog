@@ -1,20 +1,12 @@
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import { printJson } from "@chernabog/core";
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
 import { codexArgs } from "./codex.ts";
-import {
-  CODEX_LOGIN_ENV,
-  codexInContainer,
-  refreshedLogin,
-  sandboxedCodexEnvironment,
-} from "./codex-sandbox.ts";
+import { CODEX_LOGIN_ENV, refreshedLogin, sandboxedCodexEnvironment } from "./codex-sandbox.ts";
 
 const login = (accountId: string, lastRefresh: string, access = "access-1") =>
-  JSON.stringify({
+  printJson({
     auth_mode: "chatgpt",
     tokens: { access_token: access, refresh_token: "refresh", account_id: accountId },
     last_refresh: lastRefresh,
@@ -78,34 +70,6 @@ describe("a sandboxed codex session's environment", () => {
   });
 });
 
-describe("codex in its container", () => {
-  // The entry writes the login it is handed into CODEX_HOME, owner-only, and
-  // runs codex with it out of the environment, so codex's commands never see it.
-  test("signs codex in from the login in its environment, and keeps the login out of codex's", () => {
-    const root = mkdtempSync(join(tmpdir(), "codex-entry-"));
-    const bin = join(root, "bin");
-    const home = join(root, "codex-home");
-    Bun.spawnSync(["mkdir", "-p", bin, home]);
-    writeFileSync(
-      join(bin, "codex"),
-      `#!/bin/sh\necho "args: $*"\necho "login: \${${CODEX_LOGIN_ENV}:-unset}"\n`,
-    );
-    chmodSync(join(bin, "codex"), 0o755);
-
-    const entry = codexInContainer(["exec", "--json", "-"]);
-    const given = login("acct", "2026-11-01T00:00:00Z");
-
-    const ran = Bun.spawnSync([entry.command, ...entry.args], {
-      env: { PATH: `${bin}:/usr/bin:/bin`, CODEX_HOME: home, [CODEX_LOGIN_ENV]: given },
-    });
-
-    expect(ran.exitCode).toBe(0);
-    expect(ran.stdout.toString()).toBe("args: exec --json -\nlogin: unset\n");
-    expect(readFileSync(join(home, "auth.json"), "utf8")).toBe(given);
-    expect(statSync(join(home, "auth.json")).mode & 0o777).toBe(0o600);
-  });
-});
-
 describe("the login a session leaves", () => {
   const given = login("acct", "2026-11-01T00:00:00Z");
 
@@ -127,8 +91,6 @@ describe("the login a session leaves", () => {
       Option.none(),
     );
     expect(refreshedLogin(given, "not json")).toEqual(Option.none());
-    expect(refreshedLogin(given, JSON.stringify({ OPENAI_API_KEY: "sk-x" }))).toEqual(
-      Option.none(),
-    );
+    expect(refreshedLogin(given, printJson({ OPENAI_API_KEY: "sk-x" }))).toEqual(Option.none());
   });
 });

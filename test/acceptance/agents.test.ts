@@ -93,16 +93,22 @@ const RunArgs = Schema.fromJsonString(Schema.Array(Schema.String));
 // What fakebin/codex logs of what it was signed in with.
 const CodexEnv = Schema.fromJsonString(
   Schema.Struct({
-    codexHome: Schema.NullOr(Schema.String),
-    login: Schema.NullOr(Schema.String),
+    codexHome: Schema.optionalKey(Schema.String),
+    login: Schema.optionalKey(Schema.String),
     env: Schema.Array(Schema.String),
+  }),
+);
+
+// What the host's login holds once a session refreshed it.
+const KeptLogin = Schema.fromJsonString(
+  Schema.Struct({
+    tokens: Schema.Struct({ access_token: Schema.String, account_id: Schema.String }),
   }),
 );
 
 // A ChatGPT login as `codex login` keeps it in $CODEX_HOME/auth.json.
 const CODEX_LOGIN = JSON.stringify({
   auth_mode: "chatgpt",
-  OPENAI_API_KEY: null,
   tokens: {
     id_token: "id-token",
     access_token: "codex-access-token",
@@ -203,7 +209,7 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
       .filter((line) => line.length > 0)
       .map((line) => Schema.decodeSync(CodexEnv)(line));
 
-    const codexHome = signedIn?.codexHome ?? "";
+    const codexHome = signedIn.codexHome ?? "";
 
     expect(codexHome).toStartWith(join(sandbox.home, "sessions/interactive/"));
     expect(codexHome).toEndWith("/codex");
@@ -222,7 +228,7 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
 
     // Signed in with the account's login, handed over by name in the env and
     // written into the session's own CODEX_HOME, never on a command line.
-    expect(signedIn?.login).toBe(CODEX_LOGIN);
+    expect(signedIn.login).toBe(CODEX_LOGIN);
     expect(args.join(" ")).not.toContain("codex-access-token");
     expect(args.join(" ")).not.toContain("token-alice");
 
@@ -231,7 +237,7 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
     expect(named.filter((name) => !SANDBOXED_CODEX_VARIABLE.test(name))).toEqual([]);
     expect(named).toContain("GH_TOKEN");
     expect(named).toContain("CHERNABOG_CODEX_LOGIN");
-    expect(signedIn?.env).not.toContain("CHERNABOG_CODEX_LOGIN");
+    expect(signedIn.env).not.toContain("CHERNABOG_CODEX_LOGIN");
     expect(sandbox.agentTokens()).toContain("codex token-alice");
 
     // The login isn't left in the session's CODEX_HOME once the call ends.
@@ -252,7 +258,9 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
 
     expect(code).toBe(0);
 
-    const kept = JSON.parse(readFileSync(join(sandbox.root, "codex", "auth.json"), "utf8"));
+    const kept = Schema.decodeSync(KeptLogin)(
+      readFileSync(join(sandbox.root, "codex", "auth.json"), "utf8"),
+    );
 
     expect(kept.tokens.access_token).toBe("refreshed");
     expect(kept.tokens.account_id).toBe("acct-1");

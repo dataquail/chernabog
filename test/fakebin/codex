@@ -32,7 +32,7 @@ if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, `${re
 // names of the variables it got.
 if (process.env.FAKE_CODEX_ENV_LOG) {
   const auth = join(process.env.CODEX_HOME ?? '', 'auth.json');
-  appendFileSync(process.env.FAKE_CODEX_ENV_LOG, `${JSON.stringify({ codexHome: process.env.CODEX_HOME ?? null, login: existsSync(auth) ? readFileSync(auth, 'utf8') : null, env: Object.keys(process.env).sort() })}\n`);
+  appendFileSync(process.env.FAKE_CODEX_ENV_LOG, `${JSON.stringify({ codexHome: process.env.CODEX_HOME, login: existsSync(auth) ? readFileSync(auth, 'utf8') : undefined, env: Object.keys(process.env).sort() })}\n`);
 }
 // FAKE_CODEX_REFRESH: refresh the login, as Codex does one it finds old.
 if (process.env.FAKE_CODEX_REFRESH) {

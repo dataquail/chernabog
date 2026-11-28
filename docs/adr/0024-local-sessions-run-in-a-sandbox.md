@@ -115,6 +115,45 @@ launcher terminal (Orca tab, tmux pane)
    decision 2) rather than running it on the host. opencode and custom
    adapters refuse the same way **(settled here)**.
 
+   **(#724 settles:** Codex runs in the container too, with its own sandbox
+   off (`sandbox_mode="danger-full-access"`). Codex's `workspace-write`
+   sandbox is Landlock and seccomp on Linux, and needs what a container's
+   default seccomp profile and capabilities deny, so nested in one it fails
+   the commands it runs; turning it on would mean widening the container
+   (`--privileged`, `seccomp=unconfined`), which weakens the sandbox that
+   matters. The container already holds only the worktree, the common git
+   dir and the session's own files, and the network is open by decision 5,
+   so Codex's sandbox would add nothing inside it.
+
+   Codex runs headless (`codex exec`), so its adapter runs the container
+   itself, `<runtime> run -i --rm --init` with the prompt on stdin, under
+   any launcher, rather than `__launch` on a terminal. It gets the same
+   mounts, labels, user mapping and hangup handling (its adapter removes the
+   session's containers by label however the call ends), with
+   `CODEX_HOME` a dir of the session's own, `codex/` in its session dir,
+   read-write at its host path, in place of Claude's config dir: its
+   threads' rollouts stay there, for `codex exec resume` and for what a
+   call spent (ADR 18). The call's schema and last-message files sit in a
+   scratch dir of the session dir, mounted too.
+
+   Codex's credentials go as Claude's do (decision 7), through the env and
+   by name. Codex has no long-lived token like `claude setup-token`'s: its
+   ChatGPT login is the `auth.json` that `codex login` keeps in the
+   account's `CODEX_HOME`. So the session's env carries that file's
+   contents as `CHERNABOG_CODEX_LOGIN`, read from the account on this
+   machine at each call rather than a copy kept in the chernabog home,
+   which would go stale as Codex refreshes it. The container's entry
+   (`sh -c`) writes it into the session's `CODEX_HOME` as `auth.json`,
+   0600, unsets the variable and execs `codex`, so the commands Codex runs
+   don't have it in their env. When the call ends, a login Codex refreshed
+   in there is written back to the account's `auth.json`, only if it is
+   the same account's and newer, because a refresh retires the refresh
+   token the host holds; then the session's copy is removed. An account
+   whose login isn't a ChatGPT one in that file (an API key's, or one kept
+   in the keyring) is refused, naming `codex login`. Two calls of one
+   account that both refresh at once can still race, as two machines
+   sharing a login do.**)**
+
 5. **The network is open in v1**, as in Sandcastle. Filtering outbound
    traffic is a later epic.
 
@@ -135,6 +174,8 @@ launcher terminal (Orca tab, tmux pane)
    on a command line: `__launch` passes each variable to the runtime by
    name (`--env NAME`), so the values come from its own environment and
    never show in `ps`. The spec file stays owner-only, as today.
+
+   For Codex's, see decision 4.
 
    **(#720 settles:** the token is at `keys/claude/<account>.token` in the
    chernabog home, 0600 in a 0700 directory, written by
@@ -318,6 +359,9 @@ nothing waits on it any more.
   hash of the directory's contents, and rebuilt when that hash changes.
   Until #719 builds it, the image is the one `CHERNABOG_SANDBOX_IMAGE`
   names in the hub's environment, and a session is refused without one.
+  A repo whose flows run Codex needs `codex` (and `sh`) on the image's
+  `PATH`: the template `sandbox init` writes (#718) carries the Codex CLI
+  as an optional step, off unless the repo turns it on **(#724 settles)**.
 
 ## Threat model
 
@@ -328,8 +372,8 @@ the gate's run of the agent's code off the host.
 
 What stays reachable, on purpose:
 
-- **The credentials passed in**: Claude's token and the persona's
-  `GH_TOKEN`. An injected agent can use them, as it can today.
+- **The credentials passed in**: Claude's token or Codex's ChatGPT login,
+  and the persona's `GH_TOKEN`. An injected agent can use them, as it can today.
 - **The network**, open in v1 (decision 5), so an agent can send what it
   can read anywhere.
 - **The worktree and the common git dir**, read-write: the agent's work.

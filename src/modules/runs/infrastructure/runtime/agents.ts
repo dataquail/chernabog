@@ -39,7 +39,7 @@ import { codexAdapter } from "./agents/codex.ts";
 import { customAdapter } from "./agents/custom.ts";
 import { opencodeAdapter } from "./agents/opencode.ts";
 import { REHEARSAL, rehearsalAdapter } from "./agents/rehearsal.ts";
-import { knownLaunch, sessionFiles } from "./agents/session-files.ts";
+import { knownLaunch, type SessionFiles, sessionFiles } from "./agents/session-files.ts";
 import {
   knownSession,
   recordRunSession,
@@ -113,6 +113,15 @@ export const adaptersFor = (agents: AgentsConfig): ReadonlyArray<Adapter> => {
     ...Option.toArray(Option.map(rehearsal, (found) => found.adapter)),
     ...custom,
   ];
+};
+
+// Where a sandboxed session's agent keeps its own records, in its session dir.
+const ownAgentHome = (adapter: string, files: SessionFiles) => {
+  if (adapter === "codex") {
+    return files.codex;
+  }
+
+  return files.claude;
 };
 
 // What the agent's gh and git run as: the persona's token. On the host the
@@ -207,12 +216,13 @@ export const AgentLive = (
                 return yield* new AgentError({ message: `${name}: ${said}` });
               }
 
-              // Its own config dir, where its transcripts are read from from the start.
+              // Its own config dir (Claude's) or CODEX_HOME, where its
+              // transcripts are read from from the start.
               if (sandbox.name !== "none") {
+                const files = sessionFiles((yield* Home).root, request.sessionId);
+
                 yield* (yield* FileSystem.FileSystem)
-                  .makeDirectory(sessionFiles((yield* Home).root, request.sessionId).claude, {
-                    recursive: true,
-                  })
+                  .makeDirectory(ownAgentHome(name, files), { recursive: true })
                   .pipe(Effect.mapError((error) => new AgentError({ message: error.message })));
               }
             }
