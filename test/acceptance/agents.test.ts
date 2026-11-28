@@ -140,10 +140,15 @@ describe.each(["docker", "podman"] as const)("implement on Codex in a %s sandbox
       return [];
     }
 
-    return readFileSync(log, "utf8")
-      .split("\n")
-      .filter((call) => call.startsWith(`${provider} run `))
-      .map((call) => Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)));
+    return (
+      readFileSync(log, "utf8")
+        .split("\n")
+        // The session's container; the install and local gate run in their own (#722).
+        .filter(
+          (call) => call.startsWith(`${provider} run `) && call.includes('"chernabog.session='),
+        )
+        .map((call) => Schema.decodeSync(RunArgs)(call.slice(`${provider} run `.length)))
+    );
   };
 
   const signIn = (sandbox: Sandbox, login = CODEX_LOGIN) => {
