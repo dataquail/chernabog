@@ -611,6 +611,11 @@ export const runDaemon = Effect.gen(function* () {
 
   const registry: FlowRegistry = {
     handles,
+    sandboxes: repos.flatMap((repo) =>
+      Option.toArray(repo.repo).flatMap((loaded) =>
+        loaded.personas.map((own) => own.settings.sandbox?.name ?? "none"),
+      ),
+    ),
     services: (repoName, persona) =>
       Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
         servicesFrom(personas)(persona),
@@ -1074,6 +1079,46 @@ export const runDaemon = Effect.gen(function* () {
       for (const runId of swept.swept) {
         yield* log(`deleted the journal of ${runId}, which had ended`);
       }
+
+      // The containers labelled with a run that has ended, which a session's
+      // shim or the runtime's VM dying left running (ADR 24, decision 9): now,
+      // and every minute after, on a fiber of its own. A runtime that can't
+      // answer is logged when what it says changes, not every minute.
+      const containerFailures = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+
+      const sweepContainers = Effect.gen(function* () {
+        const sweptContainers = yield* (yield* RunFlowsCommands).SweepContainersCommand();
+
+        for (const removed of sweptContainers.removed) {
+          yield* log(
+            `removed ${removed.runtime} container ${removed.id} of ${shortRunId(removed.runId)}, which had ended`,
+          );
+        }
+
+        const before = yield* Ref.get(containerFailures);
+
+        const now = new Map(
+          sweptContainers.failed.map((failed) => [failed.runtime, failed.message]),
+        );
+
+        for (const [runtime, message] of now) {
+          if (before.get(runtime) !== message) {
+            yield* log(`sweeping ${runtime} containers failed: ${message}`);
+          }
+        }
+
+        yield* Ref.set(containerFailures, now);
+      }).pipe(Effect.catchCause((cause) => log(`sweeping containers failed: ${String(cause)}`)));
+
+      // The first sweep too, so a runtime that hangs rather than failing
+      // doesn't hold the daemon's start for its timeout.
+      yield* Effect.forkScoped(
+        sweepContainers.pipe(
+          Effect.andThen(
+            Effect.forever(Effect.sleep("1 minute").pipe(Effect.andThen(sweepContainers))),
+          ),
+        ),
+      );
 
       const reloadPending = yield* Ref.make(false);
       // Set once chernabog's binary changes under the daemon: it starts no new

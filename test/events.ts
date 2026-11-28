@@ -52,6 +52,30 @@ export const RecordedBus = Recording.pipe(
 
 export const RecordedEvents = Layer.mergeAll(RecordedBus, PassThroughUnitOfWork);
 
+// RecordedEvents, also writing `dispatched <tag>` to `log` for each event as
+// it is dispatched, for a test that reads its order among what else it
+// writes there.
+export const RecordedEventsInto = (log: Array<string>) =>
+  Layer.mergeAll(
+    Layer.effect(
+      EventBus,
+      Effect.gen(function* () {
+        const bus = yield* EventBus;
+
+        return EventBus.of({
+          ...bus,
+          dispatch: (events) =>
+            Effect.sync(() => {
+              for (const event of events) {
+                log.push(`dispatched ${event._tag}`);
+              }
+            }).pipe(Effect.andThen(bus.dispatch(events))),
+        });
+      }),
+    ).pipe(Layer.provideMerge(RecordedBus)),
+    PassThroughUnitOfWork,
+  );
+
 export class OpenStreams extends Context.Service<OpenStreams, { count: number }>()(
   "test/OpenStreams",
 ) {}

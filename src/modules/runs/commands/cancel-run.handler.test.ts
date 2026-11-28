@@ -5,9 +5,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
-import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
+import { DispatchedEvents, RecordedEvents, RecordedEventsInto } from "../../../../test/events.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { type LabelledContainer } from "../domain/ports/clients/run-cleanup.client.ts";
 import { RunSpokesClient } from "../domain/ports/clients/run-spokes.client.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { type EndedSpoke } from "../domain/run/ended-spoke.value-object.ts";
@@ -104,10 +105,15 @@ const runtime = (
     readonly markers?: ReadonlyArray<RunMarkerRoot>;
     readonly flows?: Readonly<Record<string, FakeFlow>>;
     readonly spokes?: FakeSpokes;
+    // Where to write each event dispatched, in order, beside what else is.
+    readonly events?: Array<string>;
   },
 ) =>
   Layer.mergeAll(
-    RecordedEvents,
+    Option.match(Option.fromUndefinedOr(stored.events), {
+      onNone: () => RecordedEvents,
+      onSome: RecordedEventsInto,
+    }),
     RunsRepositoryFake(stored.runs),
     RunWaitsRepositoryFake(stored.waits ?? []),
     RunLogsClientFake(Object.fromEntries(stored.runs.map((one) => [one.id, ""]))),
@@ -966,7 +972,7 @@ describe("cancelRunHandler", () => {
         expect(failed.openSessions).toEqual([]);
         // Its sessions closed before its worktrees went, so a session still
         // starting can't find its worktree gone and exit unclosed (#737).
-        expect(boundHoldings.steps).toEqual(["closed term-1", "removed the worktrees of a"]);
+        expect(boundHoldings.events).toEqual(["closed term-1", "removed the worktrees of a"]);
         expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RunFinished"]);
       }).pipe(Effect.provide(inSpoke(boundEngine, boundHoldings, boundSeen))),
   );
@@ -1080,5 +1086,139 @@ describe("cancelRunHandler", () => {
       // Nothing was asked of the engine for a run that wasn't cancelled.
       expect(brokenDisk.interrupted).toEqual([]);
     }).pipe(Effect.provide(stateDb(brokenDisk))),
+  );
+});
+
+// A container labelled with run `runId`, and with its session, if any.
+const container = (
+  id: string,
+  runId: string,
+  sessionId: Option.Option<string>,
+): LabelledContainer => ({ runtime: "docker", id, runId, sessionId, launched: true });
+
+// ADR 24, decision 9: cancel removes a run's containers by its label.
+describe("cancelRunHandler and the run's containers", () => {
+  const sessions = {
+    c: [
+      { sessionId: "agent", launcher: "orca", handle: "term-1", withPerson: false },
+      { sessionId: "person", launcher: "orca", handle: "term-2", withPerson: true },
+    ],
+  };
+
+  const withContainers = () =>
+    fakeHoldings({
+      sessions,
+      containers: [
+        container("k1", "c", Option.some("agent")),
+        container("k2", "c", Option.some("person")),
+        container("k3", "c", Option.none()),
+        container("k4", "other", Option.some("elsewhere")),
+      ],
+    });
+
+  const closingHeld = withContainers();
+
+  effect(
+    "removes a session's container it closes, and any of the run's no session holds, before it says the run ended",
+    () =>
+      Effect.gen(function* () {
+        const cancelled = yield* cancelRunHandler({
+          target: byId("c"),
+          by: "alice",
+          closeSessions: true,
+          sparePersonSessions: true,
+          endAs: Option.none(),
+        });
+
+        expect(cancelled.removedContainers).toEqual([
+          { runtime: "docker", id: "k1" },
+          { runtime: "docker", id: "k3" },
+        ]);
+        // A person's session it leaves open keeps its container, which its
+        // own __launch removes as it exits; another run's is that run's.
+        expect(closingHeld.containers.map((left) => left.id)).toEqual(["k2", "k4"]);
+        expect(closingHeld.events).toEqual([
+          "closed term-1",
+          "removed k1",
+          "removed k3",
+          "removed the worktrees of c",
+          "dispatched RunFinished",
+        ]);
+      }).pipe(
+        Effect.provide(
+          runtime(stoppingEngine("c"), closingHeld, {
+            runs: [run("c", { flow: "implement", itemKey: "issue-7" })],
+            events: closingHeld.events,
+          }),
+        ),
+      ),
+  );
+
+  const leavingHeld = withContainers();
+
+  effect("without --close-session, keeps the containers of the sessions it leaves open", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunHandler({ target: byId("c"), ...asAlice });
+
+      expect(cancelled.removedContainers).toEqual([{ runtime: "docker", id: "k3" }]);
+      expect(leavingHeld.containers.map((left) => left.id)).toEqual(["k1", "k2", "k4"]);
+    }).pipe(
+      Effect.provide(
+        runtime(stoppingEngine("c"), leavingHeld, {
+          runs: [run("c", { flow: "implement", itemKey: "issue-7" })],
+        }),
+      ),
+    ),
+  );
+
+  const interruptedHeld = withContainers();
+
+  effect("a run ended as interrupted removes its agent's container, not a person's", () =>
+    Effect.gen(function* () {
+      const ended = yield* cancelRunHandler({
+        target: byId("c"),
+        by: "chernabog",
+        closeSessions: true,
+        sparePersonSessions: true,
+        endAs: Option.some({ ending: "interrupted", reason: "its process stopped" }),
+      });
+
+      expect(ended.run.status).toBe("interrupted");
+      expect(ended.removedContainers).toEqual([
+        { runtime: "docker", id: "k1" },
+        { runtime: "docker", id: "k3" },
+      ]);
+      expect(interruptedHeld.containers.map((left) => left.id)).toEqual(["k2", "k4"]);
+    }).pipe(
+      Effect.provide(
+        runtime(stoppingEngine("c"), interruptedHeld, {
+          runs: [run("c", { flow: "implement", itemKey: "issue-7" })],
+        }),
+      ),
+    ),
+  );
+
+  const downHeld = fakeHoldings({
+    containers: [container("k1", "c", Option.none())],
+    failingRuntimes: { docker: "`docker ps` failed: Cannot connect to the Docker daemon" },
+  });
+
+  effect("a runtime that doesn't answer is left for a person, and the run stays cancelled", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunHandler({ target: byId("c"), ...asAlice });
+
+      expect(cancelled.run.status).toBe("cancelled");
+      expect(cancelled.removedContainers).toEqual([]);
+      expect(cancelled.leftForPerson).toContain(
+        "removing its containers failed: `docker ps` failed: Cannot connect to the Docker daemon",
+      );
+      expect(yield* statusOf("c")).toEqual(Option.some("cancelled"));
+    }).pipe(
+      Effect.provide(
+        runtime(stoppingEngine("c"), downHeld, {
+          runs: [run("c", { flow: "implement", itemKey: "issue-7" })],
+        }),
+      ),
+    ),
   );
 });

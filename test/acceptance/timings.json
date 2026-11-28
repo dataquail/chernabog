@@ -37,6 +37,7 @@
     "test/acceptance/versions.test.ts": 15962,
     "test/acceptance/interrupted-requeue.test.ts": 15079,
     "test/acceptance/review-coverage.test.ts": 13773,
+    "test/acceptance/container-cleanup.test.ts": 13000,
     "test/acceptance/spec-guard.test.ts": 11285,
     "test/acceptance/foreground-run.test.ts": 9407,
     "test/acceptance/machine-config.test.ts": 9012,
