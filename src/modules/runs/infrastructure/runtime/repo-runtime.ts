@@ -29,6 +29,7 @@ import { type Persona, samePersona } from "../../../../kernel/persona.value-obje
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
+import { HostEnvironment } from "../../../../platform/environment.ts";
 import { type Exec } from "../../../../platform/exec.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
 import {
@@ -182,7 +183,11 @@ const consoleRunLog = RunLog.of({
 const flowPlatform = (
   repo: PersonaRepo,
   platform: Context.Context<
-    FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Exec | Crypto.Crypto
+    | FileSystem.FileSystem
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Exec
+    | Crypto.Crypto
+    | HostEnvironment
   >,
 ) => {
   const sandbox = repo.settings.sandbox ?? NO_SANDBOX;
@@ -203,6 +208,7 @@ const flowPlatform = (
           gid: Option.fromUndefinedOr(process.getgid?.()),
         },
         platform: process.platform,
+        host: Context.get(platform, HostEnvironment).variables,
       },
       platform,
     ),
@@ -217,7 +223,11 @@ const flowPlatform = (
 export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<
-      FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Exec | Crypto.Crypto
+      | FileSystem.FileSystem
+      | ChildProcessSpawner.ChildProcessSpawner
+      | Exec
+      | Crypto.Crypto
+      | HostEnvironment
     >();
 
     const services = yield* Layer.build(

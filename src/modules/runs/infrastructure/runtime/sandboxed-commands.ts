@@ -68,15 +68,24 @@ export const containerEnvironment = (env: ChildProcess.CommandOptions["env"]): E
 const refused = (description: string) =>
   PlatformError.badArgument({ module: "ChildProcess", method: "spawn", description });
 
+// The environment the runtime's CLI runs with: the host's, for its own
+// socket, contexts and machine connection (under HOME) and to be found on
+// PATH, and the container's variables, which it hands over by name.
+export const cliEnvironment = (host: Environment, container: Environment): Environment => ({
+  ...host,
+  ...container,
+});
+
 // The runtime's CLI running `command` in the container `container` holds,
-// with the command's variables handed over by name. The CLI itself runs with
-// this process's environment, for its own socket and config.
+// with the command's variables handed over by name, and the CLI itself
+// running with `cliEnv` (cliEnvironment).
 export const inContainer = (
   runtime: Runtime,
   command: ChildProcess.StandardCommand,
   cwd: string,
   container: ContainerSpec,
   host: ContainerHost,
+  hostEnv: Environment,
 ): ChildProcess.StandardCommand => {
   const env = containerEnvironment(command.options.env);
 
@@ -90,8 +99,8 @@ export const inContainer = (
   return ChildProcess.make(runtime, args, {
     ...command.options,
     cwd,
-    env,
-    extendEnv: true,
+    env: cliEnvironment(hostEnv, env),
+    extendEnv: false,
   });
 };
 
@@ -100,6 +109,8 @@ export type SandboxedCommands = {
   readonly settings: Pick<RepoSettings, "configDir" | "slug">;
   readonly user: BuildUser;
   readonly platform: string;
+  // This process's environment, which the runtime's CLI runs with.
+  readonly host: Environment;
 };
 
 const thisHost = (commands: SandboxedCommands): ContainerHost => ({
@@ -124,6 +135,11 @@ export const sandboxedSpawner = (
   const host = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
   const runtime = commands.sandbox.name;
 
+  const outsideWorktree = (name: string, why: string) =>
+    refused(
+      `sandbox ${runtime}: ${name} ${why}, and a sandboxed repo's commands run only in a worktree`,
+    );
+
   const containerFor = (command: ChildProcess.StandardCommand) =>
     Effect.gen(function* () {
       if (
@@ -137,11 +153,7 @@ export const sandboxedSpawner = (
       }
 
       const cwd = yield* Effect.fromOption(Option.fromUndefinedOr(command.options.cwd)).pipe(
-        Effect.mapError(() =>
-          refused(
-            `sandbox ${runtime}: ${command.command} names no worktree to run in, and a sandboxed repo's commands run only in one`,
-          ),
-        ),
+        Effect.mapError(() => outsideWorktree(command.command, "names no worktree to run in")),
       );
 
       const log = yield* Effect.serviceOption(RunLog);
@@ -155,7 +167,15 @@ export const sandboxedSpawner = (
           Option.match(log, { onNone: () => Effect.void, onSome: (runLog) => runLog.log(line) }),
       });
 
-      const mounts = yield* repoMounts(`sandbox ${runtime}`, cwd);
+      const mounts = yield* repoMounts(`sandbox ${runtime}`, cwd).pipe(
+        Effect.mapError((error) =>
+          outsideWorktree(
+            command.command,
+            `runs in ${cwd}, which isn't a worktree (${error.message})`,
+          ),
+        ),
+      );
+
       yield* checkMountable(`sandbox ${runtime}`, mounts);
       const run = yield* Effect.serviceOption(Run);
       const id = yield* Crypto.Crypto.use((random) => random.randomUUIDv4());
@@ -168,18 +188,30 @@ export const sandboxedSpawner = (
         [COMMAND_LABEL]: id,
       };
 
+      const inside = inContainer(
+        runtime,
+        command,
+        cwd,
+        { image, mounts, labels },
+        thisHost(commands),
+        commands.host,
+      );
+
       return {
         id,
-        inside: inContainer(runtime, command, cwd, { image, mounts, labels }, thisHost(commands)),
+        inside,
+        cliEnv: cliEnvironment(commands.host, containerEnvironment(command.options.env)),
       };
     }).pipe(
       Effect.catchTags({
         AgentError: (error) => Effect.fail(refused(error.message)),
       }),
       Effect.provideContext(services),
-      Effect.tap(({ id }) =>
+      // Removed with the environment the CLI that started it ran with: the
+      // runtime's CLI needs HOME for its context or machine, and PATH.
+      Effect.tap(({ cliEnv, id }) =>
         Effect.addFinalizer(() =>
-          removeLabelledContainers(runtime, { name: COMMAND_LABEL, value: id }, {}).pipe(
+          removeLabelledContainers(runtime, { name: COMMAND_LABEL, value: id }, cliEnv).pipe(
             Effect.provideContext(services),
           ),
         ),
